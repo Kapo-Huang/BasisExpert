@@ -1,0 +1,66 @@
+experiment: volume_ionization_moe_inr_{target}
+exp_id: moeinr-ionization-{target}
+experiment_root: runs
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 2
+  targets:
+    GT: ../../data/Volume/Ionization/target_GT_sub_2.npy
+    H_plus: ../../data/Volume/Ionization/target_H+_sub_2.npy
+    H2: ../../data/Volume/Ionization/target_H2_sub_2.npy
+    He: ../../data/Volume/Ionization/target_He_sub_2.npy
+    PD: ../../data/Volume/Ionization/target_PD_sub_2.npy
+  target: GT
+model:
+  name: moe_inr
+  in_features: 4
+  num_experts: 7
+  base_dim: 45
+  encoder_first_omega_0: 30.0
+  encoder_hidden_omega_0: 30.0
+  policy_num_layers: 3
+  policy_first_omega_0: 30.0
+  policy_hidden_omega_0: 30.0
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 4
+  lr: 5.0e-5
+  val_split: 0.0
+  log_every: 1
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+  pretrain:
+    enabled: true
+    epochs: 0
+    lr: 5.0e-5
+    batch_size: 16000
+    assignments_method: voxel_clustering
+    cluster_num_time_samples: 7
+    cluster_seed: 42
+    assignments_cache_path: ../../data/cache/ionization_voxel_assignments_7.npy
+    spatial_blocks:
+      - 4
+      - 4
+      - 4
+    time_block_size: 1
+evaluation:
+  batch_size: 16000
+  save_predictions: true

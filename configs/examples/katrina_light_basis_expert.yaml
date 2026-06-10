@@ -1,0 +1,39 @@
+experiment: mesh_katrina_light_basis_expert
+exp_id: light_basis_expert-katrina
+experiment_root: runs
+data:
+  kind: node
+  dataset_name: katrina
+  split: train
+  coords_path: ../../data/Mesh/Katrina/source_XYZT.npy
+  targets:
+    fort63: ../../data/Mesh/Katrina/target_fort63.npy
+    fort64: ../../data/Mesh/Katrina/target_fort64.npy
+    fort73: ../../data/Mesh/Katrina/target_fort73.npy
+    speed: ../../data/Mesh/Katrina/target_speed.npy
+    v: ../../data/Mesh/Katrina/target_v.npy
+model:
+  name: light_basis_expert
+  in_features: 4
+  num_experts: 7
+  base_dim: 8
+  top_k: 2
+  expert_num_frequencies: 6
+  expert_num_layers: 3
+  gate_num_layers: 3
+  decoder_num_layers: 3
+  head_num_layers: 2
+training:
+  epochs: 60
+  batch_size: 8192
+  pred_batch_size: 8192
+  num_workers: 0
+  lr: 5.0e-5
+  log_every: 1
+  save_every: 10
+  loss_type: mse
+  seed: 42
+  sampler: uniform_random
+evaluation:
+  batch_size: 8192
+  save_predictions: true

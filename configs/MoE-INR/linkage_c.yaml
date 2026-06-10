@@ -1,0 +1,56 @@
+experiment: mesh_linkage_c_moe_inr_{target}
+exp_id: moeinr-linkage-c-{target}
+experiment_root: runs
+data:
+  kind: node
+  dataset_name: Linkage-C
+  split: train
+  coords_path: ../../data/Mesh/Linkage-C/source_cell_XYZT.npy
+  targets:
+    cell_E: ../../data/Mesh/Linkage-C/target_cell_E.npy
+    cell_E_IntegrationPoints: ../../data/Mesh/Linkage-C/target_cell_E_IntegrationPoints.npy
+    cell_S: ../../data/Mesh/Linkage-C/target_cell_S.npy
+    cell_S_IntegrationPoints: ../../data/Mesh/Linkage-C/target_cell_S_IntegrationPoints.npy
+  target: cell_S
+model:
+  name: moe_inr
+  in_features: 4
+  num_experts: 7
+  base_dim: 9
+  encoder_first_omega_0: 30.0
+  encoder_hidden_omega_0: 30.0
+  policy_num_layers: 3
+  policy_first_omega_0: 30.0
+  policy_hidden_omega_0: 30.0
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 4
+  lr: 5.0e-5
+  val_split: 0.0
+  log_every: 1
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+  pretrain:
+    enabled: true
+    epochs: 0
+    lr: 5.0e-5
+    batch_size: 16000
+    assignments_method: sample_clustering
+    cluster_num_time_samples: 7
+    cluster_seed: 42
+    assignments_cache_path: ../../data/cache/linkage_c_sample_assignments_7.npy
+evaluation:
+  batch_size: 16000
+  save_predictions: true

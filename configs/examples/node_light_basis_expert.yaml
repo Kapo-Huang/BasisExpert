@@ -1,0 +1,42 @@
+experiment: node_light_basis_expert_example
+exp_id: node-light-basis-expert
+experiment_root: runs
+data:
+  kind: node
+  dataset_name: node_example
+  split: train
+  coords_path: ./data/node/train/coords.npy
+  targets:
+    pressure: ./data/node/train/target_pressure.npy
+    velocity: ./data/node/train/target_velocity.npy
+model:
+  name: light_basis_expert
+  in_features: 4
+  num_experts: 4
+  base_dim: 8
+  top_k: 2
+  expert_num_layers: 3
+  gate_num_layers: 3
+  decoder_num_layers: 2
+  head_num_layers: 2
+training:
+  epochs: 50
+  batch_size: 8192
+  pred_batch_size: 8192
+  num_workers: 0
+  lr: 5.0e-5
+  val_split: 0.1
+  log_every: 5
+  save_every: 25
+  loss_type: mse
+  seed: 42
+  sampler: uniform_random
+  pretrain:
+    enabled: true
+    epochs: 5
+    lr: 5.0e-5
+    batch_size: 8192
+    assignments_method: sample_clustering
+evaluation:
+  batch_size: 8192
+  save_predictions: true
