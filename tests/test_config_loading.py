@@ -10,6 +10,26 @@ from var_expert_inr.config.io import load_experiment_config
 
 
 class ConfigLoadingTestCase(unittest.TestCase):
+    def test_repo_car_configs_load(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        config_paths = [
+            repo_root / "configs" / "BasisExpert" / "car.yaml",
+            repo_root / "configs" / "MoE-INR" / "car.yaml",
+            repo_root / "configs" / "CoordNet" / "car.yaml",
+            repo_root / "configs" / "SIREN" / "car.yaml",
+        ]
+
+        loaded_configs = [load_experiment_config(path) for path in config_paths]
+
+        self.assertEqual(loaded_configs[0].exp_id, "light_basis_expert-car")
+        self.assertEqual(loaded_configs[0].data.dataset_name, "car")
+        self.assertIsNone(loaded_configs[0].data.target)
+        for loaded in loaded_configs[1:]:
+            self.assertEqual(loaded.data.dataset_name, "car")
+            self.assertEqual(loaded.data.target, "CoefPressure")
+            self.assertIn("CoefPressure", loaded.data.targets)
+            self.assertIn("-car-CoefPressure", loaded.exp_id)
+
     def test_load_config_rejects_unknown_top_level_key(self):
         config = {
             "exp_id": "unknown-top-level",
