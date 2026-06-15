@@ -18,6 +18,13 @@ from .utils.checkpoint import (
 )
 from .utils.io import sha256_payload
 from .utils.logging_utils import close_file_handlers, setup_logging
+from .utils.model_stats import (
+    build_model_catalog_row,
+    collect_model_statistics,
+    format_fp16_size_megabytes,
+    format_param_count,
+    upsert_model_catalog,
+)
 from .utils.runtime import configure_thread_env, set_random_seed
 
 logger = logging.getLogger(__name__)
@@ -95,6 +102,19 @@ def run_train(config_path: str | Path) -> dict:
         config, dirs, dataset, device, effective_payload = _prepare_runtime(config_path)
         set_random_seed(int(config.training.seed))
         model = build_model(config.model, dataset.meta)
+        stats = collect_model_statistics(model)
+        logger.info(
+            "Model size: params=%s trainable=%s size(fp16, weights+bias)=%s",
+            format_param_count(int(stats["param_count"])),
+            format_param_count(int(stats["trainable_param_count"])),
+            format_fp16_size_megabytes(int(stats["fp16_size_bytes"])),
+        )
+        catalog_row = build_model_catalog_row(
+            model_name=config.model.name,
+            model_params=config.model.params,
+            stats=stats,
+        )
+        upsert_model_catalog(Path(config.experiment_root) / "model_size_catalog.csv", catalog_row)
         config_hash = sha256_payload(effective_payload)
         result = train_model(
             model=model,
