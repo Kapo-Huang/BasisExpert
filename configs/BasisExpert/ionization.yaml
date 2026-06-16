@@ -79,3 +79,17 @@ training:
 evaluation:
   batch_size: 16000
   save_predictions: true
+log:
+  effective_config: true
+  model_stats: true
+  epoch_summary: true
+  startup_timing: true
+  psnr:
+    enabled: true
+    per_target: true
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: true
+    step_window_every_steps: 100
+    cuda_sync: false

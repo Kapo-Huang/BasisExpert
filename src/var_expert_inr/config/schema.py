@@ -91,6 +91,31 @@ class EvaluationConfig:
 
 
 @dataclass(frozen=True)
+class PSNRLogConfig:
+    enabled: bool = True
+    per_target: bool = True
+
+
+@dataclass(frozen=True)
+class TimingLogConfig:
+    enabled: bool = True
+    epoch_breakdown: bool = True
+    step_window: bool = True
+    step_window_every_steps: int = 100
+    cuda_sync: bool = False
+
+
+@dataclass(frozen=True)
+class LogConfig:
+    effective_config: bool = True
+    model_stats: bool = True
+    epoch_summary: bool = True
+    startup_timing: bool = True
+    psnr: PSNRLogConfig = field(default_factory=PSNRLogConfig)
+    timing: TimingLogConfig = field(default_factory=TimingLogConfig)
+
+
+@dataclass(frozen=True)
 class DataConfig:
     kind: str
     dataset_name: str | None = None
@@ -181,6 +206,7 @@ class ExperimentConfig:
     model: ModelConfig
     training: TrainingConfig
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    log: LogConfig = field(default_factory=LogConfig)
     source_config_path: str | None = None
 
     @property

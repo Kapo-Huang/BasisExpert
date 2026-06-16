@@ -77,6 +77,75 @@ class ConfigLoadingTestCase(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_experiment_config(config_path)
 
+    def test_load_config_accepts_log_section(self):
+        config = {
+            "exp_id": "with-log",
+            "experiment_root": "runs",
+            "data": {
+                "kind": "volume",
+                "target_path": "./target.npy",
+            },
+            "model": {
+                "name": "siren",
+            },
+            "training": {
+                "device": "cpu",
+            },
+            "log": {
+                "effective_config": False,
+                "model_stats": False,
+                "epoch_summary": False,
+                "startup_timing": False,
+                "psnr": {
+                    "enabled": False,
+                    "per_target": False,
+                },
+                "timing": {
+                    "enabled": False,
+                    "epoch_breakdown": False,
+                    "step_window": False,
+                    "step_window_every_steps": 5,
+                    "cuda_sync": False,
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+            loaded = load_experiment_config(config_path)
+            self.assertFalse(loaded.log.effective_config)
+            self.assertFalse(loaded.log.model_stats)
+            self.assertFalse(loaded.log.epoch_summary)
+            self.assertFalse(loaded.log.startup_timing)
+            self.assertFalse(loaded.log.psnr.enabled)
+            self.assertFalse(loaded.log.psnr.per_target)
+            self.assertFalse(loaded.log.timing.enabled)
+            self.assertEqual(loaded.log.timing.step_window_every_steps, 5)
+
+    def test_load_config_rejects_unknown_log_key(self):
+        config = {
+            "exp_id": "bad-log",
+            "experiment_root": "runs",
+            "data": {
+                "kind": "volume",
+                "target_path": "./target.npy",
+            },
+            "model": {
+                "name": "siren",
+            },
+            "training": {
+                "device": "cpu",
+            },
+            "log": {
+                "unknown_flag": True,
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_experiment_config(config_path)
+
     def test_load_config_supports_target_selector_and_resolves_placeholders(self):
         config = {
             "experiment": "selector-{target}",
@@ -246,6 +315,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
             self.assertEqual(saved_config["model"]["out_features"], 1)
             self.assertEqual(saved_config["training"]["weight_decay"], 0.0)
             self.assertEqual(saved_config["evaluation"]["batch_size"], 16384)
+            self.assertTrue(saved_config["log"]["effective_config"])
 
             logs_dir = root / "runs" / "log-config" / "logs"
             log_path = next(logs_dir.glob("run_*.log"))

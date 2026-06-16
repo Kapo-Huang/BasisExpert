@@ -9,10 +9,13 @@ from .schema import (
     EvaluationConfig,
     ExperimentConfig,
     GradientBalancerConfig,
+    LogConfig,
     ModelConfig,
     MultiAttrEMALossConfig,
+    PSNRLogConfig,
     PretrainConfig,
     SchedulerConfig,
+    TimingLogConfig,
     TrainingConfig,
     VolumeShape,
 )
@@ -26,6 +29,7 @@ TOP_LEVEL_CONFIG_KEYS = {
     "model",
     "training",
     "evaluation",
+    "log",
 }
 TARGET_PLACEHOLDER = "{target}"
 
@@ -88,10 +92,12 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     model_payload = _ensure_mapping(payload.get("model"), label="model")
     training_payload = _ensure_mapping(payload.get("training"), label="training")
     evaluation_payload = _ensure_mapping(payload.get("evaluation"), label="evaluation")
+    log_payload = _ensure_mapping(payload.get("log"), label="log")
 
     _reject_unknown_keys(data_section, _field_names(DataConfig), label="data")
     _reject_unknown_keys(training_payload, _field_names(TrainingConfig), label="training")
     _reject_unknown_keys(evaluation_payload, _field_names(EvaluationConfig), label="evaluation")
+    _reject_unknown_keys(log_payload, _field_names(LogConfig), label="log")
     data_payload = _resolve_data_paths(data_section, base_dir=config_path.parent)
 
     if "name" not in model_payload:
@@ -104,6 +110,11 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     )
     scheduler_payload = _ensure_mapping(training_payload.get("scheduler"), label="training.scheduler")
     pretrain_payload = _ensure_mapping(training_payload.get("pretrain"), label="training.pretrain")
+    psnr_log_payload = _ensure_mapping(log_payload.get("psnr"), label="log.psnr")
+    timing_log_payload = _ensure_mapping(log_payload.get("timing"), label="log.timing")
+
+    _reject_unknown_keys(psnr_log_payload, _field_names(PSNRLogConfig), label="log.psnr")
+    _reject_unknown_keys(timing_log_payload, _field_names(TimingLogConfig), label="log.timing")
 
     data_cfg = DataConfig(
         kind=data_payload["kind"],
@@ -143,6 +154,14 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         pretrain=PretrainConfig(**pretrain_payload),
     )
     evaluation_cfg = EvaluationConfig(**evaluation_payload)
+    log_cfg = LogConfig(
+        effective_config=bool(log_payload.get("effective_config", True)),
+        model_stats=bool(log_payload.get("model_stats", True)),
+        epoch_summary=bool(log_payload.get("epoch_summary", True)),
+        startup_timing=bool(log_payload.get("startup_timing", True)),
+        psnr=PSNRLogConfig(**psnr_log_payload),
+        timing=TimingLogConfig(**timing_log_payload),
+    )
     experiment = _resolve_target_placeholder(payload.get("experiment"), target=data_cfg.target, field_name="experiment")
     exp_id = _resolve_target_placeholder(payload.get("exp_id"), target=data_cfg.target, field_name="exp_id")
 
@@ -154,6 +173,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         model=model_cfg,
         training=training_cfg,
         evaluation=evaluation_cfg,
+        log=log_cfg,
         source_config_path=str(config_path),
     )
 

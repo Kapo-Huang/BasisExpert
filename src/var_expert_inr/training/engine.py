@@ -2,19 +2,27 @@ from __future__ import annotations
 
 import copy
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset, random_split
 
+from ..config.schema import LogConfig
+from ..evaluation.metrics import PSNRAccumulator
 from ..pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ..utils.checkpoint import save_checkpoint
+from ..utils.timing import TimingBreakdown, log_epoch_timing, log_step_timing_window, timing_elapsed, timing_start
 from .balancers import GradNormBalancer, MultiAttrEMALoss, apply_multitask_gradient
 from .losses import pointwise_loss, reconstruction_loss_with_breakdown
 from .samplers import build_train_sampler
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_base_dataset(dataset):
+    return dataset.dataset if isinstance(dataset, Subset) else dataset
 
 
 def _collate_factory(dataset, *, include_targets: bool = True, assignments=None):
@@ -47,19 +55,90 @@ def _build_loader(dataset, cfg, *, include_targets: bool = True, assignments=Non
         sampler=sampler,
         num_workers=int(cfg.num_workers),
         pin_memory=True,
-        collate_fn=_collate_factory(dataset.dataset if isinstance(dataset, Subset) else dataset, include_targets=include_targets, assignments=assignments),
+        collate_fn=_collate_factory(
+            _resolve_base_dataset(dataset),
+            include_targets=include_targets,
+            assignments=assignments,
+        ),
     )
 
 
-def predict_dataset(model, dataset, *, batch_size: int, device: torch.device, hard_topk: bool = True):
-    loader = DataLoader(
+def _build_prediction_loader(dataset, *, batch_size: int, num_workers: int):
+    return DataLoader(
         dataset,
         batch_size=int(batch_size),
         shuffle=False,
-        num_workers=0,
+        num_workers=int(num_workers),
         pin_memory=True,
-        collate_fn=_collate_factory(dataset),
+        collate_fn=_collate_factory(_resolve_base_dataset(dataset)),
     )
+
+
+def _predict_batch(model, coords: torch.Tensor, target_names: tuple[str, ...], *, hard_topk: bool):
+    try:
+        preds = model(coords, hard_topk=hard_topk)
+    except TypeError:
+        preds = model(coords)
+    if isinstance(preds, dict):
+        return preds
+    return {target_names[0]: preds}
+
+
+def _batch_target_dict(batch_targets, target_names: tuple[str, ...]):
+    if isinstance(batch_targets, dict):
+        return batch_targets
+    return {target_names[0]: batch_targets}
+
+
+def select_psnr_indices(total_size: int, sample_ratio: float, seed: int) -> np.ndarray | None:
+    total_size = int(total_size)
+    ratio = float(sample_ratio)
+    if total_size <= 0 or ratio <= 0.0 or ratio >= 1.0:
+        return None
+    sample_size = max(1, int(round(total_size * ratio)))
+    if sample_size >= total_size:
+        return None
+    rng = np.random.default_rng(int(seed))
+    return np.sort(rng.choice(total_size, size=sample_size, replace=False).astype(np.int64))
+
+
+def _build_psnr_dataset(dataset, *, sample_ratio: float, seed: int):
+    selected = select_psnr_indices(len(dataset), sample_ratio, seed)
+    if selected is None:
+        return dataset
+    return Subset(dataset, selected.tolist())
+
+
+def _compute_streaming_psnr(
+    *,
+    model,
+    dataset,
+    batch_size: int,
+    num_workers: int,
+    device: torch.device,
+    hard_topk: bool,
+):
+    loader = _build_prediction_loader(dataset, batch_size=batch_size, num_workers=num_workers)
+    base_dataset = _resolve_base_dataset(dataset)
+    target_names = base_dataset.target_names()
+    accumulators = {name: PSNRAccumulator() for name in target_names}
+    model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            coords = batch.coords.to(device, non_blocking=True)
+            preds = _predict_batch(model, coords, target_names, hard_topk=hard_topk)
+            targets = _batch_target_dict(batch.targets, target_names)
+            for name in target_names:
+                pred_np = preds[name].detach().cpu().numpy()
+                target_np = targets[name].detach().cpu().numpy()
+                accumulators[name].update(target_np, pred_np)
+    per_target = {name: accumulators[name].compute() for name in target_names}
+    aggregate = float(np.mean(list(per_target.values()))) if per_target else float("nan")
+    return aggregate, per_target
+
+
+def predict_dataset(model, dataset, *, batch_size: int, device: torch.device, hard_topk: bool = True):
+    loader = _build_prediction_loader(dataset, batch_size=batch_size, num_workers=0)
     model.eval()
     if dataset.meta.is_multitarget:
         collected = {name: [] for name in dataset.target_names()}
@@ -67,14 +146,10 @@ def predict_dataset(model, dataset, *, batch_size: int, device: torch.device, ha
         collected = {dataset.target_names()[0]: []}
     with torch.no_grad():
         for batch in loader:
-            coords = batch.coords.to(device)
-            preds = model(coords, hard_topk=hard_topk)
-            if isinstance(preds, dict):
-                for name, tensor in preds.items():
-                    tensor = tensor.detach().cpu()
-                    collected[name].append(tensor.numpy())
-            else:
-                collected[dataset.target_names()[0]].append(preds.detach().cpu().numpy())
+            coords = batch.coords.to(device, non_blocking=True)
+            preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+            for name, tensor in preds.items():
+                collected[name].append(tensor.detach().cpu().numpy())
     return {name: np.concatenate(parts, axis=0) for name, parts in collected.items()}
 
 
@@ -90,7 +165,39 @@ def save_predictions(dataset, predictions: dict[str, np.ndarray], output_dir: st
     return saved
 
 
-def _run_pretrain(model, dataset, cfg, device):
+def _log_step_window_if_needed(
+    *,
+    prefix: str,
+    epoch: int,
+    total_epochs: int,
+    steps_seen: int,
+    window_start_step: int,
+    window_started_at: float,
+    window_data: float,
+    window_transfer: float,
+    window_training: float,
+) -> tuple[float, int]:
+    if steps_seen < window_start_step:
+        return window_started_at, window_start_step
+    elapsed_seconds = time.perf_counter() - window_started_at
+    tracked = float(window_data) + float(window_transfer) + float(window_training)
+    other_seconds = max(float(elapsed_seconds) - tracked, 0.0)
+    log_step_timing_window(
+        prefix=prefix,
+        epoch=epoch,
+        total_epochs=total_epochs,
+        step_start=window_start_step,
+        step_end=steps_seen,
+        elapsed_seconds=elapsed_seconds,
+        data_seconds=window_data,
+        transfer_seconds=window_transfer,
+        training_seconds=window_training,
+        other_seconds=other_seconds,
+    )
+    return time.perf_counter(), steps_seen + 1
+
+
+def _run_pretrain(model, dataset, cfg, device, log_cfg: LogConfig):
     if not cfg.pretrain.enabled or cfg.pretrain.epochs <= 0:
         return
     if not hasattr(model, "pretrain_forward"):
@@ -113,29 +220,128 @@ def _run_pretrain(model, dataset, cfg, device):
         collate_fn=_collate_factory(dataset, include_targets=False, assignments=assignments),
     )
     optimizer = torch.optim.Adam(list(model.pretrain_parameters()), lr=float(cfg.pretrain.lr))
+    timing_enabled = bool(log_cfg.timing.enabled)
+    epoch_timing_enabled = timing_enabled and bool(log_cfg.timing.epoch_breakdown)
+    step_window_enabled = timing_enabled and bool(log_cfg.timing.step_window)
+    sync_timing = bool(log_cfg.timing.cuda_sync)
+    step_window_every = max(1, int(log_cfg.timing.step_window_every_steps))
+
     for epoch in range(1, cfg.pretrain.epochs + 1):
         model.train()
         epoch_loss = 0.0
         total = 0
         correct = 0
-        for batch in pretrain_loader:
-            coords = batch.coords.to(device)
-            expert_ids = batch.expert_ids.to(device)
+        timing = TimingBreakdown()
+        epoch_started_at = time.perf_counter()
+        window_start_step = 1
+        window_started_at = time.perf_counter()
+        window_data = 0.0
+        window_transfer = 0.0
+        window_training = 0.0
+        steps_seen = 0
+
+        iterator = iter(pretrain_loader)
+        batch_fetch_started_at = time.perf_counter()
+        while True:
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+
+            data_seconds = 0.0
+            if timing_enabled:
+                data_seconds = time.perf_counter() - batch_fetch_started_at
+                timing.data += data_seconds
+                window_data += data_seconds
+
+            step_started_at = time.perf_counter()
+            transfer_seconds = 0.0
+            if timing_enabled:
+                stage_started_at = timing_start(device, sync_timing)
+            coords = batch.coords.to(device, non_blocking=True)
+            expert_ids = batch.expert_ids.to(device, non_blocking=True)
+            if timing_enabled:
+                transfer_seconds = timing_elapsed(stage_started_at, device, sync_timing)
+                timing.transfer += transfer_seconds
+                window_transfer += transfer_seconds
+                stage_started_at = timing_start(device, sync_timing)
+
             logits = model.pretrain_forward(coords)
             loss = torch.nn.functional.cross_entropy(logits, expert_ids)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            training_seconds = 0.0
+            if timing_enabled:
+                training_seconds = timing_elapsed(stage_started_at, device, sync_timing)
+                timing.training += training_seconds
+                window_training += training_seconds
+                step_elapsed = time.perf_counter() - step_started_at
+                timing.others += max(step_elapsed - transfer_seconds - training_seconds, 0.0)
+
             epoch_loss += float(loss.item()) * coords.shape[0]
             total += int(coords.shape[0])
             correct += int((torch.argmax(logits, dim=-1) == expert_ids).sum().item())
-        logger.info(
-            "Pretrain epoch %s/%s loss=%.6e acc=%.4f",
-            epoch,
-            cfg.pretrain.epochs,
-            epoch_loss / max(total, 1),
-            correct / max(total, 1),
-        )
+            steps_seen += 1
+
+            if step_window_enabled and steps_seen % step_window_every == 0:
+                log_started_at = time.perf_counter()
+                window_started_at, window_start_step = _log_step_window_if_needed(
+                    prefix="Pretrain",
+                    epoch=epoch,
+                    total_epochs=cfg.pretrain.epochs,
+                    steps_seen=steps_seen,
+                    window_start_step=window_start_step,
+                    window_started_at=window_started_at,
+                    window_data=window_data,
+                    window_transfer=window_transfer,
+                    window_training=window_training,
+                )
+                timing.others += time.perf_counter() - log_started_at
+                window_data = 0.0
+                window_transfer = 0.0
+                window_training = 0.0
+
+            batch_fetch_started_at = time.perf_counter()
+
+        if step_window_enabled and steps_seen >= window_start_step:
+            log_started_at = time.perf_counter()
+            _log_step_window_if_needed(
+                prefix="Pretrain",
+                epoch=epoch,
+                total_epochs=cfg.pretrain.epochs,
+                steps_seen=steps_seen,
+                window_start_step=window_start_step,
+                window_started_at=window_started_at,
+                window_data=window_data,
+                window_transfer=window_transfer,
+                window_training=window_training,
+            )
+            timing.others += time.perf_counter() - log_started_at
+
+        if log_cfg.epoch_summary:
+            log_started_at = time.perf_counter() if timing_enabled else 0.0
+            logger.info(
+                "Pretrain epoch %s/%s loss=%.6e acc=%.4f",
+                epoch,
+                cfg.pretrain.epochs,
+                epoch_loss / max(total, 1),
+                correct / max(total, 1),
+            )
+            if timing_enabled:
+                timing.others += time.perf_counter() - log_started_at
+
+        if epoch_timing_enabled:
+            epoch_total = time.perf_counter() - epoch_started_at
+            timing.others += max(epoch_total - timing.tracked_total(), 0.0)
+            log_epoch_timing(
+                prefix="Pretrain",
+                epoch=epoch,
+                total_epochs=cfg.pretrain.epochs,
+                total_seconds=epoch_total,
+                breakdown=timing,
+            )
 
 
 def train_model(
@@ -143,12 +349,20 @@ def train_model(
     model,
     dataset,
     cfg,
+    log_cfg: LogConfig,
     device: torch.device,
     checkpoint_dir: str | Path,
     config_hash: str,
     prediction_dir: str | Path,
     exp_id: str,
 ):
+    timing_enabled = bool(log_cfg.timing.enabled)
+    epoch_timing_enabled = timing_enabled and bool(log_cfg.timing.epoch_breakdown)
+    step_window_enabled = timing_enabled and bool(log_cfg.timing.step_window)
+    sync_timing = bool(log_cfg.timing.cuda_sync)
+    step_window_every = max(1, int(log_cfg.timing.step_window_every_steps))
+
+    dataloader_started_at = time.perf_counter()
     train_dataset, val_dataset = _split_dataset(dataset, cfg.val_split, cfg.seed)
     sampler = build_train_sampler(train_dataset, cfg)
     train_loader = DataLoader(
@@ -170,9 +384,11 @@ def train_model(
             pin_memory=True,
             collate_fn=_collate_factory(dataset),
         )
+    if log_cfg.startup_timing:
+        logger.info("DataLoader build: %.2fs", time.perf_counter() - dataloader_started_at)
 
     model = model.to(device)
-    _run_pretrain(model, dataset, cfg, device)
+    _run_pretrain(model, dataset, cfg, device, log_cfg)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg.lr), weight_decay=float(cfg.weight_decay))
     scheduler = None
     if cfg.scheduler.enabled and cfg.scheduler.step_size > 0 and cfg.scheduler.gamma != 1.0:
@@ -200,14 +416,24 @@ def train_model(
     best_val = float("inf")
     no_improve = 0
     router_frozen = False
+    psnr_dataset = _build_psnr_dataset(dataset, sample_ratio=cfg.psnr_sample_ratio, seed=cfg.seed)
+    started_at = time.time()
 
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         epoch_loss = 0.0
         steps = 0
         hard_topk = int(epoch) > int(cfg.hard_topk_warmup_epochs)
+        epoch_timing = TimingBreakdown()
+        epoch_started_at = time.perf_counter()
+        window_start_step = 1
+        window_started_at = time.perf_counter()
+        window_data = 0.0
+        window_transfer = 0.0
+        window_training = 0.0
 
         if not router_frozen and cfg.freeze_router_at > 0 and (epoch / max(cfg.epochs, 1)) >= cfg.freeze_router_at:
+            other_started_at = time.perf_counter() if timing_enabled else 0.0
             frozen = 0
             for name, param in model.named_parameters():
                 if any(token in name.lower() for token in ("gating", "policy", "router")):
@@ -216,13 +442,41 @@ def train_model(
             router_frozen = frozen > 0
             if router_frozen:
                 logger.info("Froze router-like parameters at epoch %s", epoch)
+            if timing_enabled:
+                epoch_timing.others += time.perf_counter() - other_started_at
 
-        for batch in train_loader:
-            coords = batch.coords.to(device)
+        iterator = iter(train_loader)
+        batch_fetch_started_at = time.perf_counter()
+        while True:
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+
+            data_seconds = 0.0
+            if timing_enabled:
+                data_seconds = time.perf_counter() - batch_fetch_started_at
+                epoch_timing.data += data_seconds
+                window_data += data_seconds
+
+            step_started_at = time.perf_counter()
+            transfer_seconds = 0.0
+            if timing_enabled:
+                stage_started_at = timing_start(device, sync_timing)
+            coords = batch.coords.to(device, non_blocking=True)
+            if _is_multitarget(batch.targets):
+                targets = {name: tensor.to(device, non_blocking=True) for name, tensor in batch.targets.items()}
+            else:
+                targets = batch.targets.to(device, non_blocking=True)
+            if timing_enabled:
+                transfer_seconds = timing_elapsed(stage_started_at, device, sync_timing)
+                epoch_timing.transfer += transfer_seconds
+                window_transfer += transfer_seconds
+                stage_started_at = timing_start(device, sync_timing)
+
             optimizer.zero_grad()
             if _is_multitarget(batch.targets):
-                targets = {name: tensor.to(device) for name, tensor in batch.targets.items()}
-                preds = model(coords, hard_topk=hard_topk)
+                preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
                 total_loss, _, _, task_losses = reconstruction_loss_with_breakdown(
                     preds,
                     targets,
@@ -240,41 +494,91 @@ def train_model(
                 else:
                     total_loss.backward()
             else:
-                targets = batch.targets.to(device)
-                preds = model(coords, hard_topk=hard_topk)
-                total_loss = pointwise_loss(preds, targets, cfg.loss_type)
+                preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                target_name = dataset.target_names()[0]
+                total_loss = pointwise_loss(preds[target_name], targets, cfg.loss_type)
                 loss_to_log = total_loss
                 total_loss.backward()
             optimizer.step()
+
+            training_seconds = 0.0
+            if timing_enabled:
+                training_seconds = timing_elapsed(stage_started_at, device, sync_timing)
+                epoch_timing.training += training_seconds
+                window_training += training_seconds
+                step_elapsed = time.perf_counter() - step_started_at
+                epoch_timing.others += max(step_elapsed - data_seconds - transfer_seconds - training_seconds, 0.0)
+
             epoch_loss += float(loss_to_log.detach().item())
             steps += 1
 
+            if step_window_enabled and steps % step_window_every == 0:
+                log_started_at = time.perf_counter()
+                window_started_at, window_start_step = _log_step_window_if_needed(
+                    prefix="Train",
+                    epoch=epoch,
+                    total_epochs=cfg.epochs,
+                    steps_seen=steps,
+                    window_start_step=window_start_step,
+                    window_started_at=window_started_at,
+                    window_data=window_data,
+                    window_transfer=window_transfer,
+                    window_training=window_training,
+                )
+                epoch_timing.others += time.perf_counter() - log_started_at
+                window_data = 0.0
+                window_transfer = 0.0
+                window_training = 0.0
+
+            batch_fetch_started_at = time.perf_counter()
+
+        if step_window_enabled and steps >= window_start_step:
+            log_started_at = time.perf_counter()
+            _log_step_window_if_needed(
+                prefix="Train",
+                epoch=epoch,
+                total_epochs=cfg.epochs,
+                steps_seen=steps,
+                window_start_step=window_start_step,
+                window_started_at=window_started_at,
+                window_data=window_data,
+                window_transfer=window_transfer,
+                window_training=window_training,
+            )
+            epoch_timing.others += time.perf_counter() - log_started_at
+
+        other_started_at = time.perf_counter() if timing_enabled else 0.0
         if scheduler is not None:
             scheduler.step()
+        if timing_enabled:
+            epoch_timing.others += time.perf_counter() - other_started_at
 
         val_loss = None
         if val_loader is not None:
+            val_started_at = timing_start(device, sync_timing) if timing_enabled else 0.0
             model.eval()
             loss_sum = 0.0
             count = 0
             with torch.no_grad():
                 for batch in val_loader:
-                    coords = batch.coords.to(device)
+                    coords = batch.coords.to(device, non_blocking=True)
                     if _is_multitarget(batch.targets):
-                        targets = {name: tensor.to(device) for name, tensor in batch.targets.items()}
-                        preds = model(coords, hard_topk=hard_topk)
+                        targets = {name: tensor.to(device, non_blocking=True) for name, tensor in batch.targets.items()}
+                        preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
                         loss, _, _, _ = reconstruction_loss_with_breakdown(
                             preds,
                             targets,
                             loss_type=cfg.loss_type,
                         )
                     else:
-                        targets = batch.targets.to(device)
-                        preds = model(coords, hard_topk=hard_topk)
-                        loss = pointwise_loss(preds, targets, cfg.loss_type)
+                        targets = batch.targets.to(device, non_blocking=True)
+                        preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                        loss = pointwise_loss(preds[dataset.target_names()[0]], targets, cfg.loss_type)
                     loss_sum += float(loss.item()) * coords.shape[0]
                     count += int(coords.shape[0])
             val_loss = loss_sum / max(count, 1)
+            if timing_enabled:
+                epoch_timing.val += timing_elapsed(val_started_at, device, sync_timing)
             if val_loss < best_val:
                 best_val = val_loss
                 best_state = copy.deepcopy(model.state_dict())
@@ -282,19 +586,59 @@ def train_model(
             else:
                 no_improve += 1
 
-        if epoch % cfg.log_every == 0 or epoch == 1:
+        if log_cfg.epoch_summary and cfg.log_every > 0 and (epoch % cfg.log_every == 0 or epoch == 1):
+            log_started_at = time.perf_counter() if timing_enabled else 0.0
+            elapsed = time.time() - started_at
             if val_loss is None:
-                logger.info("Epoch %s/%s train=%.6e", epoch, cfg.epochs, epoch_loss / max(steps, 1))
+                logger.info("Epoch %s/%s train=%.6e time=%.1fs", epoch, cfg.epochs, epoch_loss / max(steps, 1), elapsed)
             else:
                 logger.info(
-                    "Epoch %s/%s train=%.6e val=%.6e",
+                    "Epoch %s/%s train=%.6e val=%.6e time=%.1fs",
                     epoch,
                     cfg.epochs,
                     epoch_loss / max(steps, 1),
                     val_loss,
+                    elapsed,
                 )
+            if timing_enabled:
+                epoch_timing.others += time.perf_counter() - log_started_at
+
+        if log_cfg.psnr.enabled and cfg.log_psnr_every > 0 and epoch % cfg.log_psnr_every == 0:
+            psnr_started_at = timing_start(device, sync_timing) if timing_enabled else 0.0
+            aggregate_psnr, per_target_psnr = _compute_streaming_psnr(
+                model=model,
+                dataset=psnr_dataset,
+                batch_size=cfg.pred_batch_size,
+                num_workers=cfg.num_workers,
+                device=device,
+                hard_topk=hard_topk,
+            )
+            elapsed = time.time() - started_at
+            if log_cfg.psnr.per_target:
+                per_target_text = " ".join(
+                    f"{name}={value:.2f}" for name, value in sorted(per_target_psnr.items())
+                )
+                logger.info(
+                    "PSNR epoch %s/%s: aggregate=%.2f %s time=%.1fs",
+                    epoch,
+                    cfg.epochs,
+                    aggregate_psnr,
+                    per_target_text,
+                    elapsed,
+                )
+            else:
+                logger.info(
+                    "PSNR epoch %s/%s: aggregate=%.2f time=%.1fs",
+                    epoch,
+                    cfg.epochs,
+                    aggregate_psnr,
+                    elapsed,
+                )
+            if timing_enabled:
+                epoch_timing.psnr += timing_elapsed(psnr_started_at, device, sync_timing)
 
         if cfg.save_every > 0 and epoch % cfg.save_every == 0:
+            save_started_at = time.perf_counter() if timing_enabled else 0.0
             save_checkpoint(
                 model=model,
                 optimizer=optimizer,
@@ -304,10 +648,33 @@ def train_model(
                 config_hash=config_hash,
                 path=Path(checkpoint_dir) / f"{exp_id}_epoch{epoch}.pth",
             )
+            if timing_enabled:
+                epoch_timing.others += time.perf_counter() - save_started_at
 
         if cfg.early_stop_patience > 0 and no_improve >= cfg.early_stop_patience:
             logger.info("Early stopping at epoch %s", epoch)
+            if epoch_timing_enabled:
+                epoch_total = time.perf_counter() - epoch_started_at
+                epoch_timing.others += max(epoch_total - epoch_timing.tracked_total(), 0.0)
+                log_epoch_timing(
+                    prefix="Train",
+                    epoch=epoch,
+                    total_epochs=cfg.epochs,
+                    total_seconds=epoch_total,
+                    breakdown=epoch_timing,
+                )
             break
+
+        if epoch_timing_enabled:
+            epoch_total = time.perf_counter() - epoch_started_at
+            epoch_timing.others += max(epoch_total - epoch_timing.tracked_total(), 0.0)
+            log_epoch_timing(
+                prefix="Train",
+                epoch=epoch,
+                total_epochs=cfg.epochs,
+                total_seconds=epoch_total,
+                breakdown=epoch_timing,
+            )
 
     if best_state is not None:
         model.load_state_dict(best_state)

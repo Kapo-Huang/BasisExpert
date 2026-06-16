@@ -10,6 +10,36 @@ import numpy as np
 EPS = 1e-12
 
 
+class PSNRAccumulator:
+    def __init__(self) -> None:
+        self.total_squared_error = 0.0
+        self.total_count = 0
+        self.gt_min = float("inf")
+        self.gt_max = float("-inf")
+
+    def update(self, gt: np.ndarray, pred: np.ndarray) -> None:
+        gt_f = np.asarray(gt, dtype=np.float64)
+        pred_f = np.asarray(pred, dtype=np.float64)
+        if gt_f.shape != pred_f.shape:
+            raise ValueError(f"PSNRAccumulator shape mismatch: {gt_f.shape} vs {pred_f.shape}")
+        self.total_squared_error += float(np.sum((gt_f - pred_f) ** 2))
+        self.total_count += int(gt_f.size)
+        if gt_f.size > 0:
+            self.gt_min = min(self.gt_min, float(np.min(gt_f)))
+            self.gt_max = max(self.gt_max, float(np.max(gt_f)))
+
+    def compute(self) -> float:
+        if self.total_count <= 0:
+            return float("nan")
+        data_range = float(self.gt_max - self.gt_min)
+        if data_range <= 0:
+            data_range = max(abs(float(self.gt_max)), abs(float(self.gt_min))) + EPS
+        mse_val = float(self.total_squared_error) / float(self.total_count)
+        if mse_val <= 0:
+            return float("inf")
+        return 10.0 * math.log10((data_range ** 2) / (mse_val + EPS))
+
+
 def mse(gt: np.ndarray, pred: np.ndarray) -> float:
     return float(np.mean((np.asarray(gt) - np.asarray(pred)) ** 2))
 

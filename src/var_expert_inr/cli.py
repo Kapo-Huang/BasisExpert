@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from pathlib import Path
 
 import torch
@@ -67,13 +68,28 @@ def _log_effective_config(config, payload: dict) -> None:
 
 
 def _prepare_runtime(config_path: str | Path):
+    config_started_at = time.perf_counter()
     config = load_experiment_config(config_path)
+    config_load_seconds = time.perf_counter() - config_started_at
+
+    dirs_started_at = time.perf_counter()
     dirs = _prepare_run_dirs(config)
+    run_dir_prepare_seconds = time.perf_counter() - dirs_started_at
+
     setup_logging(log_dir=dirs["logs_dir"])
+
+    dataset_started_at = time.perf_counter()
     dataset = build_dataset(config.data, model_name=config.model.name)
+    dataset_init_seconds = time.perf_counter() - dataset_started_at
+
     effective_payload = _build_effective_config_payload(config, dataset.meta)
     save_experiment_config(effective_payload, dirs["run_dir"] / "config.yaml")
-    _log_effective_config(config, effective_payload)
+    if config.log.effective_config:
+        _log_effective_config(config, effective_payload)
+    if config.log.startup_timing:
+        logger.info("Config load: %.2fs", config_load_seconds)
+        logger.info("Run dir prepare: %.2fs", run_dir_prepare_seconds)
+        logger.info("Dataset init: %.2fs", dataset_init_seconds)
     device = _resolve_device(config.training.device)
     return config, dirs, dataset, device, effective_payload
 
@@ -98,17 +114,23 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
 
 def run_train(config_path: str | Path) -> dict:
     configure_thread_env()
+    train_started_at = time.perf_counter()
     try:
         config, dirs, dataset, device, effective_payload = _prepare_runtime(config_path)
         set_random_seed(int(config.training.seed))
+        model_started_at = time.perf_counter()
         model = build_model(config.model, dataset.meta)
+        model_build_seconds = time.perf_counter() - model_started_at
         stats = collect_model_statistics(model)
-        logger.info(
-            "Model size: params=%s trainable=%s size(fp16, weights+bias)=%s",
-            format_param_count(int(stats["param_count"])),
-            format_param_count(int(stats["trainable_param_count"])),
-            format_fp16_size_megabytes(int(stats["fp16_size_bytes"])),
-        )
+        if config.log.model_stats:
+            logger.info(
+                "Model size: params=%s trainable=%s size(fp16, weights+bias)=%s",
+                format_param_count(int(stats["param_count"])),
+                format_param_count(int(stats["trainable_param_count"])),
+                format_fp16_size_megabytes(int(stats["fp16_size_bytes"])),
+            )
+        if config.log.startup_timing:
+            logger.info("Model build: %.2fs", model_build_seconds)
         catalog_row = build_model_catalog_row(
             model_name=config.model.name,
             model_params=config.model.params,
@@ -120,12 +142,15 @@ def run_train(config_path: str | Path) -> dict:
             model=model,
             dataset=dataset,
             cfg=config.training,
+            log_cfg=config.log,
             device=device,
             checkpoint_dir=dirs["checkpoint_dir"],
             config_hash=config_hash,
             prediction_dir=dirs["prediction_dir"],
             exp_id=config.exp_id,
         )
+        if config.log.startup_timing:
+            logger.info("Train total: %.2fs", time.perf_counter() - train_started_at)
         metrics = evaluate_predictions(dataset, result["predictions"], checkpoint_path=result["checkpoint_path"])
         save_metrics(dirs["metrics_dir"] / f"{config.exp_id}.json", metrics)
         return result
