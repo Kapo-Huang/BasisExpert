@@ -1,0 +1,84 @@
+seed: 0
+wandb_project: "inr_moe_ionization"
+experiment: "neural_expert_ionization_{target}"
+exp_id: "neural_expert-ionization-{target}"
+experiment_root: "../../runs/neural_expert"
+
+MODEL:
+  model_name: "inr_moe_ionization"
+  in_dim: 4
+  out_dim: 1
+  decoder_hidden_dim: 64
+  decoder_n_hidden_layers: 2
+  decoder_input_encoding: "learned_512_2_sine_siren_none"
+  decoder_nl: "sine"
+  decoder_init_type: "siren"
+  n_experts: 8
+  outermost_linear: true
+  input_encoding: "none"
+  decoder_freqs: 30.0
+  decoder_trainable_freqs: false
+  top_k: 1
+  manager_hidden_dim: 128
+  manager_n_hidden_layers: 2
+  manager_input_encoding: "learned_128_2_sine_siren_none"
+  manager_nl: "sine"
+  manager_init: "siren"
+  manager_type: "standard"
+  experts_bias_std: 0.1
+  experts_bias_weight: 1.0
+  manager_softmax_temperature: 1.0
+  manager_softmax_temp_trainable: false
+  manager_q_activation: "softmax"
+  manager_clamp_q: 0.0
+  manager_conditioning: "cat"
+  manager_pt_path: "../../runs/neural_expert/pretrained_managers/ionization/pt_inr_moe_ionization_{target}_managerpretraining.pth"
+  load_pt_manager: true
+  shared_encoder: false
+
+LOSS:
+  scale_by_q_grad: false
+  loss_type: "1000valrecon"
+  segmentation_type: "both"
+  sample_bias_correction: false
+  entropy_metric: "kl"
+
+DATA:
+  dataset_name: "ionization"
+  target: "H+"
+  targets:
+    GT: "../../data/Volume/Ionization/target_GT_sub_2.npy"
+    H+: "../../data/Volume/Ionization/target_H+_sub_2.npy"
+    H2: "../../data/Volume/Ionization/target_H2_sub_2.npy"
+    He: "../../data/Volume/Ionization/target_He_sub_2.npy"
+    PD: "../../data/Volume/Ionization/target_PD_sub_2.npy"
+  target_stats_path: "../../data/cache/neural_expert/ionization/target_stats_{target}.npz"
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 2
+  normalize_inputs: true
+  normalize_targets: false
+  segmentation_type: "random_balanced"
+  grid_patch_size: 4
+  n_segments: 8
+
+TRAINING:
+  n_points: 10000
+  lr: 3.0e-5
+  lr_gamma: 0.9999
+  lr_scheduler: "ExponentialLR"
+  num_epochs: 30000
+  batch_size: 1
+  num_workers: 0
+  grad_clip_norm: 0.0
+  save_every: 500
+  segmentation_mode: false
+  timing:
+    enabled: true
+    log_every: 100
+  stages:
+    - end_iteration_frac: 1.0
+      params: "all"
+      loss_type: "1000valrecon"
