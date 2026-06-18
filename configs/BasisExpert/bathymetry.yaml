@@ -1,0 +1,72 @@
+experiment: mesh_bathymetry_light_basis_expert
+exp_id: light_basis_expert-bathymetry
+experiment_root: runs
+data:
+  kind: node
+  dataset_name: bathymetry
+  split: train
+  coords_path: ../../data/Mesh/Bathymetry/source_XYZT.npy
+  targets:
+    SALT: ../../data/Mesh/Bathymetry/target_SALT.npy
+    TEMP: ../../data/Mesh/Bathymetry/target_TEMP.npy
+    U: ../../data/Mesh/Bathymetry/target_U.npy
+    V: ../../data/Mesh/Bathymetry/target_V.npy
+model:
+  name: light_basis_expert
+  in_features: 4
+  num_experts: 6
+  base_dim: 8
+  top_k: 3
+  expert_num_frequencies: 6
+  expert_num_layers: 3
+  gate_num_layers: 3
+  decoder_num_layers: 3
+  head_num_layers: 2
+  expert_first_omega_0: 30.0
+  expert_hidden_omega_0: 30.0
+  gate_first_omega_0: 30.0
+  gate_hidden_omega_0: 30.0
+  decoder_first_omega_0: 30.0
+  decoder_hidden_omega_0: 30.0
+  head_first_omega_0: 30.0
+  head_hidden_omega_0: 30.0
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 5.0e-5
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 10
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  multiview_ema_loss:
+    enabled: true
+    beta: 0.95
+    eps: 1.0e-8
+    w_min: 0.2
+    w_max: 5.0
+    warmup_steps: 45000
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+  pretrain:
+    enabled: true
+    epochs: 0
+    lr: 5.0e-5
+    batch_size: 16000
+    assignments_method: sample_clustering
+    cluster_num_time_samples: 6
+    cluster_seed: 42
+    assignments_cache_path: ../../data/cache/bathymetry_sample_assignments_6.npy
+evaluation:
+  batch_size: 16000
+  save_predictions: true
+

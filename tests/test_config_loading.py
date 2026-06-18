@@ -30,6 +30,30 @@ class ConfigLoadingTestCase(unittest.TestCase):
             self.assertIn("CoefPressure", loaded.data.targets)
             self.assertIn("-car-CoefPressure", loaded.exp_id)
 
+    def test_repo_bathymetry_configs_load(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        config_paths = [
+            repo_root / "configs" / "BasisExpert" / "bathymetry.yaml",
+            repo_root / "configs" / "MoE-INR" / "bathymetry.yaml",
+            repo_root / "configs" / "CoordNet" / "bathymetry.yaml",
+            repo_root / "configs" / "SIREN" / "bathymetry.yaml",
+            repo_root / "configs" / "examples" / "bathymetry_light_basis_expert.yaml",
+        ]
+
+        loaded_configs = [load_experiment_config(path) for path in config_paths]
+
+        self.assertEqual(loaded_configs[0].exp_id, "light_basis_expert-bathymetry")
+        self.assertEqual(loaded_configs[0].data.dataset_name, "bathymetry")
+        self.assertIsNone(loaded_configs[0].data.target)
+        for loaded in loaded_configs[1:4]:
+            self.assertEqual(loaded.data.dataset_name, "bathymetry")
+            self.assertEqual(loaded.data.target, "SALT")
+            self.assertIn("SALT", loaded.data.targets)
+            self.assertIn("-bathymetry-SALT", loaded.exp_id)
+        self.assertEqual(loaded_configs[4].exp_id, "light_basis_expert-bathymetry-example")
+        self.assertEqual(loaded_configs[4].data.dataset_name, "bathymetry")
+        self.assertIsNone(loaded_configs[4].data.target)
+
     def test_load_config_rejects_unknown_top_level_key(self):
         config = {
             "exp_id": "unknown-top-level",
