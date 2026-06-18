@@ -61,6 +61,7 @@ class MultiAttrEMALossConfig:
     w_min: float = 0.2
     w_max: float = 5.0
     warmup_steps: int = 0
+    alpha: float = 1.0
 
 
 @dataclass(frozen=True)

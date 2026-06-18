@@ -408,6 +408,7 @@ def train_model(
             w_min=float(cfg.multiview_ema_loss.w_min),
             w_max=float(cfg.multiview_ema_loss.w_max),
             warmup_steps=int(cfg.multiview_ema_loss.warmup_steps),
+            alpha=float(cfg.multiview_ema_loss.alpha),
         ).to(device)
     if dataset.meta.is_multitarget and cfg.gradient_balancer.enabled and cfg.gradient_balancer.method == "gradnorm":
         gradnorm_balancer = GradNormBalancer(dataset.target_names(), cfg.gradient_balancer, device)

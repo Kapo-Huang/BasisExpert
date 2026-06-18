@@ -15,6 +15,7 @@ class MultiAttrEMALoss(nn.Module):
         w_min: float = 0.2,
         w_max: float = 5.0,
         warmup_steps: int = 0,
+        alpha: float = 1.0,
     ):
         super().__init__()
         attr_names = list(attr_names)
@@ -28,18 +29,50 @@ class MultiAttrEMALoss(nn.Module):
         self.w_min = float(w_min)
         self.w_max = float(w_max)
         self.warmup_steps = int(warmup_steps)
-        self.register_buffer("ema", torch.ones(len(self.attr_names)))
+        self.alpha = float(alpha)
+        n_attrs = len(self.attr_names)
+        self.register_buffer("ema", torch.zeros(n_attrs))
+        self.register_buffer("baseline_ema", torch.ones(n_attrs))
+        self.register_buffer("ema_initialized", torch.tensor(False, dtype=torch.bool))
+        self.register_buffer("baseline_initialized", torch.tensor(False, dtype=torch.bool))
         self.register_buffer("step", torch.zeros((), dtype=torch.long))
 
     @torch.no_grad()
-    def _update_ema(self, losses_vec: torch.Tensor):
-        self.ema.mul_(self.beta).add_(losses_vec * (1.0 - self.beta))
+    def _update_ema(self, losses_vec: torch.Tensor) -> None:
+        losses_vec = losses_vec.detach()
+        if not bool(self.ema_initialized.item()):
+            self.ema.copy_(losses_vec)
+            self.ema_initialized.fill_(True)
+        else:
+            self.ema.mul_(self.beta).add_(losses_vec * (1.0 - self.beta))
 
     @torch.no_grad()
-    def _weights_from_ema(self) -> torch.Tensor:
-        w = 1.0 / (self.ema + self.eps)
-        w = w / (w.mean() + self.eps)
-        return torch.clamp(w, self.w_min, self.w_max)
+    def _maybe_init_baseline(self, step_after_update: int) -> None:
+        effective_warmup = max(1, self.warmup_steps)
+        if (
+            bool(self.ema_initialized.item())
+            and not bool(self.baseline_initialized.item())
+            and step_after_update >= effective_warmup
+        ):
+            self.baseline_ema.copy_(self.ema.clamp_min(self.eps))
+            self.baseline_initialized.fill_(True)
+
+    @torch.no_grad()
+    def _relative_remaining(self) -> torch.Tensor:
+        if not bool(self.baseline_initialized.item()):
+            return torch.ones_like(self.ema)
+        return (self.ema / self.baseline_ema.clamp_min(self.eps)).clamp_min(self.eps)
+
+    @torch.no_grad()
+    def _weights_from_relative_progress(self) -> torch.Tensor:
+        relative_remaining = self._relative_remaining()
+        # Larger relative_remaining means this attribute has improved more
+        # slowly relative to its own warm-up loss, so it receives a larger
+        # weight. This is not inverse raw-loss weighting.
+        scores = relative_remaining.pow(self.alpha)
+        w = scores / scores.mean().clamp_min(self.eps)
+        w = torch.clamp(w, self.w_min, self.w_max)
+        return w / w.mean().clamp_min(self.eps)
 
     def _to_ordered_tensor(self, per_attr_losses: Dict[str, torch.Tensor]) -> torch.Tensor:
         return torch.stack([per_attr_losses[name] for name in self.attr_names], dim=0)
@@ -56,9 +89,10 @@ class MultiAttrEMALoss(nn.Module):
         step_now = int(self.step.detach().item())
         if update_ema:
             self._update_ema(losses_t.detach())
-        if step_now >= self.warmup_steps:
+            self._maybe_init_baseline(step_now + 1)
+        if bool(self.baseline_initialized.item()):
             with torch.no_grad():
-                w = self._weights_from_ema()
+                w = self._weights_from_relative_progress()
         else:
             w = torch.ones_like(losses_t)
         if update_ema:
@@ -70,13 +104,25 @@ class MultiAttrEMALoss(nn.Module):
             return total
         details = None
         if return_details:
+            with torch.no_grad():
+                relative_remaining = self._relative_remaining()
+                relative_progress = 1.0 - relative_remaining
             details = {
                 "per_attr_loss": {n: float(losses_t[i].detach().item()) for i, n in enumerate(self.attr_names)},
                 "ema": {n: float(self.ema[i].detach().item()) for i, n in enumerate(self.attr_names)},
+                "baseline_ema": {n: float(self.baseline_ema[i].detach().item()) for i, n in enumerate(self.attr_names)},
+                "relative_remaining": {
+                    n: float(relative_remaining[i].detach().item()) for i, n in enumerate(self.attr_names)
+                },
+                "relative_progress": {
+                    n: float(relative_progress[i].detach().item()) for i, n in enumerate(self.attr_names)
+                },
                 "weights": {n: float(w[i].detach().item()) for i, n in enumerate(self.attr_names)},
                 "total": float(total.detach().item()),
                 "step": int(self.step.detach().item()),
                 "warmup_steps": int(self.warmup_steps),
+                "alpha": float(self.alpha),
+                "baseline_initialized": bool(self.baseline_initialized.item()),
             }
         if return_details and return_tensors:
             return total, losses_t, w, details
