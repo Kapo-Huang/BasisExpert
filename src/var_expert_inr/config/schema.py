@@ -76,13 +76,8 @@ class PretrainConfig:
     enabled: bool = False
     epochs: int = 0
     lr: float = 5e-5
-    batch_size: int = 8192
-    assignments_method: str = "random_uniform"
-    cluster_num_time_samples: int = 16
     cluster_seed: int = 42
     assignments_cache_path: str = ""
-    spatial_blocks: tuple[int, int, int] | None = None
-    time_block_size: int = 0
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
-experiment: node_light_basis_expert_example
-exp_id: node-light-basis-expert
+﻿experiment: node_var_expert_example
+exp_id: var-expert-node-example
 experiment_root: runs
 data:
   kind: node
@@ -10,15 +10,12 @@ data:
     pressure: ./data/node/train/target_pressure.npy
     velocity: ./data/node/train/target_velocity.npy
 model:
-  name: light_basis_expert
+  name: var_expert
   in_features: 4
   num_experts: 4
   base_dim: 8
   top_k: 2
-  expert_num_layers: 3
-  gate_num_layers: 3
   decoder_num_layers: 2
-  head_num_layers: 2
 training:
   epochs: 50
   batch_size: 8192
@@ -32,11 +29,9 @@ training:
   seed: 42
   sampler: uniform_random
   pretrain:
-    enabled: true
-    epochs: 5
-    lr: 5.0e-5
-    batch_size: 8192
-    assignments_method: sample_clustering
+    enabled: false
+    epochs: 0
 evaluation:
   batch_size: 8192
   save_predictions: true
+

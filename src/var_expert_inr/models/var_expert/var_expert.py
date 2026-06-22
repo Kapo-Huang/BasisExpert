@@ -6,7 +6,7 @@ import torch.nn as nn
 from .components import ExpertEncoder, PositionalEncoding, SirenMLP, ViewGating
 
 
-class LightBasisExpert(nn.Module):
+class VarExpert(nn.Module):
     def __init__(
         self,
         in_features: int,
@@ -173,7 +173,7 @@ class LightBasisExpert(nn.Module):
         return list(self.gating.parameters()) + list(self.view_embedding.parameters())
 
 
-def build_light_basis_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) -> LightBasisExpert:
+def build_var_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) -> VarExpert:
     base_dim = cfg.get("base_dim")
     head_hidden_raw = cfg.get("head_hidden_dim")
     decoder_feature_raw = cfg.get("decoder_feature_dim")
@@ -194,7 +194,7 @@ def build_light_basis_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) 
         int(decoder_feature_raw) if decoder_feature_raw is not None else expert_feature_dim
     )
     head_hidden_dim = int(head_hidden_raw) if head_hidden_raw is not None else decoder_feature_dim
-    return LightBasisExpert(
+    return VarExpert(
         in_features=int(cfg.get("in_features", 4)),
         view_specs=view_specs,
         num_experts=int(cfg.get("num_experts", 7)),

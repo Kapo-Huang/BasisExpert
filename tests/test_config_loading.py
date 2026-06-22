@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,7 +13,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
     def test_repo_car_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
         config_paths = [
-            repo_root / "configs" / "BasisExpert" / "car.yaml",
+            repo_root / "configs" / "VarExpert" / "car.yaml",
             repo_root / "configs" / "MoE-INR" / "car.yaml",
             repo_root / "configs" / "CoordNet" / "car.yaml",
             repo_root / "configs" / "SIREN" / "car.yaml",
@@ -21,7 +21,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
 
         loaded_configs = [load_experiment_config(path) for path in config_paths]
 
-        self.assertEqual(loaded_configs[0].exp_id, "light_basis_expert-car")
+        self.assertEqual(loaded_configs[0].exp_id, "var-expert-car")
         self.assertEqual(loaded_configs[0].data.dataset_name, "car")
         self.assertIsNone(loaded_configs[0].data.target)
         for loaded in loaded_configs[1:]:
@@ -33,16 +33,16 @@ class ConfigLoadingTestCase(unittest.TestCase):
     def test_repo_bathymetry_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
         config_paths = [
-            repo_root / "configs" / "BasisExpert" / "bathymetry.yaml",
+            repo_root / "configs" / "VarExpert" / "bathymetry.yaml",
             repo_root / "configs" / "MoE-INR" / "bathymetry.yaml",
             repo_root / "configs" / "CoordNet" / "bathymetry.yaml",
             repo_root / "configs" / "SIREN" / "bathymetry.yaml",
-            repo_root / "configs" / "examples" / "bathymetry_light_basis_expert.yaml",
+            repo_root / "configs" / "examples" / "bathymetry_var_expert.yaml",
         ]
 
         loaded_configs = [load_experiment_config(path) for path in config_paths]
 
-        self.assertEqual(loaded_configs[0].exp_id, "light_basis_expert-bathymetry")
+        self.assertEqual(loaded_configs[0].exp_id, "var-expert-bathymetry")
         self.assertEqual(loaded_configs[0].data.dataset_name, "bathymetry")
         self.assertIsNone(loaded_configs[0].data.target)
         for loaded in loaded_configs[1:4]:
@@ -50,7 +50,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
             self.assertEqual(loaded.data.target, "SALT")
             self.assertIn("SALT", loaded.data.targets)
             self.assertIn("-bathymetry-SALT", loaded.exp_id)
-        self.assertEqual(loaded_configs[4].exp_id, "light_basis_expert-bathymetry-example")
+        self.assertEqual(loaded_configs[4].exp_id, "var-expert-bathymetry-example")
         self.assertEqual(loaded_configs[4].data.dataset_name, "bathymetry")
         self.assertIsNone(loaded_configs[4].data.target)
 
@@ -168,6 +168,36 @@ class ConfigLoadingTestCase(unittest.TestCase):
             config_path = Path(tmpdir) / "config.yaml"
             config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
             with self.assertRaises(ValueError):
+                load_experiment_config(config_path)
+
+    def test_load_config_rejects_removed_pretrain_keys(self):
+        config = {
+            "exp_id": "bad-pretrain",
+            "experiment_root": "runs",
+            "data": {
+                "kind": "volume",
+                "target_path": "./target.npy",
+            },
+            "model": {
+                "name": "var_expert",
+                "num_experts": 2,
+                "base_dim": 2,
+                "top_k": 1,
+            },
+            "training": {
+                "device": "cpu",
+                "pretrain": {
+                    "enabled": True,
+                    "epochs": 1,
+                    "batch_size": 32,
+                    "assignments_method": "voxel_clustering",
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Unknown training.pretrain keys"):
                 load_experiment_config(config_path)
 
     def test_load_config_supports_target_selector_and_resolves_placeholders(self):
@@ -349,6 +379,78 @@ class ConfigLoadingTestCase(unittest.TestCase):
             self.assertIn("outermost_linear: true", log_text)
             self.assertIn("out_features: 1", log_text)
 
+    def test_run_train_saves_compact_var_expert_effective_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            coords = np.array(
+                [
+                    [-1.0, -1.0, -1.0, -1.0],
+                    [-0.5, 0.0, 0.5, -0.5],
+                    [0.0, 0.5, -0.5, 0.0],
+                    [1.0, 1.0, 1.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+            a = np.array([[-1.0], [-0.5], [0.5], [1.0]], dtype=np.float32)
+            b = np.array([[-1.0], [-0.5], [0.5], [1.0]], dtype=np.float32)
+            coords_path = root / "coords.npy"
+            a_path = root / "target_a.npy"
+            b_path = root / "target_b.npy"
+            np.save(coords_path, coords)
+            np.save(a_path, a)
+            np.save(b_path, b)
+
+            config = {
+                "experiment": "compact-var-expert",
+                "exp_id": "compact-var-expert",
+                "experiment_root": str(root / "runs"),
+                "data": {
+                    "kind": "node",
+                    "coords_path": str(coords_path),
+                    "targets": {
+                        "a": str(a_path),
+                        "b": str(b_path),
+                    },
+                },
+                "model": {
+                    "name": "var_expert",
+                    "num_experts": 2,
+                    "base_dim": 2,
+                    "top_k": 1,
+                    "decoder_num_layers": 2,
+                },
+                "training": {
+                    "epochs": 1,
+                    "batch_size": 2,
+                    "num_workers": 0,
+                    "lr": 1.0e-3,
+                    "device": "cpu",
+                    "seed": 0,
+                    "val_split": 0.0,
+                    "log_every": 1,
+                    "save_every": 0,
+                    "sampler": "uniform_random",
+                },
+            }
+            config_path = root / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+            run_train(config_path)
+
+            saved_model = yaml.safe_load((root / "runs" / "compact-var-expert" / "config.yaml").read_text(encoding="utf-8"))["model"]
+            self.assertEqual(saved_model["name"], "var_expert")
+            self.assertEqual(saved_model["in_features"], 4)
+            self.assertEqual(saved_model["num_experts"], 2)
+            self.assertEqual(saved_model["base_dim"], 2)
+            self.assertEqual(saved_model["top_k"], 1)
+            self.assertEqual(saved_model["decoder_num_layers"], 2)
+            self.assertNotIn("expert_num_frequencies", saved_model)
+            self.assertNotIn("expert_num_layers", saved_model)
+            self.assertNotIn("gate_num_layers", saved_model)
+            self.assertNotIn("head_num_layers", saved_model)
+            self.assertNotIn("expert_first_omega_0", saved_model)
+            self.assertNotIn("head_hidden_omega_0", saved_model)
+
     def test_run_train_with_target_selector_uses_selected_target_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -416,3 +518,5 @@ class ConfigLoadingTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

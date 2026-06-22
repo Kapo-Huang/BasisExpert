@@ -1,4 +1,4 @@
-experiment: mesh_car_moe_inr_{target}
+﻿experiment: mesh_car_moe_inr_{target}
 exp_id: moeinr-car-{target}
 experiment_root: runs
 data:
@@ -67,14 +67,8 @@ training:
     step_size: 40
     gamma: 0.92
   pretrain:
-    enabled: true
+    enabled: false
     epochs: 0
-    lr: 5.0e-5
-    batch_size: 16000
-    assignments_method: sample_clustering
-    cluster_num_time_samples: 7
-    cluster_seed: 42
-    assignments_cache_path: ../../data/cache/car_sample_assignments_7.npy
 evaluation:
   batch_size: 16000
   save_predictions: true

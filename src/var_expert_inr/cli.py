@@ -11,7 +11,7 @@ import yaml
 from .config.io import load_experiment_config, save_experiment_config
 from .data import build_dataset
 from .evaluation.metrics import evaluate_predictions, save_metrics
-from .models import build_model, materialize_model_config
+from .models import build_model, effective_model_config, materialize_model_config
 from .training.engine import predict_dataset, save_predictions, train_model
 from .utils.checkpoint import (
     read_checkpoint_payload,
@@ -58,7 +58,7 @@ def _prepare_run_dirs(config):
 
 def _build_effective_config_payload(config, dataset_meta) -> dict:
     payload = config.to_dict()
-    payload["model"] = materialize_model_config(config.model, dataset_meta)
+    payload["model"] = effective_model_config(config.model, dataset_meta)
     return payload
 
 
@@ -131,9 +131,14 @@ def run_train(config_path: str | Path) -> dict:
             )
         if config.log.startup_timing:
             logger.info("Model build: %.2fs", model_build_seconds)
+        catalog_model_payload = {
+            key: value
+            for key, value in effective_payload["model"].items()
+            if key != "name"
+        }
         catalog_row = build_model_catalog_row(
             model_name=config.model.name,
-            model_params=config.model.params,
+            model_params=catalog_model_payload,
             stats=stats,
         )
         upsert_model_catalog(Path(config.experiment_root) / "model_size_catalog.csv", catalog_row)

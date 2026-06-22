@@ -28,8 +28,7 @@ class TimeStratifiedSampler(Sampler[int]):
             V = int(self.volume_shape.X) * int(self.volume_shape.Y) * int(self.volume_shape.Z)
             t = indices // V
             self._per_t_indices = [indices[t == ti] for ti in range(int(self.volume_shape.T))]
-        self.samples_per_timestep = self.total_samples_budget // int(self.volume_shape.T)
-        self.total_samples = self.samples_per_timestep * int(self.volume_shape.T)
+        self.total_samples = self.total_samples_budget
 
     def __iter__(self):
         V = int(self.volume_shape.X) * int(self.volume_shape.Y) * int(self.volume_shape.Z)
@@ -60,6 +59,20 @@ class TimeStratifiedSampler(Sampler[int]):
 
     def __len__(self) -> int:
         return int(self.total_samples)
+
+
+def build_pretrain_sampler(dataset, cfg):
+    if cfg.batches_per_epoch_budget <= 0:
+        return None
+    base = dataset.dataset if isinstance(dataset, Subset) else dataset
+    if base.meta.volume_shape is None:
+        raise ValueError("Pretraining with batches_per_epoch_budget requires a volume dataset")
+    generator = torch.Generator().manual_seed(int(cfg.seed))
+    return TimeStratifiedSampler(
+        dataset,
+        total_samples_budget=int(cfg.batches_per_epoch_budget) * int(cfg.batch_size),
+        generator=generator,
+    )
 
 
 def build_train_sampler(dataset, cfg):

@@ -113,6 +113,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     psnr_log_payload = _ensure_mapping(log_payload.get("psnr"), label="log.psnr")
     timing_log_payload = _ensure_mapping(log_payload.get("timing"), label="log.timing")
 
+    _reject_unknown_keys(pretrain_payload, _field_names(PretrainConfig), label="training.pretrain")
     _reject_unknown_keys(psnr_log_payload, _field_names(PSNRLogConfig), label="log.psnr")
     _reject_unknown_keys(timing_log_payload, _field_names(TimingLogConfig), label="log.timing")
 

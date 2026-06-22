@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -174,7 +174,7 @@ class DataLoadingTestCase(unittest.TestCase):
             target="a",
         )
         with self.assertRaisesRegex(ValueError, "only supported for single-target models"):
-            build_dataset(cfg, model_name="light_basis_expert")
+            build_dataset(cfg, model_name="var_expert")
 
     def test_node_dataset_rejects_out_of_range_values(self):
         coords = np.array([[0.0, 0.0, 0.0, 0.0], [1.2, 0.0, 0.0, 0.0]], dtype=np.float32)
@@ -198,3 +198,5 @@ class DataLoadingTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

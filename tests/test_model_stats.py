@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,10 +61,10 @@ class ModelStatsTestCase(unittest.TestCase):
                     },
                 ),
             )
-            inserted_light = upsert_model_catalog(
+            inserted_var_expert = upsert_model_catalog(
                 catalog_path,
                 build_model_catalog_row(
-                    model_name="light_basis_expert",
+                    model_name="var_expert",
                     model_params={"base_dim": 2, "num_experts": 3},
                     stats={
                         "param_count": 42,
@@ -77,18 +77,20 @@ class ModelStatsTestCase(unittest.TestCase):
 
             self.assertTrue(inserted_siren)
             self.assertFalse(duplicate_siren)
-            self.assertTrue(inserted_light)
+            self.assertTrue(inserted_var_expert)
 
             with catalog_path.open("r", newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
 
-            self.assertEqual([row["model_name"] for row in rows], ["light_basis_expert", "siren"])
+            self.assertEqual([row["model_name"] for row in rows], ["siren", "var_expert"])
             self.assertEqual(len(rows), 2)
-            self.assertEqual(rows[0]["base_dim"], "2")
-            self.assertEqual(rows[0]["num_experts"], "3")
-            self.assertEqual(rows[1]["hidden_features"], "8")
-            self.assertEqual(rows[1]["hidden_layers"], "1")
+            self.assertEqual(rows[0]["hidden_features"], "8")
+            self.assertEqual(rows[0]["hidden_layers"], "1")
+            self.assertEqual(rows[1]["base_dim"], "2")
+            self.assertEqual(rows[1]["num_experts"], "3")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

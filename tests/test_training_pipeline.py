@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,7 +62,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "targets": {"a": str(a_path), "b": str(b_path)},
             },
             "model": {
-                "name": "light_basis_expert",
+                "name": "var_expert",
                 "in_features": 4,
                 "num_experts": 2,
                 "base_dim": 2,
@@ -134,6 +134,183 @@ class TrainingPipelineTestCase(unittest.TestCase):
         eval_result = run_evaluate(config_path)
         self.assertTrue(Path(eval_result["metrics_path"]).exists())
 
+    def test_volume_pretrain_uses_batches_per_epoch_budget(self):
+        volume = np.linspace(-1.0, 1.0, 6, dtype=np.float32).reshape(3, 1, 1, 2)
+        volume_path = self.root / "budget_volume.npy"
+        np.save(volume_path, volume)
+        config = {
+            "experiment": "budgeted-pretrain",
+            "exp_id": "budgeted-pretrain",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "volume",
+                "target_path": str(volume_path),
+                "volume_shape": {"X": 2, "Y": 1, "Z": 1, "T": 3},
+            },
+            "model": {
+                "name": "var_expert",
+                "in_features": 4,
+                "num_experts": 2,
+                "base_dim": 2,
+                "top_k": 1,
+                "expert_num_layers": 2,
+                "gate_num_layers": 2,
+                "decoder_num_layers": 2,
+                "head_num_layers": 2,
+            },
+            "training": {
+                "epochs": 1,
+                "batch_size": 2,
+                "pred_batch_size": 2,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 11,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 0,
+                "sampler": "uniform_random",
+                "batches_per_epoch_budget": 1,
+                "pretrain": {
+                    "enabled": True,
+                    "epochs": 1,
+                    "lr": 1.0e-3,
+                },
+            },
+            "log": {
+                "timing": {
+                    "enabled": False,
+                },
+            },
+        }
+        config_path = self._write_yaml(self.root / "budgeted_pretrain.yaml", config)
+        run_train(config_path)
+
+        log_text = self._read_log_text("budgeted-pretrain")
+        self.assertIn("Pretrain start: epochs=1 batch_size=2", log_text)
+        self.assertIn("batches_per_epoch_budget=1", log_text)
+        self.assertIn("Pretrain DataLoader ready: batches_per_epoch=1", log_text)
+        self.assertIn("budget_batches=1 batch_size=2", log_text)
+        self.assertIn("Pretrain epoch 1/1 start: batches=1 batch_size=2", log_text)
+
+    def test_volume_pretrain_falls_back_to_full_loader_without_budget(self):
+        volume = np.linspace(-1.0, 1.0, 6, dtype=np.float32).reshape(3, 1, 1, 2)
+        volume_path = self.root / "full_volume.npy"
+        np.save(volume_path, volume)
+        config = {
+            "experiment": "full-pretrain",
+            "exp_id": "full-pretrain",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "volume",
+                "target_path": str(volume_path),
+                "volume_shape": {"X": 2, "Y": 1, "Z": 1, "T": 3},
+            },
+            "model": {
+                "name": "var_expert",
+                "in_features": 4,
+                "num_experts": 2,
+                "base_dim": 2,
+                "top_k": 1,
+                "expert_num_layers": 2,
+                "gate_num_layers": 2,
+                "decoder_num_layers": 2,
+                "head_num_layers": 2,
+            },
+            "training": {
+                "epochs": 1,
+                "batch_size": 2,
+                "pred_batch_size": 2,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 12,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 0,
+                "sampler": "uniform_random",
+                "batches_per_epoch_budget": 0,
+                "pretrain": {
+                    "enabled": True,
+                    "epochs": 1,
+                    "lr": 1.0e-3,
+                },
+            },
+            "log": {
+                "timing": {
+                    "enabled": False,
+                },
+            },
+        }
+        config_path = self._write_yaml(self.root / "full_pretrain.yaml", config)
+        run_train(config_path)
+
+        log_text = self._read_log_text("full-pretrain")
+        self.assertIn("Pretrain start: epochs=1 batch_size=2", log_text)
+        self.assertIn("batches_per_epoch_budget=0", log_text)
+        self.assertIn("Pretrain DataLoader ready: batches_per_epoch=3", log_text)
+        self.assertIn("budget_batches=0 batch_size=2", log_text)
+        self.assertIn("Pretrain epoch 1/1 start: batches=3 batch_size=2", log_text)
+
+    def test_node_pretrain_requires_volume_dataset(self):
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        target = coords[:, :1] * 0.5
+        coords_path = self.root / "node_coords.npy"
+        target_path = self.root / "node_target.npy"
+        np.save(coords_path, coords)
+        np.save(target_path, target)
+
+        config = {
+            "experiment": "node-pretrain-error",
+            "exp_id": "node-pretrain-error",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "node",
+                "coords_path": str(coords_path),
+                "target_path": str(target_path),
+            },
+            "model": {
+                "name": "var_expert",
+                "in_features": 4,
+                "num_experts": 2,
+                "base_dim": 2,
+                "top_k": 1,
+                "expert_num_layers": 2,
+                "gate_num_layers": 2,
+                "decoder_num_layers": 2,
+                "head_num_layers": 2,
+            },
+            "training": {
+                "epochs": 1,
+                "batch_size": 2,
+                "pred_batch_size": 2,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 13,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 0,
+                "sampler": "uniform_random",
+                "pretrain": {
+                    "enabled": True,
+                    "epochs": 1,
+                    "lr": 1.0e-3,
+                },
+            },
+        }
+        config_path = self._write_yaml(self.root / "node_pretrain_error.yaml", config)
+        with self.assertRaisesRegex(ValueError, "volume dataset"):
+            run_train(config_path)
+
     def test_training_updates_global_model_size_catalog(self):
         experiment_root = self.root / "runs"
         volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
@@ -190,7 +367,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
         np.save(coords_path, coords)
         np.save(a_path, target_a)
         np.save(b_path, target_b)
-        light_config = {
+        var_expert_config = {
             "experiment": "node-pipeline",
             "exp_id": "node-pipeline",
             "experiment_root": str(experiment_root),
@@ -200,7 +377,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "targets": {"a": str(a_path), "b": str(b_path)},
             },
             "model": {
-                "name": "light_basis_expert",
+                "name": "var_expert",
                 "in_features": 4,
                 "num_experts": 2,
                 "base_dim": 2,
@@ -225,7 +402,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
             },
             "evaluation": {"batch_size": 3},
         }
-        light_config_path = self._write_yaml(self.root / "light.yaml", light_config)
+        var_expert_config_path = self._write_yaml(self.root / "var_expert.yaml", var_expert_config)
 
         run_train(siren_config_path)
         catalog_path = experiment_root / "model_size_catalog.csv"
@@ -240,18 +417,18 @@ class TrainingPipelineTestCase(unittest.TestCase):
         rows = self._read_csv_rows(catalog_path)
         self.assertEqual(len(rows), 1)
 
-        run_train(light_config_path)
+        run_train(var_expert_config_path)
         rows = self._read_csv_rows(catalog_path)
         self.assertEqual(len(rows), 2)
-        self.assertEqual([row["model_name"] for row in rows], ["light_basis_expert", "siren"])
+        self.assertEqual([row["model_name"] for row in rows], ["siren", "var_expert"])
 
-        light_row = rows[0]
-        self.assertEqual(light_row["base_dim"], "2")
-        self.assertEqual(light_row["num_experts"], "2")
-        self.assertTrue(light_row["model_config_hash"])
-        self.assertGreater(int(light_row["param_count"]), 0)
-        self.assertGreater(int(light_row["trainable_param_count"]), 0)
-        self.assertGreater(int(light_row["fp16_size_bytes"]), 0)
+        var_expert_row = rows[1]
+        self.assertEqual(var_expert_row["base_dim"], "2")
+        self.assertEqual(var_expert_row["num_experts"], "2")
+        self.assertTrue(var_expert_row["model_config_hash"])
+        self.assertGreater(int(var_expert_row["param_count"]), 0)
+        self.assertGreater(int(var_expert_row["trainable_param_count"]), 0)
+        self.assertGreater(int(var_expert_row["fp16_size_bytes"]), 0)
 
         run_predict(siren_config_path)
         run_evaluate(siren_config_path)
@@ -289,7 +466,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "targets": {"a": str(a_path), "b": str(b_path)},
             },
             "model": {
-                "name": "light_basis_expert",
+                "name": "var_expert",
                 "in_features": 4,
                 "num_experts": 2,
                 "base_dim": 2,
@@ -349,7 +526,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
         self.assertIn("Train timing window epoch 1/1 steps 1-1:", log_text)
         self.assertIn("Train epoch 1/1 timing(total):", log_text)
 
-    def test_light_basis_expert_logs_utilization_and_ema_state(self):
+    def test_var_expert_logs_utilization_and_ema_state(self):
         coords = np.array(
             [
                 [0.0, 0.0, 0.0, 0.0],
@@ -371,8 +548,8 @@ class TrainingPipelineTestCase(unittest.TestCase):
         np.save(b_path, target_b)
 
         config = {
-            "experiment": "light-basis-expert-logs",
-            "exp_id": "light-basis-expert-logs",
+            "experiment": "var-expert-logs",
+            "exp_id": "var-expert-logs",
             "experiment_root": str(self.root / "runs"),
             "data": {
                 "kind": "node",
@@ -380,7 +557,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "targets": {"a": str(a_path), "b": str(b_path)},
             },
             "model": {
-                "name": "light_basis_expert",
+                "name": "var_expert",
                 "in_features": 4,
                 "num_experts": 2,
                 "base_dim": 2,
@@ -425,10 +602,10 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 },
             },
         }
-        config_path = self._write_yaml(self.root / "light_basis_expert_logs.yaml", config)
+        config_path = self._write_yaml(self.root / "var_expert_logs.yaml", config)
         run_train(config_path)
 
-        log_text = self._read_log_text("light-basis-expert-logs")
+        log_text = self._read_log_text("var-expert-logs")
         self.assertIn("Expert utilization rate:", log_text)
         self.assertIn("EMA balance state: step=", log_text)
         self.assertIn("effective_weights={", log_text)
@@ -508,3 +685,5 @@ class TrainingPipelineTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

@@ -1,4 +1,4 @@
-experiment: volume_ionization_moe_inr_{target}
+﻿experiment: volume_ionization_moe_inr_{target}
 exp_id: moeinr-ionization-{target}
 experiment_root: runs
 data:
@@ -51,16 +51,8 @@ training:
     enabled: true
     epochs: 0
     lr: 5.0e-5
-    batch_size: 16000
-    assignments_method: voxel_clustering
-    cluster_num_time_samples: 7
     cluster_seed: 42
     assignments_cache_path: ../../data/cache/ionization_voxel_assignments_7.npy
-    spatial_blocks:
-      - 4
-      - 4
-      - 4
-    time_block_size: 1
 evaluation:
   batch_size: 16000
   save_predictions: true

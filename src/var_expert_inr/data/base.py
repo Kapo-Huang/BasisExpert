@@ -133,15 +133,3 @@ class FieldDataset(Dataset[int], ABC):
     @abstractmethod
     def reshape_flat_predictions(self, name: str, flat_values: np.ndarray) -> np.ndarray:
         raise NotImplementedError
-
-    @abstractmethod
-    def pretrain_assignment_kind(self) -> str:
-        raise NotImplementedError
-
-    @abstractmethod
-    def sample_cluster_features(self) -> np.ndarray:
-        raise NotImplementedError
-
-    @abstractmethod
-    def raw_coords(self) -> np.ndarray:
-        raise NotImplementedError

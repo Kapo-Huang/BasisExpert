@@ -1,5 +1,5 @@
-experiment: mesh_katrina_light_basis_expert
-exp_id: light_basis_expert-katrina
+﻿experiment: mesh_katrina_var_expert
+exp_id: var-expert-katrina
 experiment_root: runs
 data:
   kind: node
@@ -13,16 +13,11 @@ data:
     speed: ../../data/Mesh/Katrina/target_speed.npy
     v: ../../data/Mesh/Katrina/target_v.npy
 model:
-  name: light_basis_expert
+  name: var_expert
   in_features: 4
   num_experts: 7
   base_dim: 8
   top_k: 2
-  expert_num_frequencies: 6
-  expert_num_layers: 3
-  gate_num_layers: 3
-  decoder_num_layers: 3
-  head_num_layers: 2
 training:
   epochs: 60
   batch_size: 8192
@@ -34,6 +29,10 @@ training:
   loss_type: mse
   seed: 42
   sampler: uniform_random
+  pretrain:
+    enabled: false
+    epochs: 0
 evaluation:
   batch_size: 8192
   save_predictions: true
+

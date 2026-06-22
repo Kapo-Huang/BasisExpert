@@ -1,5 +1,5 @@
-experiment: volume_ionization_light_basis_expert
-exp_id: light_basis_expert-ionization-sub2
+﻿experiment: volume_ionization_var_expert
+exp_id: var-expert-ionization-sub2
 experiment_root: runs
 data:
   kind: volume
@@ -12,16 +12,11 @@ data:
     T: 2
   target_dir: ../../data/Volume/Ionization
 model:
-  name: light_basis_expert
+  name: var_expert
   in_features: 4
   num_experts: 6
   base_dim: 24
   top_k: 3
-  expert_num_frequencies: 6
-  expert_num_layers: 3
-  gate_num_layers: 3
-  decoder_num_layers: 3
-  head_num_layers: 2
 training:
   epochs: 600
   batch_size: 16000
@@ -51,11 +46,9 @@ training:
     enabled: true
     epochs: 5
     lr: 5.0e-5
-    batch_size: 16000
-    assignments_method: voxel_clustering
-    cluster_num_time_samples: 2
     cluster_seed: 42
     assignments_cache_path: ../../data/cache/ionization_voxel_assignments_6.npy
 evaluation:
   batch_size: 16000
   save_predictions: true
+

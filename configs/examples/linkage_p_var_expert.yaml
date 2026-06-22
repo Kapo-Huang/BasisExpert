@@ -1,5 +1,5 @@
-experiment: mesh_linkage_p_light_basis_expert
-exp_id: light_basis_expert-linkage-p
+﻿experiment: mesh_linkage_p_var_expert
+exp_id: var-expert-linkage-p
 experiment_root: runs
 data:
   kind: node
@@ -10,16 +10,13 @@ data:
     point_RF: ../../data/Mesh/Linkage-P/target_point_RF.npy
     point_U: ../../data/Mesh/Linkage-P/target_point_U.npy
 model:
-  name: light_basis_expert
+  name: var_expert
   in_features: 4
   num_experts: 7
   base_dim: 4
   top_k: 2
-  expert_num_frequencies: 6
   expert_num_layers: 2
-  gate_num_layers: 3
   decoder_num_layers: 2
-  head_num_layers: 2
 training:
   epochs: 60
   batch_size: 8192
@@ -31,6 +28,10 @@ training:
   loss_type: mse
   seed: 42
   sampler: uniform_random
+  pretrain:
+    enabled: false
+    epochs: 0
 evaluation:
   batch_size: 8192
   save_predictions: true
+

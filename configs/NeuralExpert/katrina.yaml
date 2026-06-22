@@ -1,7 +1,7 @@
-seed: 0
+﻿seed: 0
 wandb_project: "inr_moe_mesh"
 experiment: "neural_expert_katrina_{target}"
-exp_id: "neural_expert-katrina-{target}"
+exp_id: "neural-expert-katrina-{target}"
 experiment_root: "../../runs/neural_expert"
 
 MODEL:
@@ -82,3 +82,4 @@ TRAINING:
     - end_iteration_frac: 1.0
       params: "all"
       loss_type: "1000valrecon"
+

@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 
 from var_expert_inr.config.schema import ModelConfig
 from var_expert_inr.data.base import DatasetMeta
@@ -41,18 +41,18 @@ class ModelRegistryTestCase(unittest.TestCase):
             target_dims={"target": 1},
             volume_shape=None,
         )
-        light_basis_model = build_model(
-            ModelConfig(name="light_basis_expert", params={"in_features": 4, "num_experts": 2, "base_dim": 2}),
+        var_expert_model = build_model(
+            ModelConfig(name="var_expert", params={"in_features": 4, "num_experts": 2, "base_dim": 2}),
             multi_meta,
         )
         native_model = build_model(
             ModelConfig(name="coordnet", params={"in_features": 4, "init_features": 4, "num_res": 1}),
             single_meta,
         )
-        self.assertEqual(type(light_basis_model.backbone).__name__, "LightBasisExpert")
+        self.assertEqual(type(var_expert_model.backbone).__name__, "VarExpert")
         self.assertEqual(type(native_model.backbone).__name__, "CoordNet")
 
-    def test_legacy_model_alias_is_rejected(self):
+    def test_legacy_model_name_is_rejected(self):
         meta = DatasetMeta(
             kind="node",
             n_samples=8,
@@ -61,9 +61,9 @@ class ModelRegistryTestCase(unittest.TestCase):
             target_dims={"a": 1, "b": 2},
             volume_shape=None,
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Unknown model name: light_basis_expert"):
             build_model(
-                ModelConfig(name="basisExpert_simple_concat", params={"in_features": 4, "num_experts": 2, "base_dim": 2}),
+                ModelConfig(name="light_basis_expert", params={"in_features": 4, "num_experts": 2, "base_dim": 2}),
                 meta,
             )
 
@@ -85,3 +85,5 @@ class ModelRegistryTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

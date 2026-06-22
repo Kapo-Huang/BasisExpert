@@ -16,7 +16,7 @@ from ..utils.checkpoint import save_checkpoint
 from ..utils.timing import TimingBreakdown, log_epoch_timing, log_step_timing_window, timing_elapsed, timing_start
 from .balancers import GradNormBalancer, MultiAttrEMALoss, apply_multitask_gradient
 from .losses import pointwise_loss, reconstruction_loss_with_breakdown
-from .samplers import build_train_sampler
+from .samplers import build_pretrain_sampler, build_train_sampler
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def _split_dataset(dataset, val_split: float, seed: int):
 def _build_loader(dataset, cfg, *, include_targets: bool = True, assignments=None, shuffle=False, sampler=None):
     return DataLoader(
         dataset,
-        batch_size=int(cfg.batch_size if include_targets else cfg.pretrain.batch_size),
+        batch_size=int(cfg.batch_size),
         shuffle=shuffle,
         sampler=sampler,
         num_workers=int(cfg.num_workers),
@@ -58,6 +58,23 @@ def _build_loader(dataset, cfg, *, include_targets: bool = True, assignments=Non
         collate_fn=_collate_factory(
             _resolve_base_dataset(dataset),
             include_targets=include_targets,
+            assignments=assignments,
+        ),
+    )
+
+
+def _build_pretrain_loader(dataset, cfg, *, assignments):
+    sampler = build_pretrain_sampler(dataset, cfg)
+    return DataLoader(
+        dataset,
+        batch_size=int(cfg.batch_size),
+        shuffle=sampler is None,
+        sampler=sampler,
+        num_workers=int(cfg.num_workers),
+        pin_memory=True,
+        collate_fn=_collate_factory(
+            _resolve_base_dataset(dataset),
+            include_targets=False,
             assignments=assignments,
         ),
     )
@@ -222,24 +239,42 @@ def _log_step_window_if_needed(
 def _run_pretrain(model, dataset, cfg, device, log_cfg: LogConfig):
     if not cfg.pretrain.enabled or cfg.pretrain.epochs <= 0:
         return
+    if dataset.meta.volume_shape is None:
+        raise ValueError("Configured pretraining requires a volume dataset because only voxel_clustering is supported")
     if not hasattr(model, "pretrain_forward"):
         raise ValueError("Configured pretraining but selected model does not expose pretrain_forward")
+    num_experts = getattr(model, "num_experts", None)
+    if num_experts is None:
+        raise ValueError("Configured pretraining requires model.num_experts")
+    logger.info(
+        "Pretrain start: epochs=%d batch_size=%d num_workers=%d num_experts=%d batches_per_epoch_budget=%d cache=%s",
+        int(cfg.pretrain.epochs),
+        int(cfg.batch_size),
+        int(cfg.num_workers),
+        int(num_experts),
+        int(cfg.batches_per_epoch_budget),
+        str(cfg.pretrain.assignments_cache_path or "<none>"),
+    )
     assignments_cfg = PretrainAssignmentConfig(
-        method=cfg.pretrain.assignments_method,
         seed=int(cfg.pretrain.cluster_seed),
         cache_path=str(cfg.pretrain.assignments_cache_path or ""),
-        cluster_num_time_samples=int(cfg.pretrain.cluster_num_time_samples),
-        spatial_blocks=cfg.pretrain.spatial_blocks,
-        time_block_size=int(cfg.pretrain.time_block_size),
     )
-    assignments = compute_pretrain_assignments(dataset, int(model.num_experts), assignments_cfg)
-    pretrain_loader = DataLoader(
-        dataset,
-        batch_size=int(cfg.pretrain.batch_size),
-        shuffle=True,
-        num_workers=int(cfg.num_workers),
-        pin_memory=True,
-        collate_fn=_collate_factory(dataset, include_targets=False, assignments=assignments),
+    assignments_started_at = time.perf_counter()
+    assignments = compute_pretrain_assignments(dataset, int(num_experts), assignments_cfg)
+    logger.info(
+        "Pretrain assignments prepared: shape=%s time=%.2fs",
+        tuple(assignments.shape),
+        time.perf_counter() - assignments_started_at,
+    )
+    loader_started_at = time.perf_counter()
+    pretrain_loader = _build_pretrain_loader(dataset, cfg, assignments=assignments)
+    logger.info(
+        "Pretrain DataLoader ready: batches_per_epoch=%d dataset_samples=%d budget_batches=%d batch_size=%d time=%.2fs",
+        len(pretrain_loader),
+        len(dataset),
+        int(cfg.batches_per_epoch_budget),
+        int(cfg.batch_size),
+        time.perf_counter() - loader_started_at,
     )
     optimizer = torch.optim.Adam(list(model.pretrain_parameters()), lr=float(cfg.pretrain.lr))
     timing_enabled = bool(log_cfg.timing.enabled)
@@ -261,6 +296,13 @@ def _run_pretrain(model, dataset, cfg, device, log_cfg: LogConfig):
         window_transfer = 0.0
         window_training = 0.0
         steps_seen = 0
+        logger.info(
+            "Pretrain epoch %s/%s start: batches=%d batch_size=%d",
+            epoch,
+            cfg.pretrain.epochs,
+            len(pretrain_loader),
+            int(cfg.batch_size),
+        )
 
         iterator = iter(pretrain_loader)
         batch_fetch_started_at = time.perf_counter()
@@ -441,7 +483,7 @@ def train_model(
     router_frozen = False
     psnr_dataset = _build_psnr_dataset(dataset, sample_ratio=cfg.psnr_sample_ratio, seed=cfg.seed)
     started_at = time.time()
-    is_light_basis_expert = type(getattr(model, "backbone", model)).__name__ == "LightBasisExpert"
+    is_var_expert = type(getattr(model, "backbone", model)).__name__ == "VarExpert"
 
     for epoch in range(1, cfg.epochs + 1):
         model.train()
@@ -502,7 +544,7 @@ def train_model(
 
             optimizer.zero_grad()
             if _is_multitarget(batch.targets):
-                if is_light_basis_expert:
+                if is_var_expert:
                     preds, aux = _predict_batch_with_aux(
                         model,
                         coords,
@@ -538,7 +580,7 @@ def train_model(
                 else:
                     total_loss.backward()
             else:
-                if is_light_basis_expert:
+                if is_var_expert:
                     preds, aux = _predict_batch_with_aux(
                         model,
                         coords,
@@ -554,7 +596,7 @@ def train_model(
                 total_loss.backward()
             optimizer.step()
 
-            if is_light_basis_expert and "probs" in aux:
+            if is_var_expert and "probs" in aux:
                 probs = aux["probs"].detach()
                 reduce_dims = tuple(range(probs.dim() - 1))
                 counts = probs.float().sum(dim=reduce_dims).cpu()

@@ -1,5 +1,5 @@
-experiment: mesh_car_light_basis_expert
-exp_id: light_basis_expert-car
+﻿experiment: mesh_car_var_expert
+exp_id: var-expert-car
 experiment_root: runs
 data:
   kind: node
@@ -36,24 +36,11 @@ data:
     VorticityZ: ../../data/Mesh/Car/target_VorticityZ.npy
     Wall_Yplus: ../../data/Mesh/Car/target_Wall_Yplus.npy
 model:
-  name: light_basis_expert
+  name: var_expert
   in_features: 4
   num_experts: 6
   base_dim: 8
   top_k: 3
-  expert_num_frequencies: 6
-  expert_num_layers: 3
-  gate_num_layers: 3
-  decoder_num_layers: 3
-  head_num_layers: 2
-  expert_first_omega_0: 30.0
-  expert_hidden_omega_0: 30.0
-  gate_first_omega_0: 30.0
-  gate_hidden_omega_0: 30.0
-  decoder_first_omega_0: 30.0
-  decoder_hidden_omega_0: 30.0
-  head_first_omega_0: 30.0
-  head_hidden_omega_0: 30.0
 training:
   epochs: 600
   batch_size: 16000
@@ -82,14 +69,9 @@ training:
     step_size: 40
     gamma: 0.92
   pretrain:
-    enabled: true
+    enabled: false
     epochs: 0
-    lr: 5.0e-5
-    batch_size: 16000
-    assignments_method: sample_clustering
-    cluster_num_time_samples: 6
-    cluster_seed: 42
-    assignments_cache_path: ../../data/cache/car_sample_assignments_6.npy
 evaluation:
   batch_size: 16000
   save_predictions: true
+

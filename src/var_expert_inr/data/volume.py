@@ -156,16 +156,3 @@ class VolumeFieldDataset(FieldDataset):
             self.volume_shape.X,
             dims,
         )
-
-    def pretrain_assignment_kind(self) -> str:
-        return "voxel_or_time"
-
-    def sample_cluster_features(self) -> np.ndarray:
-        blocks = []
-        for name in self._target_names:
-            blocks.append(np.asarray(self._targets_flat[name], dtype=np.float32))
-        return np.concatenate(blocks, axis=1)
-
-    def raw_coords(self) -> np.ndarray:
-        rows = np.arange(self.meta.n_samples, dtype=np.int64)
-        return self._indices_to_coords(rows)

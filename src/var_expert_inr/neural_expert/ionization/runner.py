@@ -70,7 +70,7 @@ def _build_validate_config(cfg, validate_ckpt_path):
     volume_shape = data_cfg["volume_shape"]
     return {
         "experiment": f"exp_data_ionization_neural_expert_{data_cfg['attr_name']}",
-        "exp_id": f"neural_expert-ionization-{data_cfg['attr_name']}",
+        "exp_id": f"neural-expert-ionization-{data_cfg['attr_name']}",
         "experiment_root": "experiments",
         "data": {
             "dataset_name": "ionization",

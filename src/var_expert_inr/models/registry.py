@@ -4,8 +4,8 @@ from typing import Any, Callable
 
 from ..config.schema import ModelConfig
 from ..data.base import DatasetMeta
-from .basis_expert.light_basis_expert import build_light_basis_expert_from_config
-from .basis_expert.shared_enc_inr import build_shared_enc_inr_from_config
+from .var_expert.shared_enc_inr import build_shared_enc_inr_from_config
+from .var_expert.var_expert import build_var_expert_from_config
 from .common import ModelAdapter, require_single_target, view_specs_from_meta
 from .sota.coordnet import build_coordnet_from_config
 from .sota.moe_inr import build_moe_inr_from_config
@@ -14,6 +14,57 @@ from .sota.siren import build_siren_from_config
 
 ModelBuilder = Callable[[dict[str, Any], DatasetMeta], object]
 ModelConfigMaterializer = Callable[[dict[str, Any], DatasetMeta], dict[str, Any]]
+
+VAR_EXPERT_DEFAULTS: dict[str, int | float] = {
+    "expert_num_frequencies": 6,
+    "expert_num_layers": 3,
+    "gate_num_layers": 3,
+    "decoder_num_layers": 3,
+    "head_num_layers": 2,
+    "expert_first_omega_0": 30.0,
+    "expert_hidden_omega_0": 30.0,
+    "gate_first_omega_0": 30.0,
+    "gate_hidden_omega_0": 30.0,
+    "decoder_first_omega_0": 30.0,
+    "decoder_hidden_omega_0": 30.0,
+    "head_first_omega_0": 30.0,
+    "head_hidden_omega_0": 30.0,
+}
+VAR_EXPERT_ALLOWED_KEYS = {
+    "in_features",
+    "num_experts",
+    "base_dim",
+    "expert_feature_dim",
+    "top_k",
+    "view_embed_dim",
+    "expert_num_frequencies",
+    "expert_hidden_dim",
+    "expert_num_layers",
+    "gate_hidden_dim",
+    "gate_num_layers",
+    "decoder_feature_dim",
+    "decoder_hidden_dim",
+    "decoder_num_layers",
+    "head_hidden_dim",
+    "head_num_layers",
+    "expert_first_omega_0",
+    "expert_hidden_omega_0",
+    "gate_first_omega_0",
+    "gate_hidden_omega_0",
+    "decoder_first_omega_0",
+    "decoder_hidden_omega_0",
+    "head_first_omega_0",
+    "head_hidden_omega_0",
+}
+VAR_EXPERT_COMPACT_INT_KEYS = {
+    "expert_feature_dim",
+    "view_embed_dim",
+    "expert_hidden_dim",
+    "gate_hidden_dim",
+    "decoder_feature_dim",
+    "decoder_hidden_dim",
+    "head_hidden_dim",
+}
 
 
 def _reject_unknown_model_keys(cfg: dict[str, Any], allowed: set[str], model_name: str) -> None:
@@ -61,8 +112,8 @@ def _build_moe_inr(cfg: dict, meta: DatasetMeta):
     return build_moe_inr_from_config(cfg)
 
 
-def _build_light_basis_expert(cfg: dict, meta: DatasetMeta):
-    return build_light_basis_expert_from_config(cfg, view_specs_from_meta(meta))
+def _build_var_expert(cfg: dict, meta: DatasetMeta):
+    return build_var_expert_from_config(cfg, view_specs_from_meta(meta))
 
 
 def _build_shared_enc_inr(cfg: dict, meta: DatasetMeta):
@@ -148,37 +199,8 @@ def _materialize_moe_inr(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, An
     }
 
 
-def _materialize_light_basis_expert(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
-    _reject_unknown_model_keys(
-        cfg,
-        {
-            "in_features",
-            "num_experts",
-            "base_dim",
-            "expert_feature_dim",
-            "top_k",
-            "view_embed_dim",
-            "expert_num_frequencies",
-            "expert_hidden_dim",
-            "expert_num_layers",
-            "gate_hidden_dim",
-            "gate_num_layers",
-            "decoder_feature_dim",
-            "decoder_hidden_dim",
-            "decoder_num_layers",
-            "head_hidden_dim",
-            "head_num_layers",
-            "expert_first_omega_0",
-            "expert_hidden_omega_0",
-            "gate_first_omega_0",
-            "gate_hidden_omega_0",
-            "decoder_first_omega_0",
-            "decoder_hidden_omega_0",
-            "head_first_omega_0",
-            "head_hidden_omega_0",
-        },
-        "light_basis_expert",
-    )
+def _materialize_var_expert(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
+    _reject_unknown_model_keys(cfg, VAR_EXPERT_ALLOWED_KEYS, "var_expert")
     base_dim = cfg.get("base_dim")
     head_hidden_raw = cfg.get("head_hidden_dim")
     decoder_feature_raw = cfg.get("decoder_feature_dim")
@@ -198,7 +220,7 @@ def _materialize_light_basis_expert(cfg: dict[str, Any], meta: DatasetMeta) -> d
     decoder_feature_dim = int(decoder_feature_raw) if decoder_feature_raw is not None else expert_feature_dim
     head_hidden_dim = int(head_hidden_raw) if head_hidden_raw is not None else decoder_feature_dim
     return {
-        "in_features": _resolve_in_features(cfg, meta, "light_basis_expert"),
+        "in_features": _resolve_in_features(cfg, meta, "var_expert"),
         "num_experts": int(cfg.get("num_experts", 7)),
         "expert_feature_dim": expert_feature_dim,
         "top_k": int(cfg.get("top_k", 3)),
@@ -222,6 +244,29 @@ def _materialize_light_basis_expert(cfg: dict[str, Any], meta: DatasetMeta) -> d
         "head_first_omega_0": float(cfg.get("head_first_omega_0", 30.0)),
         "head_hidden_omega_0": float(cfg.get("head_hidden_omega_0", 30.0)),
     }
+
+
+def _compact_var_expert_config(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
+    materialized = _materialize_var_expert(cfg, meta)
+    compact: dict[str, Any] = {
+        "in_features": _resolve_in_features(cfg, meta, "var_expert"),
+        "num_experts": int(cfg.get("num_experts", 7)),
+        "top_k": int(cfg.get("top_k", 3)),
+    }
+    if cfg.get("base_dim") is not None:
+        compact["base_dim"] = int(cfg["base_dim"])
+    else:
+        for key in VAR_EXPERT_COMPACT_INT_KEYS:
+            if cfg.get(key) is not None:
+                compact[key] = int(cfg[key])
+
+    for key, default_value in VAR_EXPERT_DEFAULTS.items():
+        if key not in cfg:
+            continue
+        value = materialized[key]
+        if value != default_value:
+            compact[key] = value
+    return compact
 
 
 def _materialize_shared_enc_inr(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
@@ -291,7 +336,7 @@ MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "siren": _build_siren,
     "coordnet": _build_coordnet,
     "moe_inr": _build_moe_inr,
-    "light_basis_expert": _build_light_basis_expert,
+    "var_expert": _build_var_expert,
     "shared_enc_inr": _build_shared_enc_inr,
 }
 
@@ -299,7 +344,7 @@ MODEL_CONFIG_MATERIALIZERS: dict[str, ModelConfigMaterializer] = {
     "siren": _materialize_siren,
     "coordnet": _materialize_coordnet,
     "moe_inr": _materialize_moe_inr,
-    "light_basis_expert": _materialize_light_basis_expert,
+    "var_expert": _materialize_var_expert,
     "shared_enc_inr": _materialize_shared_enc_inr,
 }
 
@@ -309,6 +354,15 @@ def materialize_model_config(model_cfg: ModelConfig, meta: DatasetMeta) -> dict[
     if model_name not in MODEL_CONFIG_MATERIALIZERS:
         raise ValueError(f"Unknown model name: {model_cfg.name}")
     payload = MODEL_CONFIG_MATERIALIZERS[model_name](dict(model_cfg.params), meta)
+    return {"name": model_name, **payload}
+
+
+def effective_model_config(model_cfg: ModelConfig, meta: DatasetMeta) -> dict[str, Any]:
+    model_name = str(model_cfg.name)
+    if model_name == "var_expert":
+        payload = _compact_var_expert_config(dict(model_cfg.params), meta)
+    else:
+        payload = MODEL_CONFIG_MATERIALIZERS[model_name](dict(model_cfg.params), meta)
     return {"name": model_name, **payload}
 
 

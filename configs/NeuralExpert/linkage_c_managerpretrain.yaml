@@ -1,7 +1,7 @@
-seed: 0
+﻿seed: 0
 wandb_project: "inr_moe_mesh"
 experiment: "neural_expert_linkage_c_{target}_managerpretrain"
-exp_id: "neural_expert-linkage-c-{target}-managerpretrain"
+exp_id: "neural-expert-linkage-c-{target}-managerpretrain"
 experiment_root: "../../runs/neural_expert"
 
 MODEL:
@@ -81,3 +81,4 @@ TRAINING:
     - end_iteration_frac: 1.0
       params: "all"
       loss_type: "1000segmentation"
+

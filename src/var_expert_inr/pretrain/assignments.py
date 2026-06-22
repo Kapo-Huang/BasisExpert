@@ -1,31 +1,39 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
+import logging
 from pathlib import Path
-from typing import Optional, Tuple
+import time
 
 import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class PretrainAssignmentConfig:
-    method: str = "random_uniform"
     seed: int = 42
     cache_path: str = ""
-    cluster_num_time_samples: int = 16
-    spatial_blocks: Optional[Tuple[int, int, int]] = None
-    time_block_size: int = 0
 
 
-def _load_cached(cache_path: str) -> Optional[np.ndarray]:
+def _load_cached(cache_path: str, *, expected_size: int, num_experts: int) -> np.ndarray | None:
     if not cache_path:
         return None
     cache = Path(cache_path)
     if not cache.exists():
         return None
-    return np.asarray(np.load(cache), dtype=np.int64)
+    logger.info("Loading pretrain assignments cache: %s", cache)
+    cached = np.asarray(np.load(cache), dtype=np.int64)
+    if cached.shape != (int(expected_size),):
+        raise ValueError(
+            f"Cached pretrain assignments at {cache} have shape {cached.shape}, expected {(int(expected_size),)}"
+        )
+    if cached.size > 0 and (int(cached.min()) < 0 or int(cached.max()) >= int(num_experts)):
+        raise ValueError(
+            f"Cached pretrain assignments at {cache} contain ids outside [0, {int(num_experts) - 1}]"
+        )
+    return cached
 
 
 def _save_cached(cache_path: str, assignments: np.ndarray):
@@ -34,82 +42,14 @@ def _save_cached(cache_path: str, assignments: np.ndarray):
     cache = Path(cache_path)
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.save(cache, assignments)
-
-
-def _balanced_random_assignments(n_samples: int, num_experts: int, seed: int) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    reps = int(ceil(n_samples / float(num_experts)))
-    base = np.tile(np.arange(num_experts, dtype=np.int64), reps)[:n_samples]
-    rng.shuffle(base)
-    return base
-
-
-def _kmeans_assignments(features: np.ndarray, num_experts: int, seed: int) -> np.ndarray:
-    chunk_size = min(50_000, int(features.shape[0]))
-    kmeans = MiniBatchKMeans(
-        n_clusters=int(num_experts),
-        random_state=int(seed),
-        batch_size=max(256, chunk_size),
-        n_init=3,
-    )
-    for start in range(0, int(features.shape[0]), chunk_size):
-        end = min(start + chunk_size, int(features.shape[0]))
-        kmeans.partial_fit(features[start:end])
-    assignments = np.empty((features.shape[0],), dtype=np.int64)
-    for start in range(0, int(features.shape[0]), chunk_size):
-        end = min(start + chunk_size, int(features.shape[0]))
-        assignments[start:end] = kmeans.predict(features[start:end]).astype(np.int64)
-    return assignments
-
-
-def _choose_grid_dims(num_experts: int) -> Tuple[int, int, int]:
-    nx = int(round(num_experts ** (1.0 / 3.0)))
-    nx = max(1, nx)
-    while num_experts % nx != 0 and nx > 1:
-        nx -= 1
-    rem = max(1, num_experts // nx)
-    ny = int(round(rem ** 0.5))
-    ny = max(1, ny)
-    while rem % ny != 0 and ny > 1:
-        ny -= 1
-    nz = max(1, rem // ny)
-    return int(nx), int(ny), int(nz)
-
-
-def _block_indices(values: np.ndarray, num_blocks: int) -> np.ndarray:
-    if num_blocks <= 1:
-        return np.zeros(values.shape[0], dtype=np.int64)
-    vmin = float(values.min())
-    vmax = float(values.max())
-    if vmax <= vmin:
-        return np.zeros(values.shape[0], dtype=np.int64)
-    edges = np.linspace(vmin, vmax, num_blocks + 1)
-    block_ids = np.searchsorted(edges[1:-1], values, side="right")
-    return np.asarray(block_ids, dtype=np.int64)
-
-
-def _spatial_block_assignments_node(coords: np.ndarray, num_experts: int, spatial_blocks) -> np.ndarray:
-    if spatial_blocks is None:
-        nx, ny, nz = _choose_grid_dims(num_experts)
-    else:
-        nx, ny, nz = map(int, spatial_blocks)
-    bx = _block_indices(coords[:, 0], max(1, nx))
-    by = _block_indices(coords[:, 1], max(1, ny))
-    bz = _block_indices(coords[:, 2], max(1, nz))
-    return np.asarray(((bz * max(1, ny) + by) * max(1, nx) + bx) % num_experts, dtype=np.int64)
-
-
-def _time_block_assignments_node(coords: np.ndarray, num_experts: int, time_block_size: int) -> np.ndarray:
-    order = np.argsort(coords[:, 3], kind="stable")
-    if time_block_size <= 0:
-        time_block_size = int(ceil(coords.shape[0] / float(num_experts)))
-    assignments = np.empty((coords.shape[0],), dtype=np.int64)
-    for rank, sample_index in enumerate(order):
-        assignments[sample_index] = (rank // int(time_block_size)) % num_experts
-    return assignments
+    logger.info("Saved pretrain assignments cache: %s shape=%s", cache, tuple(assignments.shape))
 
 
 def _sample_time_indices(T: int, num_time_samples: int, seed: int) -> np.ndarray:
+    if T <= 0:
+        raise ValueError(f"volume_shape.T must be positive, got {T}")
+    if num_time_samples <= 0:
+        raise ValueError(f"num_time_samples must be positive, got {num_time_samples}")
     rng = np.random.default_rng(seed)
     replace = T < num_time_samples
     return rng.choice(T, size=num_time_samples, replace=replace).astype(np.int64)
@@ -117,93 +57,107 @@ def _sample_time_indices(T: int, num_time_samples: int, seed: int) -> np.ndarray
 
 def _build_voxel_cluster_features(dataset, num_time_samples: int, seed: int) -> np.ndarray:
     volume_shape = dataset.meta.volume_shape
+    if volume_shape is None:
+        raise ValueError("voxel_clustering pretrain requires a volume dataset with volume_shape")
     V = int(volume_shape.X) * int(volume_shape.Y) * int(volume_shape.Z)
-    time_ids = _sample_time_indices(int(volume_shape.T), num_time_samples, seed)
+    started_at = time.perf_counter()
+    time_ids = _sample_time_indices(int(volume_shape.T), int(num_time_samples), int(seed))
+    logger.info(
+        "Building voxel clustering features: V=%d T=%d sampled_time_count=%d sampled_times=%s targets=%s",
+        V,
+        int(volume_shape.T),
+        int(len(time_ids)),
+        time_ids.tolist(),
+        list(dataset.target_names()),
+    )
+
     targets_flat = dataset.load_targets_flat()
     idx = np.arange(V, dtype=np.int64)[:, None] + V * time_ids[None, :]
-    blocks = []
+    feature_blocks = []
     for name in dataset.target_names():
         flat = np.asarray(targets_flat[name][idx.reshape(-1)], dtype=np.float32)
+        if flat.ndim == 1:
+            flat = flat.reshape(-1, 1)
         flat = flat.reshape(V, len(time_ids), -1)
-        blocks.append(flat)
-    merged = np.concatenate(blocks, axis=2)
-    return merged.reshape(V, -1)
+        feature_blocks.append(flat)
+    merged = np.concatenate(feature_blocks, axis=2)
+    features = merged.reshape(V, -1)
+    logger.info(
+        "Voxel clustering features ready: shape=%s dtype=%s time=%.2fs",
+        tuple(features.shape),
+        features.dtype,
+        time.perf_counter() - started_at,
+    )
+    return features
 
 
-def _spatial_block_assignments_volume(dataset, num_experts: int, spatial_blocks) -> np.ndarray:
-    volume_shape = dataset.meta.volume_shape
-    X, Y, Z = int(volume_shape.X), int(volume_shape.Y), int(volume_shape.Z)
-    V = X * Y * Z
-    if spatial_blocks is None:
-        nx, ny, nz = _choose_grid_dims(num_experts)
-    else:
-        nx, ny, nz = map(int, spatial_blocks)
-    nx = max(1, nx)
-    ny = max(1, ny)
-    nz = max(1, nz)
-    block_x = max(1, int(ceil(X / float(nx))))
-    block_y = max(1, int(ceil(Y / float(ny))))
-    block_z = max(1, int(ceil(Z / float(nz))))
-    assignments = np.empty((V,), dtype=np.int64)
-    v = 0
-    for z in range(Z):
-        bz = min(nz - 1, z // block_z)
-        for y in range(Y):
-            by = min(ny - 1, y // block_y)
-            for x in range(X):
-                bx = min(nx - 1, x // block_x)
-                assignments[v] = ((bz * ny + by) * nx + bx) % num_experts
-                v += 1
-    return assignments
+def _kmeans_assignments(features: np.ndarray, num_experts: int, seed: int) -> np.ndarray:
+    if int(num_experts) <= 0:
+        raise ValueError(f"num_experts must be positive, got {num_experts}")
+    if int(features.shape[0]) < int(num_experts):
+        raise ValueError(
+            f"voxel_clustering pretrain requires voxel_count >= num_experts, got {features.shape[0]} < {num_experts}"
+        )
+    chunk_size = min(50_000, int(features.shape[0]))
+    kmeans = MiniBatchKMeans(
+        n_clusters=int(num_experts),
+        random_state=int(seed),
+        batch_size=max(256, chunk_size),
+        n_init=3,
+    )
+    logger.info(
+        "MiniBatchKMeans start: samples=%d feature_dim=%d n_clusters=%d chunk_size=%d",
+        int(features.shape[0]),
+        int(features.shape[1]),
+        int(num_experts),
+        int(chunk_size),
+    )
+    fit_started_at = time.perf_counter()
+    for start in range(0, int(features.shape[0]), chunk_size):
+        end = min(start + chunk_size, int(features.shape[0]))
+        kmeans.partial_fit(features[start:end])
+    logger.info("MiniBatchKMeans partial_fit done: %.2fs", time.perf_counter() - fit_started_at)
 
-
-def _time_block_assignments_volume(dataset, num_experts: int, time_block_size: int) -> np.ndarray:
-    T = int(dataset.meta.volume_shape.T)
-    if time_block_size <= 0:
-        time_block_size = int(ceil(T / float(num_experts)))
-    assignments = np.empty((T,), dtype=np.int64)
-    for t in range(T):
-        assignments[t] = (t // int(time_block_size)) % num_experts
+    assignments = np.empty((features.shape[0],), dtype=np.int64)
+    predict_started_at = time.perf_counter()
+    for start in range(0, int(features.shape[0]), chunk_size):
+        end = min(start + chunk_size, int(features.shape[0]))
+        assignments[start:end] = kmeans.predict(features[start:end]).astype(np.int64)
+    logger.info("MiniBatchKMeans predict done: %.2fs", time.perf_counter() - predict_started_at)
     return assignments
 
 
 def compute_pretrain_assignments(dataset, num_experts: int, cfg: PretrainAssignmentConfig) -> np.ndarray:
-    method = str(cfg.method).strip().lower()
-    cached = _load_cached(cfg.cache_path)
+    volume_shape = dataset.meta.volume_shape
+    if volume_shape is None:
+        raise ValueError("Configured pretraining requires a volume dataset because only voxel_clustering is supported")
+    voxel_count = int(volume_shape.X) * int(volume_shape.Y) * int(volume_shape.Z)
+    started_at = time.perf_counter()
+    cached = _load_cached(str(cfg.cache_path or ""), expected_size=voxel_count, num_experts=int(num_experts))
     if cached is not None:
+        logger.info(
+            "Using cached pretrain assignments: method=voxel_clustering shape=%s time=%.2fs",
+            tuple(cached.shape),
+            time.perf_counter() - started_at,
+        )
         return cached
 
-    if dataset.pretrain_assignment_kind() == "sample":
-        coords = dataset.raw_coords()
-        features = dataset.sample_cluster_features()
-        n_samples = int(dataset.meta.n_samples)
-        if method in {"sample_clustering", "clustering", "kmeans"}:
-            assignments = _kmeans_assignments(features, num_experts, int(cfg.seed))
-        elif method in {"random", "uniform", "random_uniform"}:
-            assignments = _balanced_random_assignments(n_samples, num_experts, int(cfg.seed))
-        elif method in {"spatial_block", "spatial_blocks", "space_block"}:
-            assignments = _spatial_block_assignments_node(coords, num_experts, cfg.spatial_blocks)
-        elif method in {"time_block", "time_blocks", "temporal_block"}:
-            assignments = _time_block_assignments_node(coords, num_experts, int(cfg.time_block_size))
-        else:
-            raise ValueError(f"Unsupported node pretrain assignment method: {cfg.method}")
-    else:
-        volume_shape = dataset.meta.volume_shape
-        V = int(volume_shape.X) * int(volume_shape.Y) * int(volume_shape.Z)
-        if method in {"voxel_clustering", "clustering", "kmeans"}:
-            assignments = _kmeans_assignments(
-                _build_voxel_cluster_features(dataset, int(cfg.cluster_num_time_samples), int(cfg.seed)),
-                num_experts,
-                int(cfg.seed),
-            )
-        elif method in {"random", "uniform", "random_uniform"}:
-            assignments = _balanced_random_assignments(V, num_experts, int(cfg.seed))
-        elif method in {"spatial_block", "spatial_blocks", "space_block"}:
-            assignments = _spatial_block_assignments_volume(dataset, num_experts, cfg.spatial_blocks)
-        elif method in {"time_block", "time_blocks", "temporal_block"}:
-            assignments = _time_block_assignments_volume(dataset, num_experts, int(cfg.time_block_size))
-        else:
-            raise ValueError(f"Unsupported volume pretrain assignment method: {cfg.method}")
-
-    _save_cached(cfg.cache_path, assignments)
+    logger.info(
+        "Building pretrain assignments: method=voxel_clustering num_experts=%d num_time_samples=%d volume_shape=%s cache=%s",
+        int(num_experts),
+        int(num_experts),
+        volume_shape,
+        str(cfg.cache_path or "<none>"),
+    )
+    assignments = _kmeans_assignments(
+        _build_voxel_cluster_features(dataset, int(num_experts), int(cfg.seed)),
+        int(num_experts),
+        int(cfg.seed),
+    )
+    _save_cached(str(cfg.cache_path or ""), assignments)
+    logger.info(
+        "Pretrain assignments ready: method=voxel_clustering shape=%s time=%.2fs",
+        tuple(assignments.shape),
+        time.perf_counter() - started_at,
+    )
     return assignments

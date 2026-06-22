@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
@@ -44,7 +44,7 @@ class CheckpointIntegrityTestCase(unittest.TestCase):
                 "targets": {"a": str(a_path), "b": str(b_path)},
             },
             "model": {
-                "name": "light_basis_expert",
+                "name": "var_expert",
                 "in_features": 4,
                 "num_experts": 2,
                 "base_dim": 2,
@@ -133,3 +133,5 @@ class CheckpointIntegrityTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

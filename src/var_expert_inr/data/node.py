@@ -101,18 +101,3 @@ class NodeFieldDataset(FieldDataset):
 
     def reshape_flat_predictions(self, name: str, flat_values: np.ndarray) -> np.ndarray:
         return np.asarray(flat_values)
-
-    def pretrain_assignment_kind(self) -> str:
-        return "sample"
-
-    def sample_cluster_features(self) -> np.ndarray:
-        blocks = []
-        for name in self._target_names:
-            arr = np.asarray(self._targets_np[name], dtype=np.float32)
-            if arr.ndim == 1:
-                arr = arr.reshape(-1, 1)
-            blocks.append(arr)
-        return np.concatenate(blocks, axis=1)
-
-    def raw_coords(self) -> np.ndarray:
-        return np.asarray(self._coords_np, dtype=np.float32)
