@@ -84,6 +84,28 @@ def _predict_batch(model, coords: torch.Tensor, target_names: tuple[str, ...], *
     return {target_names[0]: preds}
 
 
+def _predict_batch_with_aux(model, coords: torch.Tensor, target_names: tuple[str, ...], *, hard_topk: bool):
+    try:
+        output = model(coords, return_aux=True, hard_topk=hard_topk)
+    except TypeError:
+        try:
+            output = model(coords, return_aux=True)
+        except TypeError:
+            try:
+                output = model(coords, hard_topk=hard_topk)
+            except TypeError:
+                output = model(coords)
+    if isinstance(output, tuple):
+        preds = output[0]
+        aux = output[1] if len(output) > 1 and output[1] is not None else {}
+    else:
+        preds = output
+        aux = {}
+    if not isinstance(preds, dict):
+        preds = {target_names[0]: preds}
+    return preds, aux
+
+
 def _batch_target_dict(batch_targets, target_names: tuple[str, ...]):
     if isinstance(batch_targets, dict):
         return batch_targets
@@ -419,6 +441,7 @@ def train_model(
     router_frozen = False
     psnr_dataset = _build_psnr_dataset(dataset, sample_ratio=cfg.psnr_sample_ratio, seed=cfg.seed)
     started_at = time.time()
+    is_light_basis_expert = type(getattr(model, "backbone", model)).__name__ == "LightBasisExpert"
 
     for epoch in range(1, cfg.epochs + 1):
         model.train()
@@ -432,6 +455,8 @@ def train_model(
         window_data = 0.0
         window_transfer = 0.0
         window_training = 0.0
+        expert_select_counts = None
+        last_ema_state = None
 
         if not router_frozen and cfg.freeze_router_at > 0 and (epoch / max(cfg.epochs, 1)) >= cfg.freeze_router_at:
             other_started_at = time.perf_counter() if timing_enabled else 0.0
@@ -477,7 +502,16 @@ def train_model(
 
             optimizer.zero_grad()
             if _is_multitarget(batch.targets):
-                preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                if is_light_basis_expert:
+                    preds, aux = _predict_batch_with_aux(
+                        model,
+                        coords,
+                        dataset.target_names(),
+                        hard_topk=hard_topk,
+                    )
+                else:
+                    preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                    aux = {}
                 total_loss, _, _, task_losses = reconstruction_loss_with_breakdown(
                     preds,
                     targets,
@@ -485,7 +519,16 @@ def train_model(
                 )
                 loss_to_log = total_loss
                 if ema_balancer is not None:
-                    total_loss = ema_balancer(task_losses)
+                    total_loss, _, _, ema_details = ema_balancer(
+                        task_losses,
+                        return_details=True,
+                        return_tensors=True,
+                    )
+                    last_ema_state = {
+                        "step": int(ema_details["step"]),
+                        "warmup_steps": int(ema_details["warmup_steps"]),
+                        "effective_weights": dict(ema_details["weights"]),
+                    }
                 if gradnorm_balancer is not None:
                     total_loss, _ = gradnorm_balancer.build_weighted_loss(task_losses)
                     total_loss.backward(retain_graph=True)
@@ -495,12 +538,29 @@ def train_model(
                 else:
                     total_loss.backward()
             else:
-                preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                if is_light_basis_expert:
+                    preds, aux = _predict_batch_with_aux(
+                        model,
+                        coords,
+                        dataset.target_names(),
+                        hard_topk=hard_topk,
+                    )
+                else:
+                    preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                    aux = {}
                 target_name = dataset.target_names()[0]
                 total_loss = pointwise_loss(preds[target_name], targets, cfg.loss_type)
                 loss_to_log = total_loss
                 total_loss.backward()
             optimizer.step()
+
+            if is_light_basis_expert and "probs" in aux:
+                probs = aux["probs"].detach()
+                reduce_dims = tuple(range(probs.dim() - 1))
+                counts = probs.float().sum(dim=reduce_dims).cpu()
+                if expert_select_counts is None:
+                    expert_select_counts = torch.zeros_like(counts)
+                expert_select_counts += counts
 
             training_seconds = 0.0
             if timing_enabled:
@@ -601,6 +661,21 @@ def train_model(
                     val_loss,
                     elapsed,
                 )
+            if last_ema_state is not None:
+                logger.info(
+                    "EMA balance state: step=%d warmup_steps=%d effective_weights=%s",
+                    int(last_ema_state.get("step", 0)),
+                    int(last_ema_state.get("warmup_steps", 0)),
+                    last_ema_state.get("effective_weights", {}),
+                )
+            if expert_select_counts is not None:
+                sum_count = float(expert_select_counts.sum().item())
+                if sum_count > 0.0:
+                    counts_text = " ".join(
+                        f"E{i}={count:.2f} ({count / sum_count:.2%})"
+                        for i, count in enumerate(expert_select_counts.tolist())
+                    )
+                    logger.info("Expert utilization rate: %s", counts_text)
             if timing_enabled:
                 epoch_timing.others += time.perf_counter() - log_started_at
 
