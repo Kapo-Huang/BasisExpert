@@ -26,7 +26,7 @@ from .utils.model_stats import (
     format_param_count,
     upsert_model_catalog,
 )
-from .utils.runtime import configure_thread_env, set_random_seed
+from .utils.runtime import apply_runtime_thread_limits, set_random_seed
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
 
 
 def run_train(config_path: str | Path) -> dict:
-    configure_thread_env()
+    apply_runtime_thread_limits()
     train_started_at = time.perf_counter()
     try:
         config, dirs, dataset, device, effective_payload = _prepare_runtime(config_path)
@@ -159,7 +159,7 @@ def run_train(config_path: str | Path) -> dict:
 
 
 def run_predict(config_path: str | Path, checkpoint_path: str | Path | None = None) -> dict:
-    configure_thread_env()
+    apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(config_path)
         result = _predict_from_runtime(config, dirs, dataset, device, checkpoint_path=checkpoint_path)
@@ -169,7 +169,7 @@ def run_predict(config_path: str | Path, checkpoint_path: str | Path | None = No
 
 
 def run_evaluate(config_path: str | Path, checkpoint_path: str | Path | None = None) -> dict:
-    configure_thread_env()
+    apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(config_path)
         predict_result = _predict_from_runtime(config, dirs, dataset, device, checkpoint_path=checkpoint_path)
