@@ -1,5 +1,5 @@
-﻿experiment: volume_ionization_var_expert
-exp_id: var-expert-ionization-e5-k3-bd25-size163
+experiment: volume_ionization_var_expert_e8_k3
+exp_id: var-expert-ionization-e8-k3
 experiment_root: runs
 data:
   kind: volume
@@ -11,23 +11,23 @@ data:
     Z: 248
     T: 2
   targets:
-    GT: ../../data/Volume/Ionization/target_GT_sub_2.npy
-    H_plus: ../../data/Volume/Ionization/target_H+_sub_2.npy
-    H2: ../../data/Volume/Ionization/target_H2_sub_2.npy
-    He: ../../data/Volume/Ionization/target_He_sub_2.npy
-    PD: ../../data/Volume/Ionization/target_PD_sub_2.npy
+    GT: ../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../data/Volume/Ionization/target_H+.npy
+    H2: ../../data/Volume/Ionization/target_H2.npy
+    He: ../../data/Volume/Ionization/target_He.npy
+    PD: ../../data/Volume/Ionization/target_PD.npy
 model:
   name: var_expert
   in_features: 4
-  num_experts: 5
-  base_dim: 25
+  num_experts: 8
+  base_dim: 22
   top_k: 3
 training:
   epochs: 600
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
-  lr: 5.0e-5
+  lr: 5.0e-05
   val_split: 0.0
   log_every: 10
   log_psnr_every: 50
@@ -50,7 +50,7 @@ training:
   multiview_ema_loss:
     enabled: true
     beta: 0.95
-    eps: 1.0e-8
+    eps: 1.0e-08
     w_min: 0.2
     w_max: 5.0
     warmup_steps: 45000
@@ -61,9 +61,9 @@ training:
   pretrain:
     enabled: true
     epochs: 5
-    lr: 5.0e-5
+    lr: 5.0e-05
     cluster_seed: 42
-    assignments_cache_path: ../../data/cache/ionization_voxel_assignments_5.npy
+    assignments_cache_path: data/cache/ionization_voxel_assignments_8.npy
 evaluation:
   batch_size: 16000
   save_predictions: true
@@ -81,4 +81,3 @@ log:
     step_window: true
     step_window_every_steps: 100
     cuda_sync: false
-

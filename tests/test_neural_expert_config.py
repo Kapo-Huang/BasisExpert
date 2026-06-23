@@ -10,16 +10,8 @@ from var_expert_inr.neural_expert.config import load_config
 class NeuralExpertConfigTestCase(unittest.TestCase):
     def test_repo_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
-        config_paths = [
-            repo_root / "configs" / "NeuralExpert" / "ionization.yaml",
-            repo_root / "configs" / "NeuralExpert" / "ionization_managerpretrain.yaml",
-            repo_root / "configs" / "NeuralExpert" / "katrina.yaml",
-            repo_root / "configs" / "NeuralExpert" / "katrina_managerpretrain.yaml",
-            repo_root / "configs" / "NeuralExpert" / "linkage_p.yaml",
-            repo_root / "configs" / "NeuralExpert" / "linkage_p_managerpretrain.yaml",
-            repo_root / "configs" / "NeuralExpert" / "linkage_c.yaml",
-            repo_root / "configs" / "NeuralExpert" / "linkage_c_managerpretrain.yaml",
-        ]
+        config_paths = sorted((repo_root / "configs" / "NeuralExpert").rglob("*.yaml"))
+        self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization.yaml" for path in config_paths))
         for path in config_paths:
             cfg = load_config(path)
             self.assertIn("DATA", cfg)

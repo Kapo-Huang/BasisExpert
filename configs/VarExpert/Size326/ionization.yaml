@@ -1,5 +1,5 @@
-experiment: volume_ionization_var_expert
-exp_id: var-expert-ionization
+experiment: volume_ionization_var_expert_size326
+exp_id: var-expert-ionization-size326
 experiment_root: runs
 data:
   kind: volume
@@ -11,16 +11,16 @@ data:
     Z: 248
     T: 2
   targets:
-    GT: ../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../data/Volume/Ionization/target_H+.npy
-    H2: ../../data/Volume/Ionization/target_H2.npy
-    He: ../../data/Volume/Ionization/target_He.npy
-    PD: ../../data/Volume/Ionization/target_PD.npy
+    GT: ../../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../../data/Volume/Ionization/target_H+.npy
+    H2: ../../../data/Volume/Ionization/target_H2.npy
+    He: ../../../data/Volume/Ionization/target_He.npy
+    PD: ../../../data/Volume/Ionization/target_PD.npy
 model:
   name: var_expert
   in_features: 4
   num_experts: 6
-  base_dim: 24
+  base_dim: 34
   top_k: 3
 training:
   epochs: 600

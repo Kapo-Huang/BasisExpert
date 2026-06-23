@@ -120,7 +120,6 @@ class DataConfig:
     target_path: str | None = None
     targets: dict[str, str] | None = None
     target: str | None = None
-    target_dir: str | None = None
     volume_shape: VolumeShape | None = None
 
     def __post_init__(self) -> None:
@@ -131,8 +130,6 @@ class DataConfig:
                 raise ValueError("data.target requires data.targets")
             if self.target_path is not None:
                 raise ValueError("data.target cannot be combined with data.target_path")
-            if self.target_dir is not None:
-                raise ValueError("data.target cannot be combined with data.target_dir")
         if self.kind == "node":
             if self.coords_path is None:
                 raise ValueError("node datasets require data.coords_path")
@@ -141,8 +138,8 @@ class DataConfig:
             if self.volume_shape is not None:
                 raise ValueError("node datasets must not define volume_shape")
         else:
-            if self.target_path is None and not self.targets and self.target_dir is None:
-                raise ValueError("volume datasets require target_path, targets, or target_dir")
+            if self.target_path is None and not self.targets:
+                raise ValueError("volume datasets require target_path or targets")
             if self.target_path is not None and self.targets:
                 raise ValueError("volume datasets must use either target_path or targets, not both")
         if self.targets is not None and not self.targets:

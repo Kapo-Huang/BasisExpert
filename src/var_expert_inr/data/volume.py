@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Iterable
 
 import numpy as np
@@ -37,23 +36,12 @@ class VolumeFieldDataset(FieldDataset):
         *,
         target_path: str | None = None,
         targets: dict[str, str] | None = None,
-        target_dir: str | None = None,
         volume_shape: VolumeShape | None = None,
     ) -> None:
-        if target_path is None and not targets and target_dir is None:
-            raise ValueError("VolumeFieldDataset requires target_path, targets, or target_dir")
+        if target_path is None and not targets:
+            raise ValueError("VolumeFieldDataset requires target_path or targets")
         self.target_path = target_path
         self.targets_map = dict(targets or {})
-        self.target_dir = target_dir
-
-        if target_dir is not None and not self.targets_map and target_path is None:
-            target_root = Path(target_dir)
-            self.targets_map = {
-                path.stem.replace("target_", "", 1): str(path)
-                for path in sorted(target_root.glob("*.npy"))
-            }
-            if not self.targets_map:
-                raise ValueError(f"No target files found in {target_dir}")
 
         if target_path is not None:
             arr = peek_array(target_path)

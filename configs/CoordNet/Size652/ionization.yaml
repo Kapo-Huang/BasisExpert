@@ -1,5 +1,5 @@
-experiment: volume_ionization_coordnet_{target}
-exp_id: coordnet-ionization-{target}
+experiment: volume_ionization_coordnet_{target}_size652
+exp_id: coordnet-ionization-{target}-size652
 experiment_root: runs
 data:
   kind: volume
@@ -11,17 +11,17 @@ data:
     Z: 248
     T: 2
   targets:
-    GT: ../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../data/Volume/Ionization/target_H+.npy
-    H2: ../../data/Volume/Ionization/target_H2.npy
-    He: ../../data/Volume/Ionization/target_He.npy
-    PD: ../../data/Volume/Ionization/target_PD.npy
+    GT: ../../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../../data/Volume/Ionization/target_H+.npy
+    H2: ../../../data/Volume/Ionization/target_H2.npy
+    He: ../../../data/Volume/Ionization/target_He.npy
+    PD: ../../../data/Volume/Ionization/target_PD.npy
   target: PD
 model:
   name: coordnet
   in_features: 4
-  init_features: 21
-  num_res: 10
+  init_features: 142
+  num_res: 4
 training:
   epochs: 600
   batch_size: 32000

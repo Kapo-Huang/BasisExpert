@@ -67,7 +67,6 @@ def _resolve_data_paths(data: dict[str, Any], *, base_dir: Path) -> dict[str, An
     payload = dict(data)
     payload["coords_path"] = resolve_path(payload.get("coords_path"), base_dir=base_dir)
     payload["target_path"] = resolve_path(payload.get("target_path"), base_dir=base_dir)
-    payload["target_dir"] = resolve_path(payload.get("target_dir"), base_dir=base_dir)
     payload["targets"] = resolve_mapping_paths(payload.get("targets"), base_dir=base_dir)
     return payload
 
@@ -125,7 +124,6 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         target_path=data_payload.get("target_path"),
         targets=data_payload.get("targets"),
         target=data_payload.get("target"),
-        target_dir=data_payload.get("target_dir"),
         volume_shape=_parse_volume_shape(data_payload.get("volume_shape")),
     )
     model_cfg = ModelConfig(name=str(model_payload.pop("name")), params=model_payload)

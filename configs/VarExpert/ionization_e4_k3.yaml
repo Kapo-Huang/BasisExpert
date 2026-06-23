@@ -1,5 +1,5 @@
-experiment: volume_ionization_var_expert
-exp_id: var-expert-ionization
+experiment: volume_ionization_var_expert_e4_k3
+exp_id: var-expert-ionization-e4-k3
 experiment_root: runs
 data:
   kind: volume
@@ -19,8 +19,8 @@ data:
 model:
   name: var_expert
   in_features: 4
-  num_experts: 6
-  base_dim: 24
+  num_experts: 4
+  base_dim: 27
   top_k: 3
 training:
   epochs: 600
@@ -38,8 +38,17 @@ training:
   seed: 42
   sampler: budgeted_random
   batches_per_epoch_budget: 1500
-  multiview_ema_loss:
+  gradient_balancer:
     enabled: false
+    method: gradnorm
+    cagrad_c: 0.4
+    solver_max_iter: 30
+    solver_lr: 0.25
+    gradnorm_alpha: 0.5
+    gradnorm_lr: 0.001
+    gradnorm_every_n_steps: 750
+  multiview_ema_loss:
+    enabled: true
     beta: 0.95
     eps: 1.0e-08
     w_min: 0.2
@@ -51,10 +60,10 @@ training:
     gamma: 0.92
   pretrain:
     enabled: true
-    epochs: 0
+    epochs: 5
     lr: 5.0e-05
     cluster_seed: 42
-    assignments_cache_path: data/cache/ionization_voxel_assignments_6.npy
+    assignments_cache_path: data/cache/ionization_voxel_assignments_4.npy
 evaluation:
   batch_size: 16000
   save_predictions: true

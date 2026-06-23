@@ -1,5 +1,5 @@
-experiment: volume_ionization_siren_{target}
-exp_id: siren-ionization-{target}
+experiment: volume_ionization_siren_{target}_size163
+exp_id: siren-ionization-{target}-size163
 experiment_root: runs
 data:
   kind: volume
@@ -11,16 +11,16 @@ data:
     Z: 248
     T: 2
   targets:
-    GT: ../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../data/Volume/Ionization/target_H+.npy
-    H2: ../../data/Volume/Ionization/target_H2.npy
-    He: ../../data/Volume/Ionization/target_He.npy
-    PD: ../../data/Volume/Ionization/target_PD.npy
+    GT: ../../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../../data/Volume/Ionization/target_H+.npy
+    H2: ../../../data/Volume/Ionization/target_H2.npy
+    He: ../../../data/Volume/Ionization/target_He.npy
+    PD: ../../../data/Volume/Ionization/target_PD.npy
   target: PD
 model:
   name: siren
   in_features: 4
-  hidden_features: 256
+  hidden_features: 532
   hidden_layers: 3
   first_omega_0: 30.0
   hidden_omega_0: 30.0

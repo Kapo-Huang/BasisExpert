@@ -1,5 +1,5 @@
-experiment: volume_ionization_moe_inr_{target}
-exp_id: moeinr-ionization-{target}
+experiment: volume_ionization_moe_inr_{target}_size652
+exp_id: moeinr-ionization-{target}-size652
 experiment_root: runs
 data:
   kind: volume
@@ -11,17 +11,17 @@ data:
     Z: 248
     T: 2
   targets:
-    GT: ../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../data/Volume/Ionization/target_H+.npy
-    H2: ../../data/Volume/Ionization/target_H2.npy
-    He: ../../data/Volume/Ionization/target_He.npy
-    PD: ../../data/Volume/Ionization/target_PD.npy
+    GT: ../../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../../data/Volume/Ionization/target_H+.npy
+    H2: ../../../data/Volume/Ionization/target_H2.npy
+    He: ../../../data/Volume/Ionization/target_He.npy
+    PD: ../../../data/Volume/Ionization/target_PD.npy
   target: GT
 model:
   name: moe_inr
   in_features: 4
   num_experts: 7
-  base_dim: 45
+  base_dim: 210
   encoder_first_omega_0: 30.0
   encoder_hidden_omega_0: 30.0
   policy_num_layers: 3

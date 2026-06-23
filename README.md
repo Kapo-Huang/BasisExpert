@@ -11,9 +11,9 @@ normalization and will raise an error if loaded data falls outside that range.
 From the repository root:
 
 ```bash
-python -m var_expert_inr.cli train --config configs/examples/node_var_expert.yaml
-python -m var_expert_inr.cli predict --config configs/examples/node_var_expert.yaml
-python -m var_expert_inr.cli evaluate --config configs/examples/node_var_expert.yaml
+python -m var_expert_inr.cli train --config configs/VarExpert/ionization.yaml
+python -m var_expert_inr.cli predict --config configs/VarExpert/ionization.yaml
+python -m var_expert_inr.cli evaluate --config configs/VarExpert/ionization.yaml
 ```
 
 When running without installation, this repository ships a small package shim so

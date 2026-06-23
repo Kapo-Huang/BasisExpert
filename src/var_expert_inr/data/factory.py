@@ -9,7 +9,6 @@ SINGLE_TARGET_SELECTOR_MODELS = {"siren", "coordnet", "moe_inr"}
 def build_dataset(data_cfg: DataConfig, *, model_name: str | None = None):
     selected_targets = data_cfg.targets
     target_path = data_cfg.target_path
-    target_dir = data_cfg.target_dir
     if data_cfg.target is not None:
         if model_name is None:
             raise ValueError("data.target requires build_dataset(..., model_name=...)")
@@ -28,7 +27,6 @@ def build_dataset(data_cfg: DataConfig, *, model_name: str | None = None):
             )
         selected_targets = {data_cfg.target: data_cfg.targets[data_cfg.target]}
         target_path = None
-        target_dir = None
     if data_cfg.kind == "node":
         return NodeFieldDataset(
             coords_path=str(data_cfg.coords_path),
@@ -38,6 +36,5 @@ def build_dataset(data_cfg: DataConfig, *, model_name: str | None = None):
     return VolumeFieldDataset(
         target_path=target_path,
         targets=selected_targets,
-        target_dir=target_dir,
         volume_shape=data_cfg.volume_shape,
     )

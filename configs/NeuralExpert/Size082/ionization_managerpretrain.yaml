@@ -1,15 +1,15 @@
 seed: 0
 wandb_project: inr_moe_ionization
-experiment: neural_expert_ionization_{target}_managerpretrain
-exp_id: neural-expert-ionization-{target}-managerpretrain
-experiment_root: ../../runs/neural_expert
+experiment: neural_expert_ionization_{target}_size082_managerpretrain
+exp_id: neural-expert-ionization-{target}-size082-managerpretrain
+experiment_root: ../../../runs/neural_expert
 MODEL:
   model_name: inr_moe_ionization
   in_dim: 4
   out_dim: 1
-  decoder_hidden_dim: 64
+  decoder_hidden_dim: 26
   decoder_n_hidden_layers: 2
-  decoder_input_encoding: learned_512_2_sine_siren_none
+  decoder_input_encoding: learned_208_2_sine_siren_none
   decoder_nl: sine
   decoder_init_type: siren
   n_experts: 8
@@ -18,9 +18,9 @@ MODEL:
   decoder_freqs: 30.0
   decoder_trainable_freqs: false
   top_k: 1
-  manager_hidden_dim: 128
+  manager_hidden_dim: 52
   manager_n_hidden_layers: 2
-  manager_input_encoding: learned_128_2_sine_siren_none
+  manager_input_encoding: learned_52_2_sine_siren_none
   manager_nl: sine
   manager_init: siren
   manager_type: standard
@@ -31,7 +31,7 @@ MODEL:
   manager_q_activation: softmax
   manager_clamp_q: 0.0
   manager_conditioning: cat
-  manager_pt_path: ../../runs/neural_expert/pretrained_managers/ionization/pt_inr_moe_ionization_{target}_managerpretraining.pth
+  manager_pt_path: ../../../runs/neural_expert/pretrained_managers/ionization/size082/pt_inr_moe_ionization_{target}_managerpretraining.pth
   load_pt_manager: false
   shared_encoder: false
 LOSS:
@@ -44,12 +44,12 @@ DATA:
   dataset_name: ionization
   target: H+
   targets:
-    GT: ../../data/Volume/Ionization/target_GT.npy
-    H+: ../../data/Volume/Ionization/target_H+.npy
-    H2: ../../data/Volume/Ionization/target_H2.npy
-    He: ../../data/Volume/Ionization/target_He.npy
-    PD: ../../data/Volume/Ionization/target_PD.npy
-  target_stats_path: ../../data/cache/neural_expert/ionization/target_stats_{target}.npz
+    GT: ../../../data/Volume/Ionization/target_GT.npy
+    H+: ../../../data/Volume/Ionization/target_H+.npy
+    H2: ../../../data/Volume/Ionization/target_H2.npy
+    He: ../../../data/Volume/Ionization/target_He.npy
+    PD: ../../../data/Volume/Ionization/target_PD.npy
+  target_stats_path: ../../../data/cache/neural_expert/ionization/target_stats_{target}.npz
   volume_shape:
     X: 600
     Y: 248

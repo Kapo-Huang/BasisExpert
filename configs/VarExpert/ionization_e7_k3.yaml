@@ -1,5 +1,5 @@
-experiment: volume_ionization_moe_inr_{target}
-exp_id: moeinr-ionization-{target}
+experiment: volume_ionization_var_expert_e7_k3
+exp_id: var-expert-ionization-e7-k3
 experiment_root: runs
 data:
   kind: volume
@@ -16,43 +16,68 @@ data:
     H2: ../../data/Volume/Ionization/target_H2.npy
     He: ../../data/Volume/Ionization/target_He.npy
     PD: ../../data/Volume/Ionization/target_PD.npy
-  target: GT
 model:
-  name: moe_inr
+  name: var_expert
   in_features: 4
   num_experts: 7
-  base_dim: 45
-  encoder_first_omega_0: 30.0
-  encoder_hidden_omega_0: 30.0
-  policy_num_layers: 3
-  policy_first_omega_0: 30.0
-  policy_hidden_omega_0: 30.0
+  base_dim: 23
+  top_k: 3
 training:
   epochs: 600
   batch_size: 16000
   pred_batch_size: 16000
-  num_workers: 4
+  num_workers: 0
   lr: 5.0e-05
   val_split: 0.0
-  log_every: 1
-  log_psnr_every: 100
+  log_every: 10
+  log_psnr_every: 50
   psnr_sample_ratio: 0.1
-  save_every: 600
+  save_every: 50
   early_stop_patience: 0
   loss_type: mse
   seed: 42
   sampler: budgeted_random
   batches_per_epoch_budget: 1500
+  gradient_balancer:
+    enabled: false
+    method: gradnorm
+    cagrad_c: 0.4
+    solver_max_iter: 30
+    solver_lr: 0.25
+    gradnorm_alpha: 0.5
+    gradnorm_lr: 0.001
+    gradnorm_every_n_steps: 750
+  multiview_ema_loss:
+    enabled: true
+    beta: 0.95
+    eps: 1.0e-08
+    w_min: 0.2
+    w_max: 5.0
+    warmup_steps: 45000
   scheduler:
     enabled: true
     step_size: 40
     gamma: 0.92
   pretrain:
     enabled: true
-    epochs: 0
+    epochs: 5
     lr: 5.0e-05
     cluster_seed: 42
     assignments_cache_path: data/cache/ionization_voxel_assignments_7.npy
 evaluation:
   batch_size: 16000
   save_predictions: true
+log:
+  effective_config: true
+  model_stats: true
+  epoch_summary: true
+  startup_timing: true
+  psnr:
+    enabled: true
+    per_target: true
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: true
+    step_window_every_steps: 100
+    cuda_sync: false

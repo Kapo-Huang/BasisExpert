@@ -37,7 +37,6 @@ class ConfigLoadingTestCase(unittest.TestCase):
             repo_root / "configs" / "MoE-INR" / "bathymetry.yaml",
             repo_root / "configs" / "CoordNet" / "bathymetry.yaml",
             repo_root / "configs" / "SIREN" / "bathymetry.yaml",
-            repo_root / "configs" / "examples" / "bathymetry_var_expert.yaml",
         ]
 
         loaded_configs = [load_experiment_config(path) for path in config_paths]
@@ -45,14 +44,33 @@ class ConfigLoadingTestCase(unittest.TestCase):
         self.assertEqual(loaded_configs[0].exp_id, "var-expert-bathymetry")
         self.assertEqual(loaded_configs[0].data.dataset_name, "bathymetry")
         self.assertIsNone(loaded_configs[0].data.target)
-        for loaded in loaded_configs[1:4]:
+        for loaded in loaded_configs[1:]:
             self.assertEqual(loaded.data.dataset_name, "bathymetry")
             self.assertEqual(loaded.data.target, "SALT")
             self.assertIn("SALT", loaded.data.targets)
             self.assertIn("-bathymetry-SALT", loaded.exp_id)
-        self.assertEqual(loaded_configs[4].exp_id, "var-expert-bathymetry-example")
-        self.assertEqual(loaded_configs[4].data.dataset_name, "bathymetry")
-        self.assertIsNone(loaded_configs[4].data.target)
+
+    def test_repo_standard_configs_load_recursively(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        configs_root = repo_root / "configs"
+        self.assertFalse((configs_root / "examples").exists())
+
+        config_paths = sorted(
+            [
+                *configs_root.joinpath("VarExpert").rglob("*.yaml"),
+                *configs_root.joinpath("MoE-INR").rglob("*.yaml"),
+                *configs_root.joinpath("CoordNet").rglob("*.yaml"),
+                *configs_root.joinpath("SIREN").rglob("*.yaml"),
+            ]
+        )
+        self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization.yaml" for path in config_paths))
+        self.assertTrue((configs_root / "VarExpert" / "ionization_e4_k3.yaml").exists())
+        self.assertFalse(any(configs_root.joinpath("VarExpert").glob("exp_data_ionization_var_expert_*.yaml")))
+
+        for path in config_paths:
+            loaded = load_experiment_config(path)
+            self.assertTrue(path.exists())
+            self.assertTrue(str(loaded.source_config_path).endswith(".yaml"))
 
     def test_load_config_rejects_unknown_top_level_key(self):
         config = {
@@ -266,17 +284,14 @@ class ConfigLoadingTestCase(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "data.target cannot be combined with data.target_path"):
                 load_experiment_config(config_path)
 
-    def test_load_config_rejects_target_selector_with_target_dir(self):
+    def test_load_config_rejects_removed_target_dir_key(self):
         config = {
             "exp_id": "bad-selector",
             "experiment_root": "runs",
             "data": {
                 "kind": "volume",
-                "target": "a",
                 "target_dir": "./targets",
-                "targets": {
-                    "a": "./target_a.npy",
-                },
+                "targets": {"a": "./target_a.npy"},
                 "volume_shape": {
                     "X": 2,
                     "Y": 2,
@@ -294,7 +309,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.yaml"
             config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "data.target cannot be combined with data.target_dir"):
+            with self.assertRaisesRegex(ValueError, "Unknown data keys: target_dir"):
                 load_experiment_config(config_path)
 
     def test_load_config_rejects_target_placeholder_without_target(self):
