@@ -609,6 +609,9 @@ class TrainingPipelineTestCase(unittest.TestCase):
         self.assertIn("Expert utilization rate:", log_text)
         self.assertIn("EMA balance state: step=", log_text)
         self.assertIn("effective_weights={", log_text)
+        self.assertIn("EMA per-target loss (epoch avg):", log_text)
+        self.assertIn("a=", log_text)
+        self.assertIn("b=", log_text)
 
     def test_train_log_switches_can_disable_outputs(self):
         volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)

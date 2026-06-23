@@ -499,6 +499,12 @@ def train_model(
         window_training = 0.0
         expert_select_counts = None
         last_ema_state = None
+        ema_target_loss_sums = (
+            {name: 0.0 for name in dataset.target_names()}
+            if ema_balancer is not None
+            else None
+        )
+        ema_target_loss_steps = 0
 
         if not router_frozen and cfg.freeze_router_at > 0 and (epoch / max(cfg.epochs, 1)) >= cfg.freeze_router_at:
             other_started_at = time.perf_counter() if timing_enabled else 0.0
@@ -559,6 +565,10 @@ def train_model(
                     targets,
                     loss_type=cfg.loss_type,
                 )
+                if ema_target_loss_sums is not None:
+                    for name in dataset.target_names():
+                        ema_target_loss_sums[name] += float(task_losses[name].detach().item())
+                    ema_target_loss_steps += 1
                 loss_to_log = total_loss
                 if ema_balancer is not None:
                     total_loss, _, _, ema_details = ema_balancer(
@@ -710,6 +720,12 @@ def train_model(
                     int(last_ema_state.get("warmup_steps", 0)),
                     last_ema_state.get("effective_weights", {}),
                 )
+                if ema_target_loss_sums is not None and ema_target_loss_steps > 0:
+                    ema_target_loss_text = " ".join(
+                        f"{name}={ema_target_loss_sums[name] / float(ema_target_loss_steps):.6e}"
+                        for name in dataset.target_names()
+                    )
+                    logger.info("EMA per-target loss (epoch avg): %s", ema_target_loss_text)
             if expert_select_counts is not None:
                 sum_count = float(expert_select_counts.sum().item())
                 if sum_count > 0.0:
