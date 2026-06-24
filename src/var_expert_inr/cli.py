@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -29,6 +31,7 @@ from .utils.model_stats import (
 from .utils.runtime import apply_runtime_thread_limits, set_random_seed
 
 logger = logging.getLogger(__name__)
+TIMESTAMP_RUN_PATTERN = re.compile(r"^\d{8}_\d{6}_\d{6}$")
 
 
 def _resolve_device(requested: str) -> torch.device:
@@ -39,21 +42,88 @@ def _resolve_device(requested: str) -> torch.device:
     return torch.device(requested)
 
 
-def _prepare_run_dirs(config):
-    run_dir = config.run_dir
+def _experiment_dir(config) -> Path:
+    return Path(config.experiment_root) / config.exp_id
+
+
+def _is_timestamped_run_dir(path: Path) -> bool:
+    return path.is_dir() and bool(TIMESTAMP_RUN_PATTERN.fullmatch(path.name))
+
+
+def _build_run_dirs(run_dir: Path) -> dict[str, Path | str]:
     checkpoint_dir = run_dir / "checkpoints"
+    config_dir = run_dir / "configs"
     prediction_dir = run_dir / "predictions"
     metrics_dir = run_dir / "metrics"
     logs_dir = run_dir / "logs"
-    for path in (run_dir, checkpoint_dir, prediction_dir, metrics_dir, logs_dir):
-        path.mkdir(parents=True, exist_ok=True)
     return {
+        "experiment_dir": run_dir.parent,
         "run_dir": run_dir,
+        "run_token": run_dir.name,
         "checkpoint_dir": checkpoint_dir,
+        "config_dir": config_dir,
         "prediction_dir": prediction_dir,
         "metrics_dir": metrics_dir,
         "logs_dir": logs_dir,
     }
+
+
+def _ensure_run_dirs(run_dir: Path) -> dict[str, Path | str]:
+    dirs = _build_run_dirs(run_dir)
+    for path in (
+        dirs["run_dir"],
+        dirs["checkpoint_dir"],
+        dirs["config_dir"],
+        dirs["prediction_dir"],
+        dirs["metrics_dir"],
+        dirs["logs_dir"],
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+    return dirs
+
+
+def _create_train_run_dirs(config):
+    experiment_dir = _experiment_dir(config)
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    while True:
+        run_token = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        run_dir = experiment_dir / run_token
+        if not run_dir.exists():
+            return _ensure_run_dirs(run_dir)
+        time.sleep(0.001)
+
+
+def _resolve_checkpoint_run_dir(checkpoint_path: str | Path) -> Path | None:
+    resolved = Path(checkpoint_path).resolve()
+    if resolved.parent.name != "checkpoints":
+        return None
+    run_dir = resolved.parent.parent
+    if not _is_timestamped_run_dir(run_dir):
+        raise FileNotFoundError(
+            f"Checkpoint path must live under runs/<exp_id>/<timestamp>/checkpoints: {resolved}"
+        )
+    return run_dir
+
+
+def _resolve_latest_run_dir(config) -> Path:
+    experiment_dir = _experiment_dir(config)
+    candidates = []
+    if experiment_dir.exists():
+        candidates = sorted(path for path in experiment_dir.iterdir() if _is_timestamped_run_dir(path))
+    if not candidates:
+        raise FileNotFoundError(
+            f"No timestamped run directory found for exp_id '{config.exp_id}' under '{experiment_dir}'."
+        )
+    return candidates[-1]
+
+
+def _resolve_existing_run_dirs(config, checkpoint_path: str | Path | None = None):
+    run_dir = None
+    if checkpoint_path is not None:
+        run_dir = _resolve_checkpoint_run_dir(checkpoint_path)
+    if run_dir is None:
+        run_dir = _resolve_latest_run_dir(config)
+    return _ensure_run_dirs(run_dir)
 
 
 def _build_effective_config_payload(config, dataset_meta) -> dict:
@@ -67,23 +137,32 @@ def _log_effective_config(config, payload: dict) -> None:
     logger.info("Effective config:\n%s", yaml.safe_dump(payload, sort_keys=False).rstrip())
 
 
-def _prepare_runtime(config_path: str | Path):
+def _prepare_runtime(
+    config_path: str | Path,
+    *,
+    create_run: bool,
+    checkpoint_path: str | Path | None = None,
+):
     config_started_at = time.perf_counter()
     config = load_experiment_config(config_path)
     config_load_seconds = time.perf_counter() - config_started_at
 
     dirs_started_at = time.perf_counter()
-    dirs = _prepare_run_dirs(config)
+    if create_run:
+        dirs = _create_train_run_dirs(config)
+    else:
+        dirs = _resolve_existing_run_dirs(config, checkpoint_path=checkpoint_path)
     run_dir_prepare_seconds = time.perf_counter() - dirs_started_at
 
-    setup_logging(log_dir=dirs["logs_dir"])
+    setup_logging(log_dir=dirs["logs_dir"], log_file=f"run_{dirs['run_token']}.log")
 
     dataset_started_at = time.perf_counter()
     dataset = build_dataset(config.data, model_name=config.model.name)
     dataset_init_seconds = time.perf_counter() - dataset_started_at
 
     effective_payload = _build_effective_config_payload(config, dataset.meta)
-    save_experiment_config(effective_payload, dirs["run_dir"] / "config.yaml")
+    if create_run:
+        save_experiment_config(effective_payload, dirs["config_dir"] / "config.yaml")
     if config.log.effective_config:
         _log_effective_config(config, effective_payload)
     if config.log.startup_timing:
@@ -116,7 +195,7 @@ def run_train(config_path: str | Path) -> dict:
     apply_runtime_thread_limits()
     train_started_at = time.perf_counter()
     try:
-        config, dirs, dataset, device, effective_payload = _prepare_runtime(config_path)
+        config, dirs, dataset, device, effective_payload = _prepare_runtime(config_path, create_run=True)
         set_random_seed(int(config.training.seed))
         model_started_at = time.perf_counter()
         model = build_model(config.model, dataset.meta)
@@ -166,7 +245,11 @@ def run_train(config_path: str | Path) -> dict:
 def run_predict(config_path: str | Path, checkpoint_path: str | Path | None = None) -> dict:
     apply_runtime_thread_limits()
     try:
-        config, dirs, dataset, device, _ = _prepare_runtime(config_path)
+        config, dirs, dataset, device, _ = _prepare_runtime(
+            config_path,
+            create_run=False,
+            checkpoint_path=checkpoint_path,
+        )
         result = _predict_from_runtime(config, dirs, dataset, device, checkpoint_path=checkpoint_path)
         return {"predictions": result["predictions"], "prediction_paths": result["prediction_paths"]}
     finally:
@@ -176,7 +259,11 @@ def run_predict(config_path: str | Path, checkpoint_path: str | Path | None = No
 def run_evaluate(config_path: str | Path, checkpoint_path: str | Path | None = None) -> dict:
     apply_runtime_thread_limits()
     try:
-        config, dirs, dataset, device, _ = _prepare_runtime(config_path)
+        config, dirs, dataset, device, _ = _prepare_runtime(
+            config_path,
+            create_run=False,
+            checkpoint_path=checkpoint_path,
+        )
         predict_result = _predict_from_runtime(config, dirs, dataset, device, checkpoint_path=checkpoint_path)
         metrics = evaluate_predictions(
             dataset,

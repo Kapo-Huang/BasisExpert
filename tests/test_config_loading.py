@@ -10,6 +10,13 @@ from var_expert_inr.config.io import load_experiment_config
 
 
 class ConfigLoadingTestCase(unittest.TestCase):
+    def _latest_run_dir(self, experiment_root: Path, exp_id: str) -> Path:
+        exp_dir = experiment_root / exp_id
+        candidates = sorted(path for path in exp_dir.iterdir() if path.is_dir())
+        if not candidates:
+            raise AssertionError(f"No run directories found under {exp_dir}")
+        return candidates[-1]
+
     def test_repo_car_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
         config_paths = [
@@ -379,14 +386,15 @@ class ConfigLoadingTestCase(unittest.TestCase):
 
             run_train(config_path)
 
-            saved_config = yaml.safe_load((root / "runs" / "log-config" / "config.yaml").read_text(encoding="utf-8"))
+            run_dir = self._latest_run_dir(root / "runs", "log-config")
+            saved_config = yaml.safe_load((run_dir / "configs" / "config.yaml").read_text(encoding="utf-8"))
             self.assertEqual(saved_config["model"]["name"], "siren")
             self.assertEqual(saved_config["model"]["out_features"], 1)
             self.assertEqual(saved_config["training"]["weight_decay"], 0.0)
             self.assertEqual(saved_config["evaluation"]["batch_size"], 16384)
             self.assertTrue(saved_config["log"]["effective_config"])
 
-            logs_dir = root / "runs" / "log-config" / "logs"
+            logs_dir = run_dir / "logs"
             log_path = next(logs_dir.glob("run_*.log"))
             log_text = log_path.read_text(encoding="utf-8")
             self.assertIn("Effective config:", log_text)
@@ -452,7 +460,8 @@ class ConfigLoadingTestCase(unittest.TestCase):
 
             run_train(config_path)
 
-            saved_model = yaml.safe_load((root / "runs" / "compact-var-expert" / "config.yaml").read_text(encoding="utf-8"))["model"]
+            run_dir = self._latest_run_dir(root / "runs", "compact-var-expert")
+            saved_model = yaml.safe_load((run_dir / "configs" / "config.yaml").read_text(encoding="utf-8"))["model"]
             self.assertEqual(saved_model["name"], "var_expert")
             self.assertEqual(saved_model["in_features"], 4)
             self.assertEqual(saved_model["num_experts"], 2)
@@ -524,7 +533,8 @@ class ConfigLoadingTestCase(unittest.TestCase):
 
             self.assertEqual(sorted(result["prediction_paths"]), ["b"])
             self.assertTrue(result["prediction_paths"]["b"].name.endswith("b.npy"))
-            saved_config = yaml.safe_load((root / "runs" / "selector-b" / "config.yaml").read_text(encoding="utf-8"))
+            run_dir = self._latest_run_dir(root / "runs", "selector-b")
+            saved_config = yaml.safe_load((run_dir / "configs" / "config.yaml").read_text(encoding="utf-8"))
             self.assertEqual(saved_config["exp_id"], "selector-b")
             self.assertEqual(saved_config["experiment"], "selector-b")
             self.assertEqual(saved_config["data"]["target"], "b")

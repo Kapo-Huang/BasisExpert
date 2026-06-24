@@ -26,8 +26,16 @@ class TrainingPipelineTestCase(unittest.TestCase):
         with path.open("r", newline="", encoding="utf-8") as handle:
             return list(csv.DictReader(handle))
 
-    def _read_log_text(self, exp_id: str) -> str:
-        logs_dir = self.root / "runs" / exp_id / "logs"
+    def _latest_run_dir(self, exp_id: str, experiment_root: Path | None = None) -> Path:
+        runs_root = experiment_root or (self.root / "runs")
+        exp_dir = runs_root / exp_id
+        candidates = sorted(path for path in exp_dir.iterdir() if path.is_dir())
+        if not candidates:
+            raise AssertionError(f"No run directories found under {exp_dir}")
+        return candidates[-1]
+
+    def _read_log_text(self, exp_id: str, experiment_root: Path | None = None) -> str:
+        logs_dir = self._latest_run_dir(exp_id, experiment_root=experiment_root) / "logs"
         log_path = next(logs_dir.glob("run_*.log"))
         return log_path.read_text(encoding="utf-8")
 
@@ -90,10 +98,15 @@ class TrainingPipelineTestCase(unittest.TestCase):
         config_path = self._write_yaml(self.root / "node.yaml", config)
         train_result = run_train(config_path)
         self.assertTrue(Path(train_result["checkpoint_path"]).exists())
+        run_dir = Path(train_result["checkpoint_path"]).parent.parent
+        self.assertTrue((run_dir / "configs" / "config.yaml").exists())
         predict_result = run_predict(config_path)
-        self.assertTrue(all(path.exists() for path in predict_result["prediction_paths"].values()))
+        self.assertTrue(
+            all(path.exists() and path.parent == run_dir / "predictions" for path in predict_result["prediction_paths"].values())
+        )
         eval_result = run_evaluate(config_path)
         self.assertTrue(Path(eval_result["metrics_path"]).exists())
+        self.assertEqual(Path(eval_result["metrics_path"]).parent, run_dir / "metrics")
 
     def test_volume_single_target_train_predict_evaluate(self):
         volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
@@ -131,8 +144,102 @@ class TrainingPipelineTestCase(unittest.TestCase):
         config_path = self._write_yaml(self.root / "volume.yaml", config)
         train_result = run_train(config_path)
         self.assertTrue(Path(train_result["checkpoint_path"]).exists())
+        run_dir = Path(train_result["checkpoint_path"]).parent.parent
         eval_result = run_evaluate(config_path)
         self.assertTrue(Path(eval_result["metrics_path"]).exists())
+        self.assertEqual(Path(eval_result["metrics_path"]).parent, run_dir / "metrics")
+
+    def test_predict_and_evaluate_require_existing_timestamp_run(self):
+        volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
+        volume_path = self.root / "missing_volume.npy"
+        np.save(volume_path, volume)
+        config = {
+            "experiment": "missing-run",
+            "exp_id": "missing-run",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "volume",
+                "target_path": str(volume_path),
+            },
+            "model": {
+                "name": "siren",
+                "in_features": 4,
+                "hidden_features": 8,
+                "hidden_layers": 1,
+            },
+            "training": {
+                "epochs": 1,
+                "batch_size": 4,
+                "pred_batch_size": 4,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 2,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 0,
+                "sampler": "uniform_random",
+            },
+            "evaluation": {"batch_size": 4},
+        }
+        config_path = self._write_yaml(self.root / "missing_run.yaml", config)
+
+        with self.assertRaisesRegex(FileNotFoundError, "No timestamped run directory found"):
+            run_predict(config_path)
+        with self.assertRaisesRegex(FileNotFoundError, "No timestamped run directory found"):
+            run_evaluate(config_path)
+
+    def test_predict_and_evaluate_use_latest_timestamp_run(self):
+        volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
+        volume_path = self.root / "latest_volume.npy"
+        np.save(volume_path, volume)
+        config = {
+            "experiment": "latest-run",
+            "exp_id": "latest-run",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "volume",
+                "target_path": str(volume_path),
+            },
+            "model": {
+                "name": "siren",
+                "in_features": 4,
+                "hidden_features": 8,
+                "hidden_layers": 1,
+            },
+            "training": {
+                "epochs": 1,
+                "batch_size": 4,
+                "pred_batch_size": 4,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 2,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 0,
+                "sampler": "uniform_random",
+            },
+            "evaluation": {"batch_size": 4},
+        }
+        config_path = self._write_yaml(self.root / "latest_run.yaml", config)
+
+        first_train = run_train(config_path)
+        first_run_dir = Path(first_train["checkpoint_path"]).parent.parent
+        second_train = run_train(config_path)
+        second_run_dir = Path(second_train["checkpoint_path"]).parent.parent
+
+        self.assertNotEqual(first_run_dir, second_run_dir)
+        run_dirs = sorted(path for path in (self.root / "runs" / "latest-run").iterdir() if path.is_dir())
+        self.assertEqual(run_dirs, [first_run_dir, second_run_dir])
+
+        predict_result = run_predict(config_path)
+        self.assertTrue(
+            all(path.parent == second_run_dir / "predictions" for path in predict_result["prediction_paths"].values())
+        )
+        eval_result = run_evaluate(config_path)
+        self.assertEqual(Path(eval_result["metrics_path"]).parent, second_run_dir / "metrics")
+        self.assertEqual(run_dirs, sorted(path for path in (self.root / "runs" / "latest-run").iterdir() if path.is_dir()))
 
     def test_volume_pretrain_uses_batches_per_epoch_budget(self):
         volume = np.linspace(-1.0, 1.0, 6, dtype=np.float32).reshape(3, 1, 1, 2)
