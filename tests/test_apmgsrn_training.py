@@ -62,12 +62,12 @@ class APMGSRNTrainingTestCase(unittest.TestCase):
             },
         }
 
-    def test_train_outputs_manifest_predictions_metrics_and_skip_behavior(self):
+    def _assert_training_outputs_and_skip_behavior(self, target_array: np.ndarray, *, stem: str) -> None:
         volume = np.linspace(-1.0, 1.0, 24, dtype=np.float32).reshape(3, 2, 2, 2)
-        target_path = self.root / "target.npy"
-        np.save(target_path, volume)
+        target_path = self.root / f"{stem}.npy"
+        np.save(target_path, target_array)
 
-        config_path = self._write_yaml(self.root / "config.yaml", self._base_config(target_path))
+        config_path = self._write_yaml(self.root / f"{stem}.yaml", self._base_config(target_path))
         result = run_train(config_path)
 
         manifest_path = Path(result["manifest_path"])
@@ -95,6 +95,14 @@ class APMGSRNTrainingTestCase(unittest.TestCase):
         rerun = run_train(config_path)
         self.assertEqual(rerun["completed_timesteps"], [])
         self.assertEqual(rerun["skipped_timesteps"], [0, 1, 2])
+
+    def test_train_outputs_manifest_predictions_metrics_and_skip_behavior(self):
+        volume = np.linspace(-1.0, 1.0, 24, dtype=np.float32).reshape(3, 2, 2, 2)
+        self._assert_training_outputs_and_skip_behavior(volume, stem="target_dense")
+
+    def test_train_outputs_manifest_predictions_metrics_and_skip_behavior_for_flat_target(self):
+        volume = np.linspace(-1.0, 1.0, 24, dtype=np.float32).reshape(3, 2, 2, 2)
+        self._assert_training_outputs_and_skip_behavior(volume.reshape(-1, 1), stem="target_flat")
 
     def test_config_hash_mismatch_reuses_same_exp_id_fails(self):
         volume = np.linspace(-1.0, 1.0, 24, dtype=np.float32).reshape(3, 2, 2, 2)

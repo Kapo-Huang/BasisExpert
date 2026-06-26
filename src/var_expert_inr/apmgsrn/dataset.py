@@ -25,6 +25,10 @@ def _expected_full_shape(volume_shape: Mapping[str, int]) -> tuple[int, int, int
     return (int(volume_shape["T"]), spatial[0], spatial[1], spatial[2])
 
 
+def _expected_flat_size(volume_shape: Mapping[str, int]) -> int:
+    return int(np.prod(_expected_full_shape(volume_shape), dtype=np.int64))
+
+
 def _normalize_loaded_array(array: np.ndarray) -> np.ndarray:
     if array.ndim == 5 and int(array.shape[-1]) == 1:
         return array[..., 0]
@@ -79,17 +83,48 @@ class IonizationTargetReader:
             "T": int(volume_shape["T"]),
         }
         loaded = np.load(self.target_path, mmap_mode="r")
-        self._array = _normalize_loaded_array(loaded)
         expected_shape = _expected_full_shape(self.volume_shape)
-        if self._array.ndim != 4:
+        expected_flat_size = _expected_flat_size(self.volume_shape)
+        normalized = _normalize_loaded_array(loaded)
+
+        self._dense_array: np.ndarray | None = None
+        self._flat_array: np.ndarray | None = None
+        self._storage_array: np.ndarray
+        if normalized.ndim == 4:
+            observed_shape = tuple(int(value) for value in normalized.shape)
+            if observed_shape != expected_shape:
+                raise ValueError(
+                    f"DATA.volume_shape does not match target array shape: expected {expected_shape}, got {observed_shape}"
+                )
+            self._dense_array = normalized
+            self._storage_array = normalized
+        elif normalized.ndim == 1:
+            if int(normalized.size) != expected_flat_size:
+                raise ValueError(
+                    "DATA.volume_shape does not match flat target size: "
+                    f"expected {expected_flat_size} scalar values, got {int(normalized.size)}"
+                )
+            self._flat_array = normalized
+            self._storage_array = normalized
+        elif normalized.ndim == 2:
+            if int(normalized.shape[1]) != 1:
+                raise ValueError(
+                    "APMGSRN ionization target must be scalar; "
+                    f"flat targets may have shape (N, 1), got {tuple(int(v) for v in normalized.shape)}"
+                )
+            if int(normalized.shape[0]) != expected_flat_size:
+                raise ValueError(
+                    "DATA.volume_shape does not match flat target size: "
+                    f"expected {expected_flat_size} scalar values, got {int(normalized.shape[0])}"
+                )
+            self._flat_array = normalized
+            self._storage_array = normalized
+        else:
             raise ValueError(
-                f"APMGSRN ionization target must have shape (T, Z, Y, X), got {self._array.shape}"
+                "APMGSRN ionization target must have shape (T, Z, Y, X), (T, Z, Y, X, 1), (N,), or (N, 1); "
+                f"got {tuple(int(value) for value in normalized.shape)}"
             )
-        if tuple(int(value) for value in self._array.shape) != expected_shape:
-            raise ValueError(
-                f"DATA.volume_shape does not match target array shape: expected {expected_shape}, got {tuple(self._array.shape)}"
-            )
-        ensure_pre_normalized_range(self._array, label=f"target_path '{self.target_path}'")
+        ensure_pre_normalized_range(self._storage_array, label=f"target_path '{self.target_path}'")
 
     @property
     def time_count(self) -> int:
@@ -101,7 +136,7 @@ class IonizationTargetReader:
 
     @property
     def dtype(self) -> np.dtype:
-        return np.dtype(self._array.dtype)
+        return np.dtype(self._storage_array.dtype)
 
     @property
     def itemsize(self) -> int:
@@ -111,7 +146,17 @@ class IonizationTargetReader:
         time_index = int(time_index)
         if time_index < 0 or time_index >= self.time_count:
             raise IndexError(f"time_index must be in [0, {self.time_count - 1}], got {time_index}")
-        return np.array(self._array[time_index], dtype=np.float32, copy=True)
+        if self._dense_array is not None:
+            return np.array(self._dense_array[time_index], dtype=np.float32, copy=True)
+
+        assert self._flat_array is not None
+        values_per_timestep = int(np.prod(self.spatial_shape, dtype=np.int64))
+        start = time_index * values_per_timestep
+        stop = start + values_per_timestep
+        flat_slice = self._flat_array[start:stop]
+        if flat_slice.ndim == 2:
+            flat_slice = flat_slice[:, 0]
+        return np.array(flat_slice, dtype=np.float32, copy=True).reshape(self.spatial_shape)
 
     def raw_bytes_for_indices(self, time_indices: list[int]) -> int:
         values_per_timestep = int(np.prod(self.spatial_shape, dtype=np.int64))
