@@ -1,0 +1,65 @@
+experiment: volume_ionization_mc_inr
+exp_id: mc-inr-ionization
+experiment_root: runs
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 2
+  targets:
+    GT: ../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../data/Volume/Ionization/target_H+.npy
+    H2: ../../data/Volume/Ionization/target_H2.npy
+    He: ../../data/Volume/Ionization/target_He.npy
+    PD: ../../data/Volume/Ionization/target_PD.npy
+model:
+  name: mc_inr
+  hidden_features: 128
+  gfe_layers: 5
+  lfe_layers: 6
+training:
+  epochs: 50
+  batch_size: 12000
+  pred_batch_size: 12000
+  num_workers: 0
+  lr: 5.0e-5
+  weight_decay: 0.0
+  loss_type: mse
+  log_every: 5
+  save_every: 10
+  seed: 42
+  device: cuda
+  initial_k: 12
+  cluster_init_method: voxel_clustering
+  assignments_cache_path: ../../data/cache/mc_inr/ionization_voxel_assignments_k12.npy
+  meta_sampling_ratio: 0.3
+  convergence_patience: 20
+  convergence_delta: 0.0
+  finetune_epochs: 100
+  finetune_lr: 5.0e-5
+  finetune_sampling_ratio: 1.0
+  scheduler:
+    enabled: true
+    step_size: 30
+    gamma: 0.92
+evaluation:
+  batch_size: 12000
+  save_predictions: true
+log:
+  effective_config: true
+  model_stats: true
+  epoch_summary: true
+  startup_timing: true
+  psnr:
+    enabled: true
+    per_target: true
+  timing:
+    enabled: false
+    epoch_breakdown: false
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false
