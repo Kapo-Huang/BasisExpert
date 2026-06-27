@@ -21,6 +21,9 @@ python -m var_expert_inr.dc_inr.cli train --config configs/DC-INR/ionization.yam
 python -m var_expert_inr.dc_inr.cli predict --config configs/DC-INR/ionization.yaml --target GT
 python -m var_expert_inr.dc_inr.cli evaluate --config configs/DC-INR/ionization.yaml --target GT
 python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization.yaml --target GT
+python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization.yaml --target GT
+python -m var_expert_inr.fv_srn.cli predict --config configs/fV-SRN/ionization.yaml --target GT
+python -m var_expert_inr.fv_srn.cli evaluate --config configs/fV-SRN/ionization.yaml --target GT
 ```
 
 When running without installation, this repository ships a small package shim so
@@ -52,3 +55,18 @@ creates a fresh `runs/<exp_id>/<timestamp>/` directory containing `manifest.json
 `configs/config.yaml`, aggregate outputs, and per-timestep artifacts under
 `timesteps/`, and it does not participate in the main `var_expert_inr.cli`
 model registry.
+
+`fv_srn` is a standalone, pure-PyTorch reproduction of temporal fV-SRN.
+It uses NeRF spatial Fourier features, a small SnakeAlt MLP, and learned
+volumetric feature grids at configurable temporal keyframes. Intermediate
+timesteps linearly interpolate their two neighboring grids. Training uses
+world-space L1/L2 losses, density-guided initial sampling, and periodic
+error-guided resampling. Runs save resumable FP32 checkpoints and compact
+inference artifacts containing FP16 network weights and per-channel uint8
+latent grids.
+
+The checked-in fV-SRN Ionization config describes a full 100-timestep
+`(T,Z,Y,X)=(100,248,248,600)` sequence. The sample target files currently in
+this repository contain only two timesteps; they must be replaced with the
+full sequence before that config can run. The loader deliberately reports this
+shape mismatch instead of silently reinterpreting the data.
