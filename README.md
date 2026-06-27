@@ -24,6 +24,9 @@ python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization.y
 python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization.yaml --target GT
 python -m var_expert_inr.fv_srn.cli predict --config configs/fV-SRN/ionization.yaml --target GT
 python -m var_expert_inr.fv_srn.cli evaluate --config configs/fV-SRN/ionization.yaml --target GT
+python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization.yaml --target GT
+python -m var_expert_inr.rmdsrn.cli predict --config configs/RMDSRN/ionization.yaml --target GT
+python -m var_expert_inr.rmdsrn.cli evaluate --config configs/RMDSRN/ionization.yaml --target GT
 ```
 
 When running without installation, this repository ships a small package shim so
@@ -64,6 +67,16 @@ world-space L1/L2 losses, density-guided initial sampling, and periodic
 error-guided resampling. Runs save resumable FP32 checkpoints and compact
 inference artifacts containing FP16 network weights and per-channel uint8
 latent grids.
+
+`rmdsrn` is a standalone temporal RMDSRN built on the same keyframe-interpolated
+fV-SRN encoder. Five independent SnakeAlt decoders share the feature grid and
+produce a reconstruction mean and unbiased ensemble variance. Training combines
+per-member MSE with a detached-error KL variance regularizer whose weight grows
+exponentially while the learning rate follows cosine annealing. Checkpoints are
+resumable; FP32 inference artifacts contain only the shared encoder and decoder
+parameters. Prediction writes separate `_mean.npy` and `_variance.npy` volumes,
+and evaluation reports reconstruction quality, variance-error Pearson
+correlation, and sampled top-1%/top-5% hit rates.
 
 The checked-in fV-SRN Ionization config describes a full 100-timestep
 `(T,Z,Y,X)=(100,248,248,600)` sequence. The sample target files currently in
