@@ -82,14 +82,12 @@ def cluster_ids_for_rows(rows: np.ndarray, assignments: np.ndarray, meta: Datase
     if meta.volume_shape is None:
         raise ValueError("Volume metadata is required for volume cluster routing")
     voxel_count = int(meta.volume_shape.X) * int(meta.volume_shape.Y) * int(meta.volume_shape.Z)
-    if cluster_ids.shape == (voxel_count,):
-        return cluster_ids[row_ids % voxel_count]
-    if cluster_ids.shape == (int(meta.volume_shape.T),):
-        return cluster_ids[row_ids // voxel_count]
-    raise ValueError(
-        f"Unsupported MC-INR assignment shape {cluster_ids.shape} for volume dataset; "
-        f"expected {(voxel_count,)} or {(int(meta.volume_shape.T),)}"
-    )
+    if cluster_ids.shape != (voxel_count,):
+        raise ValueError(
+            f"Unsupported MC-INR assignment shape {cluster_ids.shape} for volume dataset; "
+            f"expected {(voxel_count,)}"
+        )
+    return cluster_ids[row_ids % voxel_count]
 
 
 def _sample_ids_by_cluster(assignments: np.ndarray, sampling_ratio: float, rng: np.random.Generator) -> np.ndarray:
@@ -112,32 +110,91 @@ def sample_node_rows(assignments: np.ndarray, sampling_ratio: float, rng: np.ran
     return _sample_ids_by_cluster(np.asarray(assignments, dtype=np.int64), sampling_ratio, rng)
 
 
-def sample_volume_voxels(assignments: np.ndarray, sampling_ratio: float, rng: np.random.Generator) -> np.ndarray:
-    return _sample_ids_by_cluster(np.asarray(assignments, dtype=np.int64), sampling_ratio, rng)
-
-
-def sample_cluster_members(
+def sample_node_rows_from_cluster(
     assignments: np.ndarray,
     cluster_id: int,
-    sampling_ratio: float,
+    row_count: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    members = np.flatnonzero(np.asarray(assignments, dtype=np.int64) == int(cluster_id))
+    assignments_np = np.asarray(assignments, dtype=np.int64)
+    members = np.flatnonzero(assignments_np == int(cluster_id))
     if members.size == 0:
         return np.empty((0,), dtype=np.int64)
-    if float(sampling_ratio) >= 1.0:
-        return members.astype(np.int64, copy=False)
-    take = min(members.size, max(1, int(ceil(members.size * float(sampling_ratio)))))
-    return rng.choice(members, size=take, replace=False).astype(np.int64)
+    n = min(max(0, int(row_count)), int(members.size))
+    if n <= 0:
+        return np.empty((0,), dtype=np.int64)
+    return rng.choice(members, size=n, replace=False).astype(np.int64)
 
 
-def volume_rows_for_voxels(voxel_ids: np.ndarray, meta: DatasetMeta) -> np.ndarray:
+def volume_voxel_count(meta: DatasetMeta) -> int:
     if meta.volume_shape is None:
-        raise ValueError("volume_rows_for_voxels requires volume metadata")
+        raise ValueError("volume_voxel_count requires volume metadata")
+    return int(meta.volume_shape.X) * int(meta.volume_shape.Y) * int(meta.volume_shape.Z)
+
+
+def volume_rows_from_voxels_and_times(
+    voxel_ids: np.ndarray,
+    time_ids: np.ndarray,
+    meta: DatasetMeta,
+) -> np.ndarray:
+    if meta.volume_shape is None:
+        raise ValueError("volume_rows_from_voxels_and_times requires volume metadata")
+
     voxels = np.asarray(voxel_ids, dtype=np.int64)
-    voxel_count = int(meta.volume_shape.X) * int(meta.volume_shape.Y) * int(meta.volume_shape.Z)
-    time_offsets = voxel_count * np.arange(int(meta.volume_shape.T), dtype=np.int64)
-    return (voxels[:, None] + time_offsets[None, :]).reshape(-1)
+    times = np.asarray(time_ids, dtype=np.int64)
+    if voxels.shape != times.shape:
+        raise ValueError("voxel_ids and time_ids must have the same shape")
+
+    voxel_count = volume_voxel_count(meta)
+    time_count = int(meta.volume_shape.T)
+    if voxels.size > 0:
+        if int(voxels.min()) < 0 or int(voxels.max()) >= voxel_count:
+            raise ValueError("voxel_ids out of valid range")
+        if int(times.min()) < 0 or int(times.max()) >= time_count:
+            raise ValueError("time_ids out of valid range")
+
+    return (times * voxel_count + voxels).astype(np.int64, copy=False)
+
+
+def sample_volume_rows_from_cluster(
+    assignments: np.ndarray,
+    cluster_id: int,
+    meta: DatasetMeta,
+    row_count: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    assignments_np = np.asarray(assignments, dtype=np.int64)
+    members = np.flatnonzero(assignments_np == int(cluster_id))
+    if members.size == 0:
+        return np.empty((0,), dtype=np.int64)
+
+    time_count = int(meta.volume_shape.T) if meta.volume_shape is not None else 0
+    local_total_rows = int(members.size) * int(time_count)
+    n = min(max(0, int(row_count)), local_total_rows)
+    if n <= 0:
+        return np.empty((0,), dtype=np.int64)
+
+    offsets = rng.choice(local_total_rows, size=n, replace=False)
+    local_voxel_indices = offsets % int(members.size)
+    time_ids = offsets // int(members.size)
+    voxel_ids = members[local_voxel_indices]
+    return volume_rows_from_voxels_and_times(voxel_ids, time_ids, meta)
+
+
+def sample_volume_rows_global(
+    assignments: np.ndarray,
+    meta: DatasetMeta,
+    row_count: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    del assignments
+    voxel_count = volume_voxel_count(meta)
+    time_count = int(meta.volume_shape.T) if meta.volume_shape is not None else 0
+    total_rows = voxel_count * time_count
+    n = min(max(0, int(row_count)), total_rows)
+    if n <= 0:
+        return np.empty((0,), dtype=np.int64)
+    return rng.choice(total_rows, size=n, replace=False).astype(np.int64)
 
 
 def volume_spatial_coords_for_voxels(voxel_ids: np.ndarray, meta: DatasetMeta) -> np.ndarray:

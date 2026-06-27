@@ -30,11 +30,12 @@ from .data import (
     compute_volume_centroids,
     fetch_mc_batch,
     prediction_shape,
-    sample_cluster_members,
+    sample_node_rows_from_cluster,
     sample_node_rows,
-    sample_volume_voxels,
+    sample_volume_rows_from_cluster,
+    sample_volume_rows_global,
     target_layout_from_dataset,
-    volume_rows_for_voxels,
+    volume_voxel_count,
     volume_spatial_coords_for_voxels,
 )
 from .model import ClusterCoordNet, MCINR
@@ -496,44 +497,86 @@ def _stage_epoch_batches(
     volume_shape = dataset.meta.volume_shape
     if volume_shape is None:
         raise ValueError("Volume metadata is required for MC-INR volume batching")
-    sampled_voxels = sample_volume_voxels(assignments, sampling_ratio, rng)
-    if sampled_voxels.size == 0:
-        raise RuntimeError("No sampled voxels available for MC-INR volume stage")
-    sampled_voxels = np.asarray(sampled_voxels, dtype=np.int64)
-    voxel_count = int(volume_shape.X) * int(volume_shape.Y) * int(volume_shape.Z)
-    time_offsets = voxel_count * np.arange(int(volume_shape.T), dtype=np.int64)
-    voxels_per_batch = max(1, int(batch_size) // max(1, int(volume_shape.T)))
-
-    def _voxel_batch_to_rows(voxel_batch: np.ndarray) -> np.ndarray:
-        return (voxel_batch[:, None] + time_offsets[None, :]).reshape(-1)
+    voxel_count = volume_voxel_count(dataset.meta)
+    time_count = int(volume_shape.T)
+    total_rows = int(voxel_count) * int(time_count)
+    sample_count = max(1, int(math.ceil(total_rows * float(sampling_ratio))))
+    batch_size_int = max(1, int(batch_size))
 
     def _generator():
         if cluster_aware_batches:
-            sampled_cluster_ids = np.asarray(assignments[sampled_voxels], dtype=np.int64)
-            for voxel_batch in _yield_cluster_grouped_rows(
-                sampled_voxels,
-                sampled_cluster_ids,
-                batch_size=int(voxels_per_batch),
-                rng=rng,
-            ):
-                yield fetch_mc_batch(dataset, _voxel_batch_to_rows(voxel_batch), layout, assignments)
+            assignments_np = np.asarray(assignments, dtype=np.int64)
+            cluster_ids = np.unique(assignments_np)
+            cluster_ids = cluster_ids[cluster_ids >= 0]
+            if cluster_ids.size == 0:
+                raise RuntimeError("No valid volume clusters available")
+
+            cluster_voxel_counts = np.bincount(assignments_np, minlength=int(cluster_ids.max()) + 1)
+            cluster_row_counts = cluster_voxel_counts.astype(np.int64) * int(time_count)
+            positive_clusters = cluster_ids[cluster_row_counts[cluster_ids] > 0]
+            if positive_clusters.size == 0:
+                raise RuntimeError("No non-empty volume clusters available")
+
+            weights = cluster_row_counts[positive_clusters].astype(np.float64)
+            weights /= float(weights.sum())
+            cluster_sample_counts = rng.multinomial(sample_count, weights)
+            sample_count_by_cluster = {
+                int(cluster_id): int(cluster_sample_counts[index])
+                for index, cluster_id in enumerate(positive_clusters.tolist())
+            }
+            cluster_order = positive_clusters[rng.permutation(positive_clusters.size)]
+
+            for cluster_id in cluster_order.tolist():
+                cluster_remaining = sample_count_by_cluster[int(cluster_id)]
+                while cluster_remaining > 0:
+                    current = min(batch_size_int, cluster_remaining)
+                    rows = sample_volume_rows_from_cluster(
+                        assignments,
+                        int(cluster_id),
+                        dataset.meta,
+                        current,
+                        rng,
+                    )
+                    if rows.size == 0:
+                        break
+                    cluster_remaining -= int(rows.size)
+                    yield fetch_mc_batch(dataset, rows, layout, assignments)
             return
 
-        shuffled_voxels = sampled_voxels[rng.permutation(sampled_voxels.size)]
-        for start in range(0, int(shuffled_voxels.size), int(voxels_per_batch)):
-            stop = min(start + int(voxels_per_batch), int(shuffled_voxels.size))
-            yield fetch_mc_batch(dataset, _voxel_batch_to_rows(shuffled_voxels[start:stop]), layout, assignments)
+        remaining = sample_count
+        while remaining > 0:
+            current = min(batch_size_int, remaining)
+            rows = sample_volume_rows_global(assignments, dataset.meta, current, rng)
+            if rows.size == 0:
+                break
+            remaining -= int(rows.size)
+            yield fetch_mc_batch(dataset, rows, layout, assignments)
 
-    return int(sampled_voxels.size) * int(volume_shape.T), _generator()
+    return sample_count, _generator()
 
 
-def _meta_support_rows(dataset, assignments: np.ndarray, cluster_id: int, support_ratio: float, rng: np.random.Generator) -> np.ndarray:
-    members = sample_cluster_members(assignments, cluster_id, support_ratio, rng)
-    if members.size == 0:
-        return members
+def _sample_meta_task_rows(
+    dataset,
+    assignments: np.ndarray,
+    cluster_id: int,
+    *,
+    max_rows: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
     if dataset.meta.kind == "node":
-        return members
-    return volume_rows_for_voxels(members, dataset.meta)
+        return sample_node_rows_from_cluster(
+            assignments,
+            cluster_id,
+            max_rows,
+            rng,
+        )
+    return sample_volume_rows_from_cluster(
+        assignments,
+        cluster_id,
+        dataset.meta,
+        max_rows,
+        rng,
+    )
 
 
 def _run_meta_initialization(
@@ -599,22 +642,10 @@ def _run_meta_initialization(
         deltas = [torch.zeros_like(param, device=device) for param in template_model.parameters()]
         support_losses: list[float] = []
         tasks_used = 0
+        inner_batch_size = int(config.training.meta_inner_batch_size)
+        support_max_rows = int(config.training.meta_support_max_rows)
 
         for cluster_id in selected_clusters.tolist():
-            support_rows = _meta_support_rows(
-                dataset,
-                assignments,
-                int(cluster_id),
-                float(config.training.meta_support_ratio),
-                rng,
-            )
-            if support_rows.size == 0:
-                continue
-
-            batch = fetch_mc_batch(dataset, support_rows, layout, assignments)
-            coords = batch.coords.to(device, non_blocking=True)
-            targets = batch.targets_concat.to(device, non_blocking=True)
-
             inner_model = copy.deepcopy(template_model).to(device)
             inner_optimizer = torch.optim.Adam(
                 inner_model.parameters(),
@@ -623,15 +654,39 @@ def _run_meta_initialization(
             )
             inner_model.train()
             task_loss_total = 0.0
+            task_steps = 0
             for _ in range(int(config.training.meta_inner_steps)):
-                preds = inner_model(coords)
-                loss = _criterion(preds, targets, config.training.loss_type)
-                inner_optimizer.zero_grad()
-                loss.backward()
-                inner_optimizer.step()
-                task_loss_total += float(loss.item())
+                support_rows = _sample_meta_task_rows(
+                    dataset,
+                    assignments,
+                    int(cluster_id),
+                    max_rows=support_max_rows,
+                    rng=rng,
+                )
+                if support_rows.size == 0:
+                    continue
 
-            support_losses.append(task_loss_total / float(config.training.meta_inner_steps))
+                support_rows = support_rows[rng.permutation(support_rows.size)]
+                for start in range(0, int(support_rows.size), inner_batch_size):
+                    stop = min(start + inner_batch_size, int(support_rows.size))
+                    rows = support_rows[start:stop]
+                    batch = fetch_mc_batch(dataset, rows, layout, assignments)
+                    coords = batch.coords.to(device, non_blocking=True)
+                    targets = batch.targets_concat.to(device, non_blocking=True)
+
+                    preds = inner_model(coords)
+                    loss = _criterion(preds, targets, config.training.loss_type)
+                    inner_optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    inner_optimizer.step()
+
+                    task_loss_total += float(loss.item())
+                    task_steps += 1
+
+            if task_steps <= 0:
+                continue
+
+            support_losses.append(task_loss_total / float(task_steps))
             tasks_used += 1
             with torch.no_grad():
                 for delta_tensor, template_param, inner_param in zip(

@@ -1,0 +1,72 @@
+experiment: dc_inr_ionization_{target}
+exp_id: dc-inr-ionization-{target}
+experiment_root: runs/dc_inr
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  target: GT
+  targets:
+    GT: ../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../data/Volume/Ionization/target_H+.npy
+    H2: ../../data/Volume/Ionization/target_H2.npy
+    He: ../../data/Volume/Ionization/target_He.npy
+    PD: ../../data/Volume/Ionization/target_PD.npy
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 2
+model:
+  name: dc_inr
+partition:
+  candidate_block_shapes:
+    - sx: 8
+      sy: 31
+      sz: 1
+    - sx: 4
+      sy: 62
+      sz: 1
+    - sx: 2
+      sy: 4
+      sz: 31
+    - sx: 1
+      sy: 8
+      sz: 31
+  dbscan_eps: 1.0e-2
+  dbscan_min_samples: 1
+  entropy_bins: 256
+  distance_matrix_max_bytes: 1073741824
+compression:
+  target_cr: 20.0
+  max_initial_neurons: 64
+  min_initial_neurons: 4
+training:
+  epochs: 300
+  lr: 1.0e-4
+  beta_1: 0.9
+  beta_2: 0.999
+  points_per_timestep: 32000
+  prediction_batch_size: 65536
+  lr_milestones: [150, 225]
+  lr_gamma: 0.5
+  log_every: 25
+  seed: 42
+  device: cuda
+evaluation:
+  batch_size: 65536
+  save_predictions: true
+log:
+  effective_config: true
+  model_stats: true
+  epoch_summary: true
+  startup_timing: true
+  psnr:
+    enabled: true
+    per_target: true
+  timing:
+    enabled: false
+    epoch_breakdown: false
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

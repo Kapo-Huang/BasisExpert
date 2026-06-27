@@ -17,6 +17,9 @@ python -m var_expert_inr.cli evaluate --config configs/VarExpert/ionization.yaml
 python -m var_expert_inr.mc_inr.cli train --config configs/MC-INR/ionization.yaml
 python -m var_expert_inr.mc_inr.cli predict --config configs/MC-INR/ionization.yaml
 python -m var_expert_inr.mc_inr.cli evaluate --config configs/MC-INR/ionization.yaml
+python -m var_expert_inr.dc_inr.cli train --config configs/DC-INR/ionization.yaml --target GT
+python -m var_expert_inr.dc_inr.cli predict --config configs/DC-INR/ionization.yaml --target GT
+python -m var_expert_inr.dc_inr.cli evaluate --config configs/DC-INR/ionization.yaml --target GT
 python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization.yaml --target GT
 ```
 
@@ -36,8 +39,16 @@ It uses the same run directory layout and evaluation outputs as the unified
 framework, but it does not participate in the main `var_expert_inr.cli` model
 registry or training engine.
 
+`dc_inr` is also provided as a standalone subsystem under
+`var_expert_inr.dc_inr`. It performs block partition search, representative
+selection, entropy-guided tiny INR training, and decompression for single-target
+volume data, and it does not participate in the main `var_expert_inr.cli`
+model registry.
+
 `apmgsrn` is also provided as a standalone subsystem under
 `var_expert_inr.apmgsrn`. It currently only supports single-target `ionization`
-volume training by fitting one 3D APMGSRN model per timestep. Its outputs are
-written to `runs/apmgsrn/<exp_id>/` without timestamped subdirectories, and it
-does not participate in the main `var_expert_inr.cli` model registry.
+volume training by fitting one 3D APMGSRN model per timestep. Each training run
+creates a fresh `runs/<exp_id>/<timestamp>/` directory containing `manifest.json`,
+`configs/config.yaml`, aggregate outputs, and per-timestep artifacts under
+`timesteps/`, and it does not participate in the main `var_expert_inr.cli`
+model registry.

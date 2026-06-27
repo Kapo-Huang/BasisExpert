@@ -36,7 +36,8 @@ training:
   initial_k: 12
   cluster_init_method: voxel_clustering
   assignments_cache_path: ../../data/cache/mc_inr/ionization_voxel_assignments_k12.npy
-  meta_sampling_ratio: 0.3
+  meta_inner_batch_size: 8192
+  meta_support_max_rows: 32768
   convergence_patience: 20
   convergence_delta: 0.0
   finetune_epochs: 100

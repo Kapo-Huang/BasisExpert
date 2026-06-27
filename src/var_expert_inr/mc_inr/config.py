@@ -102,12 +102,12 @@ class MCTrainingConfig:
     initial_k: int = 20
     cluster_init_method: str = "auto"
     assignments_cache_path: str = ""
-    meta_sampling_ratio: float | None = None
     meta_iterations: int = 2000
     meta_inner_steps: int = 5
+    meta_inner_batch_size: int = 8192
     meta_inner_lr: float = 1.0e-4
     meta_batch_clusters: int = 4
-    meta_support_ratio: float = 0.3
+    meta_support_max_rows: int = 32768
     meta_outer_lr: float = 1.0e-3
     convergence_patience: int = 30
     convergence_delta: float = 0.0
@@ -136,16 +136,16 @@ class MCTrainingConfig:
             raise ValueError("training.meta_iterations must be positive")
         if int(self.meta_inner_steps) <= 0:
             raise ValueError("training.meta_inner_steps must be positive")
+        if int(self.meta_inner_batch_size) <= 0:
+            raise ValueError("training.meta_inner_batch_size must be positive")
         if int(self.meta_batch_clusters) <= 0:
             raise ValueError("training.meta_batch_clusters must be positive")
+        if int(self.meta_support_max_rows) <= 0:
+            raise ValueError("training.meta_support_max_rows must be positive")
         if float(self.meta_inner_lr) <= 0.0:
             raise ValueError("training.meta_inner_lr must be positive")
         if float(self.meta_outer_lr) <= 0.0:
             raise ValueError("training.meta_outer_lr must be positive")
-        if not (0.0 < float(self.meta_support_ratio) <= 1.0):
-            raise ValueError("training.meta_support_ratio must be in (0, 1]")
-        if self.meta_sampling_ratio is not None and not (0.0 < float(self.meta_sampling_ratio) <= 1.0):
-            raise ValueError("training.meta_sampling_ratio must be in (0, 1] when provided")
         if int(self.finetune_epochs) <= 0:
             raise ValueError("training.finetune_epochs must be positive")
         if float(self.finetune_sampling_ratio) <= 0.0:
@@ -230,8 +230,6 @@ def load_config(path: str | Path) -> MCExperimentConfig:
         gfe_layers=int(model_section.get("gfe_layers", 5)),
         lfe_layers=int(model_section.get("lfe_layers", 6)),
     )
-    legacy_meta_sampling_ratio = training_section.get("meta_sampling_ratio")
-    meta_support_ratio = training_section.get("meta_support_ratio", legacy_meta_sampling_ratio)
     meta_iterations = training_section.get("meta_iterations")
     if meta_iterations is None:
         meta_iterations = training_section.get("epochs", 2000)
@@ -257,14 +255,12 @@ def load_config(path: str | Path) -> MCExperimentConfig:
         assignments_cache_path=str(
             resolve_path(training_section.get("assignments_cache_path"), base_dir=config_path.parent) or ""
         ),
-        meta_sampling_ratio=(
-            float(legacy_meta_sampling_ratio) if legacy_meta_sampling_ratio is not None else None
-        ),
         meta_iterations=int(meta_iterations),
         meta_inner_steps=int(training_section.get("meta_inner_steps", 5)),
+        meta_inner_batch_size=int(training_section.get("meta_inner_batch_size", 8192)),
         meta_inner_lr=float(training_section.get("meta_inner_lr", 1.0e-4)),
         meta_batch_clusters=int(training_section.get("meta_batch_clusters", 4)),
-        meta_support_ratio=float(meta_support_ratio if meta_support_ratio is not None else 0.3),
+        meta_support_max_rows=int(training_section.get("meta_support_max_rows", 32768)),
         meta_outer_lr=float(meta_outer_lr),
         convergence_patience=int(training_section.get("convergence_patience", 30)),
         convergence_delta=float(training_section.get("convergence_delta", 0.0)),

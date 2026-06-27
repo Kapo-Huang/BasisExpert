@@ -107,9 +107,10 @@ class MCINRTrainingTestCase(unittest.TestCase):
             "assignments_cache_path": str(self.root / f"{exp_id}_assignments.npy"),
             "meta_iterations": 3,
             "meta_inner_steps": 2,
+            "meta_inner_batch_size": 3,
             "meta_inner_lr": 1.0e-3,
             "meta_batch_clusters": 2,
-            "meta_support_ratio": 0.5,
+            "meta_support_max_rows": 6,
             "meta_outer_lr": 1.0e-3,
             "convergence_patience": 10,
             "convergence_delta": 0.0,
@@ -157,11 +158,19 @@ class MCINRTrainingTestCase(unittest.TestCase):
         }
         return coords, self._write_yaml(self.root / f"{exp_id}.yaml", config)
 
-    def _volume_config(self, *, exp_id: str = "mc-volume"):
-        a = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
-        b = np.linspace(-1.0, 1.0, 16, dtype=np.float32).reshape(2, 1, 2, 2, 2)
-        a_path = self.root / "target_a.npy"
-        b_path = self.root / "target_b.npy"
+    def _volume_config(
+        self,
+        *,
+        exp_id: str = "mc-volume",
+        time_steps: int = 2,
+        batch_size: int = 4,
+        finetune_sampling_ratio: float = 1.0,
+        cluster_aware_batches: bool = True,
+    ):
+        a = np.linspace(-1.0, 1.0, time_steps * 4, dtype=np.float32).reshape(time_steps, 1, 2, 2)
+        b = np.linspace(-1.0, 1.0, time_steps * 8, dtype=np.float32).reshape(time_steps, 1, 2, 2, 2)
+        a_path = self.root / f"{exp_id}_target_a.npy"
+        b_path = self.root / f"{exp_id}_target_b.npy"
         np.save(a_path, a)
         np.save(b_path, b)
         config = {
@@ -171,7 +180,7 @@ class MCINRTrainingTestCase(unittest.TestCase):
             "data": {
                 "kind": "volume",
                 "targets": {"b": str(b_path), "a": str(a_path)},
-                "volume_shape": {"X": 2, "Y": 2, "Z": 1, "T": 2},
+                "volume_shape": {"X": 2, "Y": 2, "Z": 1, "T": time_steps},
             },
             "model": {
                 "name": "mc_inr",
@@ -181,8 +190,8 @@ class MCINRTrainingTestCase(unittest.TestCase):
             },
             "training": {
                 "epochs": 2,
-                "batch_size": 4,
-                "pred_batch_size": 4,
+                "batch_size": batch_size,
+                "pred_batch_size": batch_size,
                 "num_workers": 0,
                 "lr": 1.0e-3,
                 "weight_decay": 0.0,
@@ -193,26 +202,27 @@ class MCINRTrainingTestCase(unittest.TestCase):
                 "device": "cpu",
                 "initial_k": 2,
                 "cluster_init_method": "voxel_clustering",
-                "assignments_cache_path": str(self.root / "volume_assignments.npy"),
+                "assignments_cache_path": str(self.root / f"{exp_id}_volume_assignments.npy"),
                 "meta_iterations": 1,
-                "meta_inner_steps": 1,
+                "meta_inner_steps": 2,
+                "meta_inner_batch_size": 2,
                 "meta_inner_lr": 1.0e-3,
                 "meta_batch_clusters": 2,
-                "meta_support_ratio": 0.5,
+                "meta_support_max_rows": 6,
                 "meta_outer_lr": 1.0e-3,
                 "convergence_patience": 5,
                 "convergence_delta": 0.0,
                 "finetune_epochs": 1,
                 "finetune_lr": 1.0e-3,
-                "finetune_sampling_ratio": 1.0,
-                "cluster_aware_batches": True,
+                "finetune_sampling_ratio": finetune_sampling_ratio,
+                "cluster_aware_batches": cluster_aware_batches,
                 "scheduler": {
                     "enabled": False,
                     "step_size": 0,
                     "gamma": 1.0,
                 },
             },
-            "evaluation": {"batch_size": 4},
+            "evaluation": {"batch_size": batch_size},
             "log": {
                 "timing": {
                     "enabled": False,
@@ -345,6 +355,7 @@ class MCINRTrainingTestCase(unittest.TestCase):
     def test_volume_smoke_and_streaming_prediction(self):
         config_path = self._volume_config()
         train_result = run_train(config_path)
+        self.assertEqual(train_result["training_summary"]["meta_init"]["last_iteration"], 1)
         run_dir = self._run_dir_from_checkpoint(train_result["checkpoint_path"])
         pred_a = np.load(run_dir / "predictions" / "mc-volume_a.npy")
         pred_b = np.load(run_dir / "predictions" / "mc-volume_b.npy")
@@ -352,6 +363,52 @@ class MCINRTrainingTestCase(unittest.TestCase):
         self.assertEqual(pred_b.shape, (2, 1, 2, 2, 2))
         eval_result = run_evaluate(config_path)
         self.assertTrue(Path(eval_result["metrics_path"]).exists())
+
+    def test_volume_stage_epoch_batches_use_row_level_streaming(self):
+        config_path = self._volume_config(
+            exp_id="mc-volume-batches",
+            time_steps=5,
+            batch_size=3,
+            finetune_sampling_ratio=0.3,
+        )
+        cfg = load_config(config_path)
+        dataset = build_dataset(cfg.data)
+        layout = target_layout_from_dataset(dataset)
+        assignments = np.asarray([0, 0, 1, 1], dtype=np.int32)
+
+        expected_sample_count = int(np.ceil((2 * 2 * 1 * 5) * 0.3))
+
+        sample_count, aware_batches = _stage_epoch_batches(
+            dataset,
+            layout,
+            assignments,
+            batch_size=3,
+            sampling_ratio=0.3,
+            rng=np.random.default_rng(0),
+            cluster_aware_batches=True,
+        )
+        aware_batches = list(aware_batches)
+        self.assertEqual(sample_count, expected_sample_count)
+        aware_batch_sizes = [int(batch.coords.shape[0]) for batch in aware_batches]
+        self.assertTrue(aware_batch_sizes)
+        self.assertTrue(all(size <= 3 for size in aware_batch_sizes))
+        aware_unique_counts = [int(np.unique(batch.cluster_ids.numpy()).size) for batch in aware_batches]
+        self.assertTrue(all(count == 1 for count in aware_unique_counts))
+
+        sample_count, mixed_batches = _stage_epoch_batches(
+            dataset,
+            layout,
+            assignments,
+            batch_size=3,
+            sampling_ratio=0.3,
+            rng=np.random.default_rng(1),
+            cluster_aware_batches=False,
+        )
+        mixed_batches = list(mixed_batches)
+        self.assertEqual(sample_count, expected_sample_count)
+        mixed_batch_sizes = [int(batch.coords.shape[0]) for batch in mixed_batches]
+        self.assertTrue(mixed_batch_sizes)
+        self.assertTrue(all(size <= 3 for size in mixed_batch_sizes))
 
 
 if __name__ == "__main__":

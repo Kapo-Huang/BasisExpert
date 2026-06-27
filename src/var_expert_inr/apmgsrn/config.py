@@ -279,7 +279,7 @@ def load_config(config_path: str | Path, *, target_override: str | None = None, 
     return {
         "experiment": str(cfg.get("experiment") or exp_id_default),
         "exp_id": str(identifier or cfg.get("exp_id") or exp_id_default),
-        "experiment_root": str(cfg.get("experiment_root") or "runs/apmgsrn"),
+        "experiment_root": str(cfg.get("experiment_root") or "runs"),
         "MODEL": normalized_model,
         "DATA": normalized_data,
         "TRAINING": normalized_training,
@@ -287,8 +287,12 @@ def load_config(config_path: str | Path, *, target_override: str | None = None, 
     }
 
 
-def run_dir_from_config(cfg: dict[str, Any]) -> Path:
+def experiment_dir_from_config(cfg: dict[str, Any]) -> Path:
     return Path(cfg["experiment_root"]) / str(cfg["exp_id"])
+
+
+def run_dir_from_config(cfg: dict[str, Any]) -> Path:
+    return experiment_dir_from_config(cfg)
 
 
 def save_config(cfg: dict[str, Any], path: str | Path) -> Path:

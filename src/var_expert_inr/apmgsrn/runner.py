@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from ..utils.io import sha256_payload
 from ..utils.logging_utils import close_file_handlers, setup_logging
 from ..utils.model_stats import collect_model_statistics
 from ..utils.runtime import apply_runtime_thread_limits, set_random_seed
-from .config import config_payload, load_config, run_dir_from_config, save_config
+from .config import config_payload, experiment_dir_from_config, load_config, save_config
 from .dataset import IonizationTargetReader, IonizationTimestepDataset
 from .model import APMGSRN
 
@@ -51,10 +52,6 @@ def _json_dump(path: str | Path, payload: dict[str, Any]) -> Path:
     return target
 
 
-def _json_load(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
 def _checkpoint_payload(
     *,
     model: APMGSRN,
@@ -85,17 +82,37 @@ def _save_checkpoint(path: str | Path, payload: dict[str, Any]) -> Path:
     return target
 
 
-def _ensure_run_layout(run_dir: Path) -> dict[str, Path]:
+def _build_run_dirs(run_dir: Path) -> dict[str, Path | str]:
     dirs = {
+        "experiment_dir": run_dir.parent,
         "run_dir": run_dir,
+        "run_token": run_dir.name,
+        "config_dir": run_dir / "configs",
         "timesteps_dir": run_dir / "timesteps",
         "logs_dir": run_dir / "logs",
         "predictions_dir": run_dir / "predictions",
         "metrics_dir": run_dir / "metrics",
     }
-    for path in dirs.values():
-        path.mkdir(parents=True, exist_ok=True)
     return dirs
+
+
+def _ensure_run_layout(run_dir: Path) -> dict[str, Path | str]:
+    dirs = _build_run_dirs(run_dir)
+    for path in dirs.values():
+        if isinstance(path, Path):
+            path.mkdir(parents=True, exist_ok=True)
+    return dirs
+
+
+def _create_train_run_dirs(cfg: dict[str, Any]) -> dict[str, Path | str]:
+    experiment_dir = experiment_dir_from_config(cfg).resolve()
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    while True:
+        run_token = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        run_dir = experiment_dir / run_token
+        if not run_dir.exists():
+            return _ensure_run_layout(run_dir)
+        time.sleep(0.001)
 
 
 def _ensure_timestep_dir(run_dir: Path, *, time_index: int) -> Path:
@@ -123,15 +140,6 @@ def _initial_manifest(cfg: dict[str, Any], *, config_hash: str) -> dict[str, Any
         "timesteps": {},
         "aggregate": {},
     }
-
-
-def _validate_existing_manifest(manifest: dict[str, Any], *, config_hash: str) -> None:
-    existing_hash = str(manifest.get("config_hash", ""))
-    if existing_hash and existing_hash != str(config_hash):
-        raise ValueError(
-            f"Existing APMGSRN run uses config hash {existing_hash}, but current config hash is {config_hash}. "
-            "Choose a new exp_id or remove the existing run directory."
-        )
 
 
 def _can_skip_timestep(entry: dict[str, Any] | None, *, config_hash: str) -> bool:
@@ -455,9 +463,9 @@ def run_train(config_path: str | Path, *, target: str | None = None, identifier:
     try:
         cfg = load_config(config_path, target_override=target, identifier=identifier)
         config_hash = sha256_payload(config_payload(cfg))
-        run_dir = run_dir_from_config(cfg).resolve()
-        dirs = _ensure_run_layout(run_dir)
-        setup_logging(log_dir=dirs["logs_dir"], log_file="run.log")
+        dirs = _create_train_run_dirs(cfg)
+        run_dir = Path(dirs["run_dir"])
+        setup_logging(log_dir=Path(dirs["logs_dir"]), log_file=f"run_{dirs['run_token']}.log")
         logger.info("APMGSRN config source: %s", cfg["CONFIG_PATH"])
 
         reader = IonizationTargetReader(cfg["DATA"]["target_path"], cfg["DATA"]["volume_shape"])
@@ -471,23 +479,14 @@ def run_train(config_path: str | Path, *, target: str | None = None, identifier:
         )
 
         manifest_file = _manifest_path(run_dir)
-        if manifest_file.exists():
-            manifest = _json_load(manifest_file)
-            _validate_existing_manifest(manifest, config_hash=config_hash)
-        else:
-            manifest = _initial_manifest(cfg, config_hash=config_hash)
-            _json_dump(manifest_file, manifest)
-        save_config(cfg, run_dir / "config.yaml")
+        manifest = _initial_manifest(cfg, config_hash=config_hash)
+        _json_dump(manifest_file, manifest)
+        save_config(cfg, Path(dirs["config_dir"]) / "config.yaml")
 
         completed_timesteps: list[int] = []
         skipped_timesteps: list[int] = []
         for time_index in cfg["TRAINING"]["time_indices"]:
             token = _timestep_token(time_index)
-            if _can_skip_timestep(manifest["timesteps"].get(token), config_hash=config_hash):
-                logger.info("Skipping completed APMGSRN timestep %s", token)
-                skipped_timesteps.append(int(time_index))
-                continue
-
             result = _train_single_timestep(
                 cfg=cfg,
                 reader=reader,
