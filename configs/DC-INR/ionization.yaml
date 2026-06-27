@@ -16,23 +16,23 @@ data:
     X: 600
     Y: 248
     Z: 248
-    T: 2
+    T: 100
 model:
   name: dc_inr
 partition:
   candidate_block_shapes:
-    - sx: 8
-      sy: 31
-      sz: 1
-    - sx: 4
-      sy: 62
-      sz: 1
-    - sx: 2
-      sy: 4
-      sz: 31
-    - sx: 1
+    - sx: 150
       sy: 8
-      sz: 31
+      sz: 124
+    - sx: 150
+      sy: 124
+      sz: 8
+    - sx: 300
+      sy: 4
+      sz: 124
+    - sx: 300
+      sy: 124
+      sz: 4
   dbscan_eps: 1.0e-2
   dbscan_min_samples: 1
   entropy_bins: 256
@@ -46,7 +46,7 @@ training:
   lr: 1.0e-4
   beta_1: 0.9
   beta_2: 0.999
-  points_per_timestep: 32000
+  points_per_timestep: 640
   prediction_batch_size: 65536
   lr_milestones: [150, 225]
   lr_gamma: 0.5
