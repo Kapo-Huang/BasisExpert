@@ -112,6 +112,7 @@ class MCTrainingConfig:
     convergence_patience: int = 30
     convergence_delta: float = 0.0
     finetune_epochs: int = 200
+    batches_per_epoch_budget: int = 0
     finetune_lr: float | None = None
     finetune_sampling_ratio: float = 1.0
     recluster_after_finetune: bool = False
@@ -148,6 +149,8 @@ class MCTrainingConfig:
             raise ValueError("training.meta_outer_lr must be positive")
         if int(self.finetune_epochs) <= 0:
             raise ValueError("training.finetune_epochs must be positive")
+        if int(self.batches_per_epoch_budget) < 0:
+            raise ValueError("training.batches_per_epoch_budget must be non-negative")
         if float(self.finetune_sampling_ratio) <= 0.0:
             raise ValueError("training.finetune_sampling_ratio must be positive")
         if float(self.split_threshold) < 0.0:
@@ -265,6 +268,7 @@ def load_config(path: str | Path) -> MCExperimentConfig:
         convergence_patience=int(training_section.get("convergence_patience", 30)),
         convergence_delta=float(training_section.get("convergence_delta", 0.0)),
         finetune_epochs=int(training_section.get("finetune_epochs", 200)),
+        batches_per_epoch_budget=int(training_section.get("batches_per_epoch_budget", 0)),
         finetune_lr=(
             float(training_section["finetune_lr"])
             if training_section.get("finetune_lr") is not None

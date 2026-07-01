@@ -54,6 +54,7 @@ TRAINING_KEYS = {
     "log_every",
     "time_indices",
     "seed",
+    "early_stopping",
 }
 
 
@@ -235,6 +236,7 @@ def _normalize_training_section(training_cfg: dict[str, Any], *, time_count: int
         "log_every": int(training_cfg.get("log_every", 0)),
         "time_indices": _expand_time_indices(training_cfg.get("time_indices", "all"), time_count=time_count),
         "seed": int(training_cfg.get("seed", 42)),
+        "early_stopping": bool(training_cfg.get("early_stopping", True)),
     }
     if normalized["iterations"] <= 0:
         raise ValueError("TRAINING.iterations must be positive")

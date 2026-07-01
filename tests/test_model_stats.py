@@ -28,8 +28,8 @@ class ModelStatsTestCase(unittest.TestCase):
 
         self.assertEqual(stats["param_count"], 12)
         self.assertEqual(stats["trainable_param_count"], 6)
-        self.assertEqual(stats["fp16_size_bytes"], 16)
-        self.assertAlmostEqual(stats["fp16_size_mb"], 16 / (1024.0 * 1024.0))
+        self.assertEqual(stats["fp16_size_bytes"], 24)
+        self.assertAlmostEqual(stats["fp16_size_mb"], 24 / (1024.0 * 1024.0))
 
     def test_upsert_model_catalog_deduplicates_and_sorts_rows(self):
         with tempfile.TemporaryDirectory() as tmpdir:

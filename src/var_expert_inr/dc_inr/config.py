@@ -146,13 +146,18 @@ class DCPartitionConfig:
 
 @dataclass(frozen=True)
 class DCCompressionConfig:
-    target_cr: float
     max_initial_neurons: int
+    target_cr: float | None = None
+    target_size_mib: float | None = None
     min_initial_neurons: int = 4
 
     def __post_init__(self) -> None:
-        if float(self.target_cr) <= 0.0:
+        if (self.target_cr is None) == (self.target_size_mib is None):
+            raise ValueError("compression requires exactly one of target_cr or target_size_mib")
+        if self.target_cr is not None and float(self.target_cr) <= 0.0:
             raise ValueError("compression.target_cr must be positive")
+        if self.target_size_mib is not None and float(self.target_size_mib) <= 0.0:
+            raise ValueError("compression.target_size_mib must be positive")
         if int(self.max_initial_neurons) < 4:
             raise ValueError("compression.max_initial_neurons must be at least 4")
         if int(self.min_initial_neurons) < 4:
@@ -164,6 +169,8 @@ class DCCompressionConfig:
 @dataclass(frozen=True)
 class DCTrainingConfig:
     epochs: int = 300
+    total_steps: int = 0
+    batch_size: int = 16_000
     lr: float = 1.0e-4
     beta_1: float = 0.9
     beta_2: float = 0.999
@@ -178,6 +185,10 @@ class DCTrainingConfig:
     def __post_init__(self) -> None:
         if int(self.epochs) <= 0:
             raise ValueError("training.epochs must be positive")
+        if int(self.total_steps) < 0:
+            raise ValueError("training.total_steps must be non-negative")
+        if int(self.batch_size) <= 0:
+            raise ValueError("training.batch_size must be positive")
         if float(self.lr) <= 0.0:
             raise ValueError("training.lr must be positive")
         if not (0.0 < float(self.beta_1) < 1.0):
@@ -321,17 +332,26 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> DCEx
         entropy_bins=int(partition_section.get("entropy_bins", 256)),
         distance_matrix_max_bytes=int(partition_section.get("distance_matrix_max_bytes", 536_870_912)),
     )
-    if "target_cr" not in compression_section:
-        raise ValueError("compression.target_cr is required")
     if "max_initial_neurons" not in compression_section:
         raise ValueError("compression.max_initial_neurons is required")
     compression_cfg = DCCompressionConfig(
-        target_cr=float(compression_section["target_cr"]),
         max_initial_neurons=int(compression_section["max_initial_neurons"]),
+        target_cr=(
+            float(compression_section["target_cr"])
+            if compression_section.get("target_cr") is not None
+            else None
+        ),
+        target_size_mib=(
+            float(compression_section["target_size_mib"])
+            if compression_section.get("target_size_mib") is not None
+            else None
+        ),
         min_initial_neurons=int(compression_section.get("min_initial_neurons", 4)),
     )
     training_cfg = DCTrainingConfig(
         epochs=int(training_section.get("epochs", 300)),
+        total_steps=int(training_section.get("total_steps", 0)),
+        batch_size=int(training_section.get("batch_size", 16_000)),
         lr=float(training_section.get("lr", 1.0e-4)),
         beta_1=float(training_section.get("beta_1", 0.9)),
         beta_2=float(training_section.get("beta_2", 0.999)),

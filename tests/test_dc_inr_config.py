@@ -92,11 +92,16 @@ class DCINRConfigTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "same voxel count"):
             load_config(self._write_yaml(self.root / "bad_candidates.yaml", config))
 
-    def test_requires_target_cr_and_max_initial_neurons(self):
+    def test_requires_one_size_constraint_and_max_initial_neurons(self):
         config = self._base_config()
         config["compression"].pop("target_cr")
-        with self.assertRaisesRegex(ValueError, "target_cr is required"):
+        with self.assertRaisesRegex(ValueError, "exactly one"):
             load_config(self._write_yaml(self.root / "missing_cr.yaml", config))
+
+        config = self._base_config()
+        config["compression"]["target_size_mib"] = 1.0
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            load_config(self._write_yaml(self.root / "two_constraints.yaml", config))
 
         config = self._base_config()
         config["compression"].pop("max_initial_neurons")

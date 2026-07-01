@@ -1,4 +1,4 @@
-experiment: volume_ionization_var_expert_size163
+experiment: ionization_var_expert_size163
 exp_id: var-expert-ionization-size163
 experiment_root: runs
 data:
@@ -9,7 +9,7 @@ data:
     X: 600
     Y: 248
     Z: 248
-    T: 2
+    T: 100
   targets:
     GT: ../../../data/Volume/Ionization/target_GT.npy
     H_plus: ../../../data/Volume/Ionization/target_H+.npy
@@ -30,45 +30,31 @@ training:
   lr: 5.0e-05
   val_split: 0.0
   log_every: 10
-  log_psnr_every: 50
+  log_psnr_every: 100
   psnr_sample_ratio: 0.1
-  save_every: 50
+  save_every: 600
   early_stop_patience: 0
   loss_type: mse
   seed: 42
   sampler: budgeted_random
   batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
   multiview_ema_loss:
-    enabled: false
+    enabled: true
     beta: 0.95
     eps: 1.0e-08
     w_min: 0.2
     w_max: 5.0
     warmup_steps: 45000
-  scheduler:
-    enabled: true
-    step_size: 40
-    gamma: 0.92
   pretrain:
     enabled: true
-    epochs: 0
+    epochs: 5
     lr: 5.0e-05
     cluster_seed: 42
-    assignments_cache_path: data/cache/ionization_voxel_assignments_6.npy
+    assignments_cache_path: ../../../data/cache/ionization_voxel_assignments_6.npy
 evaluation:
   batch_size: 16000
   save_predictions: true
-log:
-  effective_config: true
-  model_stats: true
-  epoch_summary: true
-  startup_timing: true
-  psnr:
-    enabled: true
-    per_target: true
-  timing:
-    enabled: true
-    epoch_breakdown: true
-    step_window: true
-    step_window_every_steps: 100
-    cuda_sync: false

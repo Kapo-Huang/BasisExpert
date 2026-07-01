@@ -8,7 +8,7 @@ import torch
 import torch.optim as optim
 import yaml
 
-from ..common import dump_config, estimate_model_size_fp32, format_size_bytes, load_state_dict_payload, seed_everything, to_device
+from ..common import dump_config, estimate_model_size_fp16, format_size_bytes, load_state_dict_payload, seed_everything, to_device
 from ..config import run_dir_from_config
 from ..train_utils import count_parameters, log_losses_wandb, log_string
 from ..wandb_stub import get_wandb
@@ -180,17 +180,17 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
     try:
         model, _ = build_model(cfg, cfg["LOSS"])
         n_parameters = count_parameters(model)
-        total_parameters, model_size_bytes = estimate_model_size_fp32(model)
+        total_parameters, model_size_bytes = estimate_model_size_fp16(model)
         wandb.log(
             {
                 "number of paramters": n_parameters,
-                "model_size_bytes_fp32": model_size_bytes,
-                "model_size_mib_fp32": model_size_bytes / (1024**2),
+                "model_size_bytes_fp16": model_size_bytes,
+                "model_size_mib_fp16": model_size_bytes / (1024**2),
             }
         )
         log_string(f"Number of parameters in the current model:{n_parameters}", log_file)
         log_string(
-            f"Model size assuming float32 parameters: {format_size_bytes(model_size_bytes)} "
+            f"Model size assuming float16 parameters: {format_size_bytes(model_size_bytes)} "
             f"(total parameters: {total_parameters})",
             log_file,
         )

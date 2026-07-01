@@ -150,7 +150,7 @@ def estimate_payload_bytes(
 ) -> int:
     assignment_count = int(np.asarray(block_to_representative).size)
     representative_count = int(np.asarray(representative_block_ids).size)
-    model_param_bytes = sum(dc_inr_parameter_count(int(width)) * 4 for width in np.asarray(widths, dtype=np.int32).tolist())
+    model_param_bytes = sum(dc_inr_parameter_count(int(width)) * 2 for width in np.asarray(widths, dtype=np.int32).tolist())
     metadata_bytes = 0
     metadata_bytes += 4 * 4
     metadata_bytes += 3 * 4

@@ -12,22 +12,32 @@ From the repository root:
 
 ```bash
 python -m var_expert_inr.cli train --config configs/VarExpert/ionization.yaml
-python -m var_expert_inr.cli predict --config configs/VarExpert/ionization.yaml
-python -m var_expert_inr.cli evaluate --config configs/VarExpert/ionization.yaml
+python -m var_expert_inr.cli train --config configs/SIREN/ionization__GT.yaml
 python -m var_expert_inr.mc_inr.cli train --config configs/MC-INR/ionization.yaml
-python -m var_expert_inr.mc_inr.cli predict --config configs/MC-INR/ionization.yaml
-python -m var_expert_inr.mc_inr.cli evaluate --config configs/MC-INR/ionization.yaml
-python -m var_expert_inr.dc_inr.cli train --config configs/DC-INR/ionization.yaml --target GT
-python -m var_expert_inr.dc_inr.cli predict --config configs/DC-INR/ionization.yaml --target GT
-python -m var_expert_inr.dc_inr.cli evaluate --config configs/DC-INR/ionization.yaml --target GT
-python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization.yaml --target GT
-python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization.yaml --target GT
-python -m var_expert_inr.fv_srn.cli predict --config configs/fV-SRN/ionization.yaml --target GT
-python -m var_expert_inr.fv_srn.cli evaluate --config configs/fV-SRN/ionization.yaml --target GT
-python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization.yaml --target GT
-python -m var_expert_inr.rmdsrn.cli predict --config configs/RMDSRN/ionization.yaml --target GT
-python -m var_expert_inr.rmdsrn.cli evaluate --config configs/RMDSRN/ionization.yaml --target GT
+python -m var_expert_inr.neural_expert.cli train --config configs/NeuralExpert/ionization__GT__managerpretrain.yaml
+python -m var_expert_inr.neural_expert.cli train --config configs/NeuralExpert/ionization__GT.yaml
+python -m var_expert_inr.dc_inr.cli train --config configs/DC-INR/ionization__GT.yaml
+python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization__GT.yaml
+python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization__GT.yaml
+python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization__GT.yaml
 ```
+
+The checked-in experiment matrix contains 336 configs. General models cover
+Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
+single-target model has one config per attribute, and Ionization additionally
+has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants.
+All primary training stages consume 14.4 billion samples with an effective
+batch size of 16,000. Model-size tiers use all parameters at two bytes per
+parameter (theoretical FP16 size).
+
+Run the complete matrix sequentially in the `compression` conda environment:
+
+```bash
+bash scripts/run_all_configs.sh
+```
+
+The script continues after individual failures and writes per-config logs plus
+`status.tsv` and `failed.txt` under `batch_logs/<timestamp>/`.
 
 When running without installation, this repository ships a small package shim so
 `python -m var_expert_inr.cli` works directly from the repo root.
@@ -78,7 +88,7 @@ parameters. Prediction writes separate `_mean.npy` and `_variance.npy` volumes,
 and evaluation reports reconstruction quality, variance-error Pearson
 correlation, and sampled top-1%/top-5% hit rates.
 
-The checked-in fV-SRN Ionization config describes a full 100-timestep
+The checked-in Ionization configs describe a full 100-timestep
 `(T,Z,Y,X)=(100,248,248,600)` sequence. The sample target files currently in
 this repository contain only two timesteps; they must be replaced with the
 full sequence before that config can run. The loader deliberately reports this

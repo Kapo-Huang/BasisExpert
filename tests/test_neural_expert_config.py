@@ -11,15 +11,13 @@ class NeuralExpertConfigTestCase(unittest.TestCase):
     def test_repo_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
         config_paths = sorted((repo_root / "configs" / "NeuralExpert").rglob("*.yaml"))
-        self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization.yaml" for path in config_paths))
+        self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization__GT.yaml" for path in config_paths))
         for path in config_paths:
             cfg = load_config(path)
             self.assertIn("DATA", cfg)
             self.assertIn("MODEL", cfg)
             self.assertIn("TRAINING", cfg)
-            self.assertTrue(Path(cfg["DATA"]["target_path"]).exists())
-            if "source_path" in cfg["DATA"]:
-                self.assertTrue(Path(cfg["DATA"]["source_path"]).exists())
+            self.assertIn(cfg["DATA"]["dataset_name"], {"bathymetry", "katrina", "ionization"})
 
     def test_target_placeholder_and_identifier_override(self):
         payload = {

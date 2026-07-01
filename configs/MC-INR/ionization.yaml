@@ -1,4 +1,4 @@
-experiment: volume_ionization_mc_inr
+experiment: ionization_mc_inr
 exp_id: mc-inr-ionization
 experiment_root: runs
 data:
@@ -9,7 +9,7 @@ data:
     X: 600
     Y: 248
     Z: 248
-    T: 2
+    T: 100
   targets:
     GT: ../../data/Volume/Ionization/target_GT.npy
     H_plus: ../../data/Volume/Ionization/target_H+.npy
@@ -22,45 +22,42 @@ model:
   gfe_layers: 5
   lfe_layers: 6
 training:
-  epochs: 50
-  batch_size: 12000
-  pred_batch_size: 12000
+  epochs: 60
+  batch_size: 16000
+  pred_batch_size: 16000
   num_workers: 0
-  lr: 5.0e-5
+  lr: 5.0e-05
   weight_decay: 0.0
   loss_type: mse
-  log_every: 5
-  save_every: 10
+  log_every: 10
+  save_every: 0
   seed: 42
   device: cuda
   initial_k: 12
   cluster_init_method: voxel_clustering
-  assignments_cache_path: ../../data/cache/mc_inr/ionization_voxel_assignments_k12.npy
-  meta_inner_batch_size: 8192
-  meta_support_max_rows: 32768
-  convergence_patience: 20
+  assignments_cache_path: ../../data/cache/mc_inr/ionization_assignments_k12.npy
+  meta_iterations: 60
+  meta_inner_steps: 5
+  meta_inner_batch_size: 16000
+  meta_inner_lr: 0.0001
+  meta_batch_clusters: 4
+  meta_support_max_rows: 32000
+  meta_outer_lr: 0.001
+  convergence_patience: 0
   convergence_delta: 0.0
-  finetune_epochs: 100
-  finetune_lr: 5.0e-5
+  finetune_epochs: 600
+  batches_per_epoch_budget: 1500
+  finetune_lr: 5.0e-05
   finetune_sampling_ratio: 1.0
+  recluster_after_finetune: false
+  split_threshold: 0.0005
+  min_split_points: 32
+  max_recluster_rounds: 0
+  cluster_aware_batches: false
   scheduler:
     enabled: true
-    step_size: 30
+    step_size: 40
     gamma: 0.92
 evaluation:
-  batch_size: 12000
+  batch_size: 16000
   save_predictions: true
-log:
-  effective_config: true
-  model_stats: true
-  epoch_summary: true
-  startup_timing: true
-  psnr:
-    enabled: true
-    per_target: true
-  timing:
-    enabled: false
-    epoch_breakdown: false
-    step_window: false
-    step_window_every_steps: 100
-    cuda_sync: false

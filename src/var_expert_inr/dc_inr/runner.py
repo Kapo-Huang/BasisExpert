@@ -26,6 +26,7 @@ from .data import (
     block_shape_from_payload,
     full_block_query_coords,
     sample_block_training_batch,
+    sample_balanced_block_training_batch,
 )
 from .model import DCINRTiny, dc_inr_parameter_count
 from .search import CandidateSummary, select_best_candidate
@@ -163,22 +164,56 @@ def _train_representative_models(
             lr=float(config.training.lr),
             betas=(float(config.training.beta_1), float(config.training.beta_2)),
         )
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=list(config.training.lr_milestones),
-            gamma=float(config.training.lr_gamma),
-        )
         rng = np.random.default_rng(int(config.training.seed) + int(model_index))
         block_values = np.asarray(blocks[int(block_id)], dtype=np.float32)
         final_loss = float("nan")
         started_at = time.perf_counter()
-        for epoch in range(1, int(config.training.epochs) + 1):
-            coords_np, targets_np = sample_block_training_batch(
-                block_values=block_values,
-                block_shape=selection.block_shape,
-                points_per_timestep=int(config.training.points_per_timestep),
-                rng=rng,
+        if int(config.training.total_steps) > 0:
+            base_steps, extra_steps = divmod(
+                int(config.training.total_steps),
+                int(selection.representative_block_ids.size),
             )
+            model_steps = base_steps + (1 if model_index < extra_steps else 0)
+        else:
+            model_steps = int(config.training.epochs)
+        if int(config.training.total_steps) > 0:
+            milestones = sorted(
+                {
+                    max(
+                        1,
+                        int(
+                            round(
+                                model_steps
+                                * float(milestone)
+                                / float(config.training.total_steps)
+                            )
+                        ),
+                    )
+                    for milestone in config.training.lr_milestones
+                }
+            )
+        else:
+            milestones = list(config.training.lr_milestones)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer,
+            milestones=milestones,
+            gamma=float(config.training.lr_gamma),
+        )
+        for epoch in range(1, model_steps + 1):
+            if int(config.training.total_steps) > 0:
+                coords_np, targets_np = sample_balanced_block_training_batch(
+                    block_values=block_values,
+                    block_shape=selection.block_shape,
+                    batch_size=int(config.training.batch_size),
+                    rng=rng,
+                )
+            else:
+                coords_np, targets_np = sample_block_training_batch(
+                    block_values=block_values,
+                    block_shape=selection.block_shape,
+                    points_per_timestep=int(config.training.points_per_timestep),
+                    rng=rng,
+                )
             coords = torch.from_numpy(coords_np).to(device, non_blocking=True)
             targets = torch.from_numpy(targets_np).to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
@@ -190,7 +225,7 @@ def _train_representative_models(
             final_loss = float(loss.detach().item())
             if int(config.training.log_every) > 0 and (
                 epoch == 1
-                or epoch == int(config.training.epochs)
+                or epoch == model_steps
                 or (epoch % int(config.training.log_every) == 0)
             ):
                 logger.info(
@@ -200,7 +235,7 @@ def _train_representative_models(
                     int(block_id),
                     width,
                     epoch,
-                    int(config.training.epochs),
+                    model_steps,
                     final_loss,
                     float(optimizer.param_groups[0]["lr"]),
                 )
@@ -211,6 +246,15 @@ def _train_representative_models(
                 "representative_index": float(model_index),
                 "block_id": float(block_id),
                 "width": float(width),
+                "steps": int(model_steps),
+                "samples": int(
+                    model_steps
+                    * (
+                        int(config.training.batch_size)
+                        if int(config.training.total_steps) > 0
+                        else int(config.training.points_per_timestep) * int(volume.volume_shape.T)
+                    )
+                ),
                 "final_loss": float(final_loss),
                 "elapsed_seconds": float(time.perf_counter() - started_at),
             }
@@ -391,12 +435,19 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict[str
         save_config(config, Path(dirs["config_dir"]) / "config.yaml")
         volume = _prepare_volume(config)
         device = _resolve_device(config.training.device)
+        effective_target_cr = (
+            float(config.compression.target_cr)
+            if config.compression.target_cr is not None
+            else float(volume.raw_bytes)
+            / (float(config.compression.target_size_mib) * 1024.0 * 1024.0)
+        )
         logger.info(
-            "DC-INR target=%s volume_shape=%s candidates=%d target_cr=%.4f",
+            "DC-INR target=%s volume_shape=%s candidates=%d target_cr=%.4f target_size_mib=%s",
             config.data.target,
             config.data.volume_shape.to_dict() if config.data.volume_shape is not None else {},
             len(config.partition.candidate_block_shapes),
-            float(config.compression.target_cr),
+            effective_target_cr,
+            config.compression.target_size_mib,
         )
         selection, search_summaries = select_best_candidate(
             volume=volume,
@@ -405,7 +456,7 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict[str
             dbscan_min_samples=int(config.partition.dbscan_min_samples),
             entropy_bins=int(config.partition.entropy_bins),
             distance_matrix_max_bytes=int(config.partition.distance_matrix_max_bytes),
-            target_cr=float(config.compression.target_cr),
+            target_cr=effective_target_cr,
             max_initial_neurons=int(config.compression.max_initial_neurons),
             min_initial_neurons=int(config.compression.min_initial_neurons),
         )
@@ -418,6 +469,18 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict[str
             float(selection.mean_capacity),
             int(selection.payload_bytes),
         )
+
+        if config.compression.target_size_mib is not None:
+            selected_stats = _sum_model_stats(np.asarray(selection.widths, dtype=np.int32))
+            relative_error = abs(
+                float(selected_stats["fp16_size_mb"]) - float(config.compression.target_size_mib)
+            ) / float(config.compression.target_size_mib)
+            if relative_error > 0.05:
+                raise ValueError(
+                    "DC-INR selected FP16 parameter size is outside the 5% target tolerance: "
+                    f"actual={selected_stats['fp16_size_mb']:.6f}MiB "
+                    f"target={config.compression.target_size_mib:.6f}MiB"
+                )
 
         model_states, training_summary = _train_representative_models(
             volume=volume,

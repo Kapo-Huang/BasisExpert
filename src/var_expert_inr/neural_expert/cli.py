@@ -13,7 +13,7 @@ def run_train(config_path: str | Path, *, target: str | None = None, identifier:
         from .ionization.runner import run_train as run_ionization_train
 
         return run_ionization_train(cfg, gpu=gpu)
-    if dataset_name in {"katrina", "linkage_p", "linkage_c"}:
+    if dataset_name in {"bathymetry", "katrina", "linkage_p", "linkage_c"}:
         from .mesh.runner import run_train as run_mesh_train
 
         return run_mesh_train(cfg, gpu=gpu)

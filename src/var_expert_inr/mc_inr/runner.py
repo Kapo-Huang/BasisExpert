@@ -467,7 +467,23 @@ def _stage_epoch_batches(
     sampling_ratio: float,
     rng: np.random.Generator,
     cluster_aware_batches: bool,
+    sample_count_override: int = 0,
 ):
+    if int(sample_count_override) > 0:
+        sample_count = int(sample_count_override)
+        batch_size_int = max(1, int(batch_size))
+        total_rows = int(len(dataset))
+
+        def _budget_generator():
+            remaining = sample_count
+            while remaining > 0:
+                current = min(batch_size_int, remaining)
+                rows = rng.integers(0, total_rows, size=current, dtype=np.int64)
+                remaining -= current
+                yield fetch_mc_batch(dataset, rows, layout, assignments)
+
+        return sample_count, _budget_generator()
+
     if dataset.meta.kind == "node":
         sampled_rows = sample_node_rows(assignments, sampling_ratio, rng)
         if sampled_rows.size == 0:
@@ -748,7 +764,7 @@ def _run_meta_initialization(
                 },
             )
 
-        if epochs_no_improve >= int(config.training.convergence_patience):
+        if int(config.training.convergence_patience) > 0 and epochs_no_improve >= int(config.training.convergence_patience):
             logger.info(
                 "Meta initialization early stop at iteration %d after %d unimproved iterations.",
                 iteration,
@@ -866,6 +882,11 @@ def _run_stage(
             sampling_ratio=float(normalized_sampling_ratio),
             rng=rng,
             cluster_aware_batches=bool(config.training.cluster_aware_batches),
+            sample_count_override=(
+                int(config.training.batches_per_epoch_budget) * int(config.training.batch_size)
+                if int(config.training.batches_per_epoch_budget) > 0
+                else 0
+            ),
         )
         sample_counts.append(int(sample_count))
 
@@ -932,7 +953,7 @@ def _run_stage(
                 extra_payload={"split_round": int(split_round)},
             )
 
-        if epochs_no_improve >= int(config.training.convergence_patience):
+        if int(config.training.convergence_patience) > 0 and epochs_no_improve >= int(config.training.convergence_patience):
             logger.info(
                 "Finetune early stop at epoch %d after %d unimproved epochs.",
                 epoch,
@@ -1363,7 +1384,7 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
         stats = collect_model_statistics(model)
         if config.log.model_stats:
             logger.info(
-                "MC-INR model size: params=%s trainable=%s size(fp16, weights+bias)=%s",
+                "MC-INR model size: params=%s trainable=%s size(fp16, all parameters)=%s",
                 format_param_count(int(stats["param_count"])),
                 format_param_count(int(stats["trainable_param_count"])),
                 format_fp16_size_megabytes(int(stats["fp16_size_bytes"])),

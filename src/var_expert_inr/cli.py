@@ -203,7 +203,7 @@ def run_train(config_path: str | Path) -> dict:
         stats = collect_model_statistics(model)
         if config.log.model_stats:
             logger.info(
-                "Model size: params=%s trainable=%s size(fp16, weights+bias)=%s",
+                "Model size: params=%s trainable=%s size(fp16, all parameters)=%s",
                 format_param_count(int(stats["param_count"])),
                 format_param_count(int(stats["trainable_param_count"])),
                 format_fp16_size_megabytes(int(stats["fp16_size_bytes"])),

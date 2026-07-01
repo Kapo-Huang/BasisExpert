@@ -17,33 +17,18 @@ class ConfigLoadingTestCase(unittest.TestCase):
             raise AssertionError(f"No run directories found under {exp_dir}")
         return candidates[-1]
 
-    def test_repo_car_configs_load(self):
+    def test_removed_datasets_have_no_configs(self):
         repo_root = Path(__file__).resolve().parents[1]
-        config_paths = [
-            repo_root / "configs" / "VarExpert" / "car.yaml",
-            repo_root / "configs" / "MoE-INR" / "car.yaml",
-            repo_root / "configs" / "CoordNet" / "car.yaml",
-            repo_root / "configs" / "SIREN" / "car.yaml",
-        ]
-
-        loaded_configs = [load_experiment_config(path) for path in config_paths]
-
-        self.assertEqual(loaded_configs[0].exp_id, "var-expert-car")
-        self.assertEqual(loaded_configs[0].data.dataset_name, "car")
-        self.assertIsNone(loaded_configs[0].data.target)
-        for loaded in loaded_configs[1:]:
-            self.assertEqual(loaded.data.dataset_name, "car")
-            self.assertEqual(loaded.data.target, "CoefPressure")
-            self.assertIn("CoefPressure", loaded.data.targets)
-            self.assertIn("-car-CoefPressure", loaded.exp_id)
+        config_names = [str(path.relative_to(repo_root)).lower() for path in (repo_root / "configs").rglob("*.yaml")]
+        self.assertFalse(any("car" in name or "linkage" in name for name in config_names))
 
     def test_repo_bathymetry_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
         config_paths = [
             repo_root / "configs" / "VarExpert" / "bathymetry.yaml",
-            repo_root / "configs" / "MoE-INR" / "bathymetry.yaml",
-            repo_root / "configs" / "CoordNet" / "bathymetry.yaml",
-            repo_root / "configs" / "SIREN" / "bathymetry.yaml",
+            repo_root / "configs" / "MoE-INR" / "bathymetry__SALT.yaml",
+            repo_root / "configs" / "CoordNet" / "bathymetry__SALT.yaml",
+            repo_root / "configs" / "SIREN" / "bathymetry__SALT.yaml",
         ]
 
         loaded_configs = [load_experiment_config(path) for path in config_paths]
@@ -70,7 +55,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
                 *configs_root.joinpath("SIREN").rglob("*.yaml"),
             ]
         )
-        self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization.yaml" for path in config_paths))
+        self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization__GT.yaml" for path in config_paths))
         self.assertTrue((configs_root / "VarExpert" / "ionization_e4_k3.yaml").exists())
         self.assertFalse(any(configs_root.joinpath("VarExpert").glob("exp_data_ionization_var_expert_*.yaml")))
 

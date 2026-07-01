@@ -251,5 +251,41 @@ def sample_block_training_batch(
     )
 
 
+def sample_balanced_block_training_batch(
+    *,
+    block_values: np.ndarray,
+    block_shape: BlockShape,
+    batch_size: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample one exact-size batch, distributing rows across all timesteps."""
+    array = np.asarray(block_values, dtype=np.float32)
+    if array.ndim != 4:
+        raise ValueError(f"block_values must have shape [T, sz, sy, sx], got {array.shape}")
+    time_count = int(array.shape[0])
+    requested = int(batch_size)
+    if requested <= 0:
+        raise ValueError("batch_size must be positive")
+    flat_values = array.reshape(time_count, -1)
+    spatial = local_spatial_coords(block_shape)
+    time_values = normalized_time_values(time_count)
+    voxel_count = int(block_shape.voxel_count)
+    base, remainder = divmod(requested, time_count)
+    coords_parts: list[np.ndarray] = []
+    target_parts: list[np.ndarray] = []
+    for time_index in range(time_count):
+        count = base + (1 if time_index < remainder else 0)
+        if count <= 0:
+            continue
+        picked = rng.choice(voxel_count, size=count, replace=voxel_count < count).astype(np.int64)
+        time_column = np.full((count, 1), float(time_values[time_index]), dtype=np.float32)
+        coords_parts.append(np.concatenate([spatial[picked], time_column], axis=1))
+        target_parts.append(flat_values[time_index, picked].reshape(count, 1))
+    return (
+        np.concatenate(coords_parts, axis=0).astype(np.float32, copy=False),
+        np.concatenate(target_parts, axis=0).astype(np.float32, copy=False),
+    )
+
+
 def candidate_voxel_counts(candidate_shapes: Iterable[BlockShape]) -> set[int]:
     return {int(shape.voxel_count) for shape in candidate_shapes}

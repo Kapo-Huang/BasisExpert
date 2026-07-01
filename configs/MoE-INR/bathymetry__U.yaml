@@ -1,0 +1,43 @@
+experiment: bathymetry_moe-inr_U
+exp_id: moe-inr-bathymetry-U
+experiment_root: runs
+data:
+  kind: node
+  dataset_name: bathymetry
+  split: train
+  coords_path: ../../data/Mesh/Bathymetry/source_XYZT.npy
+  targets:
+    SALT: ../../data/Mesh/Bathymetry/target_SALT.npy
+    TEMP: ../../data/Mesh/Bathymetry/target_TEMP.npy
+    U: ../../data/Mesh/Bathymetry/target_U.npy
+    V: ../../data/Mesh/Bathymetry/target_V.npy
+  target: U
+model:
+  name: moe_inr
+  in_features: 4
+  num_experts: 7
+  base_dim: 14
+  policy_num_layers: 3
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 5.0e-05
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+evaluation:
+  batch_size: 16000
+  save_predictions: true

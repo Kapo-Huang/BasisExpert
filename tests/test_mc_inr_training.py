@@ -310,6 +310,27 @@ class MCINRTrainingTestCase(unittest.TestCase):
         legacy_unique_counts = [int(np.unique(batch.cluster_ids.numpy()).size) for batch in legacy_batches]
         self.assertTrue(any(count > 1 for count in legacy_unique_counts))
 
+    def test_budgeted_batches_return_exact_full_batches_with_replacement(self):
+        _, config_path = self._node_config(exp_id="mc-node-budget")
+        cfg = load_config(config_path)
+        dataset = build_dataset(cfg.data)
+        layout = target_layout_from_dataset(dataset)
+        assignments = np.asarray([0, 0, 0, 1, 1, 1, 2, 2, 2, 0, 1, 2], dtype=np.int32)
+        sample_count, batches = _stage_epoch_batches(
+            dataset,
+            layout,
+            assignments,
+            batch_size=4,
+            sampling_ratio=1.0,
+            rng=np.random.default_rng(0),
+            cluster_aware_batches=False,
+            sample_count_override=20,
+        )
+        materialized = list(batches)
+        self.assertEqual(sample_count, 20)
+        self.assertEqual(len(materialized), 5)
+        self.assertTrue(all(batch.coords.shape[0] == 4 for batch in materialized))
+
     def test_assignment_cache_metadata_mismatch_invalidates_cache(self):
         _, config_path = self._node_config(exp_id="mc-node-cache")
         cfg = load_config(config_path)

@@ -248,7 +248,7 @@ def _train_single_timestep(
     )
 
     for iteration in range(iterations):
-        if early_stop_reconstruction and early_stop_grid:
+        if bool(cfg["TRAINING"].get("early_stopping", True)) and early_stop_reconstruction and early_stop_grid:
             logger.info("APMGSRN timestep %s early stopped at iteration %d", _timestep_token(time_index), iteration)
             break
 
@@ -264,7 +264,10 @@ def _train_single_timestep(
         reconstruction_loss_mean.backward()
 
         reconstruction_losses[iteration] = reconstruction_loss_mean.detach()
-        early_stop_reconstruction = optimizer_model.param_groups[0]["lr"] < float(cfg["TRAINING"]["lr"]) * 1.0e-2
+        early_stop_reconstruction = (
+            bool(cfg["TRAINING"].get("early_stopping", True))
+            and optimizer_model.param_groups[0]["lr"] < float(cfg["TRAINING"]["lr"]) * 1.0e-2
+        )
 
         grid_loss_mean_value: float | None = None
         if iteration > 500 and iteration < int(iterations * 0.8) and not early_stop_grid:

@@ -20,18 +20,10 @@ _FP16_BYTES_PER_PARAM = 2
 _BYTES_PER_MIB = 1024.0 * 1024.0
 
 
-def _weight_bias_numel(model: torch.nn.Module) -> int:
-    total = 0
-    for name, param in model.named_parameters():
-        if name.endswith("weight") or name.endswith("bias"):
-            total += int(param.numel())
-    return total
-
-
 def collect_model_statistics(model: torch.nn.Module) -> dict[str, int | float]:
     param_count = sum(int(param.numel()) for param in model.parameters())
     trainable_param_count = sum(int(param.numel()) for param in model.parameters() if param.requires_grad)
-    fp16_size_bytes = _weight_bias_numel(model) * _FP16_BYTES_PER_PARAM
+    fp16_size_bytes = param_count * _FP16_BYTES_PER_PARAM
     return {
         "param_count": param_count,
         "trainable_param_count": trainable_param_count,

@@ -11,6 +11,7 @@ from var_expert_inr.dc_inr.data import (
     DCTargetVolume,
     block_grid_shape_for_volume,
     block_id_to_grid_indices,
+    sample_balanced_block_training_batch,
 )
 from var_expert_inr.dc_inr.runner import run_evaluate, run_predict, run_train
 from var_expert_inr.dc_inr.search import (
@@ -118,6 +119,20 @@ class DCINRTrainingTestCase(unittest.TestCase):
             z0 = bz * int(block_shape.sz)
             reconstructed[:, z0 : z0 + block_shape.sz, y0 : y0 + block_shape.sy, x0 : x0 + block_shape.sx] = blocks[block_id]
         np.testing.assert_allclose(reconstructed, np.asarray(volume.array_tzyx(), dtype=np.float32))
+
+    def test_balanced_sampler_returns_exact_batch_across_timesteps(self):
+        block_values = np.arange(24, dtype=np.float32).reshape(3, 1, 2, 4)
+        coords, targets = sample_balanced_block_training_batch(
+            block_values=block_values,
+            block_shape=BlockShape(sx=4, sy=2, sz=1),
+            batch_size=17,
+            rng=np.random.default_rng(0),
+        )
+        self.assertEqual(coords.shape, (17, 4))
+        self.assertEqual(targets.shape, (17, 1))
+        time_values, counts = np.unique(coords[:, 3], return_counts=True)
+        self.assertEqual(len(time_values), 3)
+        self.assertLessEqual(int(counts.max() - counts.min()), 1)
 
     def test_dbscan_medoid_and_zero_entropy_widths_are_deterministic(self):
         features = np.array(

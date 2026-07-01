@@ -8,9 +8,9 @@ import torch
 import yaml
 
 
-def estimate_model_size_fp32(model) -> tuple[int, int]:
+def estimate_model_size_fp16(model) -> tuple[int, int]:
     parameter_count = sum(param.numel() for param in model.parameters())
-    size_bytes = parameter_count * 4
+    size_bytes = parameter_count * 2
     return parameter_count, size_bytes
 
 

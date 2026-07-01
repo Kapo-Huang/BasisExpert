@@ -1,0 +1,552 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+import shutil
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIGS = ROOT / "configs"
+SIZES = {
+    "Size082": 0.82,
+    "Size163": 1.63,
+    "Size326": 3.26,
+    "Size652": 6.52,
+    "Size1304": 13.04,
+}
+ION_SHAPE = {"X": 600, "Y": 248, "Z": 248, "T": 100}
+DATASETS = {
+    "bathymetry": {
+        "kind": "node",
+        "dir": "Mesh/Bathymetry",
+        "coords": "source_XYZT.npy",
+        "targets": ["SALT", "TEMP", "U", "V"],
+    },
+    "katrina": {
+        "kind": "node",
+        "dir": "Mesh/Katrina",
+        "coords": "source_XYZT.npy",
+        "targets": ["fort63", "fort64", "fort73", "speed", "v"],
+    },
+    "ionization": {
+        "kind": "volume",
+        "dir": "Volume/Ionization",
+        "targets": ["GT", "H_plus", "H2", "He", "PD"],
+    },
+}
+TARGET_FILES = {"H_plus": "H+"}
+UNIFIED_SIZE_MODELS = {
+    "SIREN": {
+        "Size082": {"name": "siren", "in_features": 4, "hidden_features": 377, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size163": {"name": "siren", "in_features": 4, "hidden_features": 532, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size326": {"name": "siren", "in_features": 4, "hidden_features": 753, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size652": {"name": "siren", "in_features": 4, "hidden_features": 1066, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size1304": {"name": "siren", "in_features": 4, "hidden_features": 1508, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+    },
+    "CoordNet": {
+        "Size082": {"name": "coordnet", "in_features": 4, "init_features": 36, "num_res": 9},
+        "Size163": {"name": "coordnet", "in_features": 4, "init_features": 65, "num_res": 5},
+        "Size326": {"name": "coordnet", "in_features": 4, "init_features": 61, "num_res": 13},
+        "Size652": {"name": "coordnet", "in_features": 4, "init_features": 142, "num_res": 4},
+        "Size1304": {"name": "coordnet", "in_features": 4, "init_features": 144, "num_res": 9},
+    },
+    "MoE-INR": {
+        "Size082": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 74, "policy_num_layers": 3},
+        "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 104, "policy_num_layers": 3},
+        "Size326": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 148, "policy_num_layers": 3},
+        "Size652": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 210, "policy_num_layers": 3},
+        "Size1304": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 297, "policy_num_layers": 3},
+    },
+}
+DEFAULT_MODELS = {
+    "SIREN": {
+        "node": {"name": "siren", "in_features": 4, "hidden_features": 56, "hidden_layers": 5, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "volume": {"name": "siren", "in_features": 4, "hidden_features": 256, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+    },
+    "CoordNet": {
+        "node": {"name": "coordnet", "in_features": 4, "init_features": 7, "num_res": 8},
+        "volume": {"name": "coordnet", "in_features": 4, "init_features": 21, "num_res": 10},
+    },
+    "MoE-INR": {
+        "node": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 14, "policy_num_layers": 3},
+        "volume": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 45, "policy_num_layers": 3},
+    },
+}
+VAR_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 49, "Size1304": 70}
+NEURAL_SIZE_DIMS = {"Size082": 37, "Size163": 52, "Size326": 74, "Size652": 104, "Size1304": 148}
+MC_SIZE_DIMS = {"Size082": 23, "Size163": 33, "Size326": 48, "Size652": 68, "Size1304": 97}
+APMG_SIZE = {
+    "Size082": (7, 1, 16), "Size163": (15, 1, 16), "Size326": (7, 3, 64),
+    "Size652": (8, 8, 16), "Size1304": (32, 4, 16),
+}
+FV_SIZE = {
+    "Size082": (14, 13), "Size163": (12, 41), "Size326": (15, 42),
+    "Size652": (17, 58), "Size1304": (28, 26),
+}
+RM_SIZE = {
+    "Size082": (14, 12), "Size163": (12, 39), "Size326": (36, 3),
+    "Size652": (19, 41), "Size1304": (30, 21),
+}
+
+
+def dump(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def rel_prefix(nested: bool) -> str:
+    return "../../../" if nested else "../../"
+
+
+def targets_for(dataset: str, nested: bool) -> dict[str, str]:
+    prefix = rel_prefix(nested)
+    meta = DATASETS[dataset]
+    return {
+        target: f"{prefix}data/{meta['dir']}/target_{TARGET_FILES.get(target, target)}.npy"
+        for target in meta["targets"]
+    }
+
+
+def unified_data(dataset: str, nested: bool, target: str | None = None) -> dict:
+    meta = DATASETS[dataset]
+    payload = {"kind": meta["kind"], "dataset_name": dataset, "split": "train"}
+    if meta["kind"] == "node":
+        payload["coords_path"] = f"{rel_prefix(nested)}data/{meta['dir']}/{meta['coords']}"
+    else:
+        payload["volume_shape"] = deepcopy(ION_SHAPE)
+    payload["targets"] = targets_for(dataset, nested)
+    if target is not None:
+        payload["target"] = target
+    return payload
+
+
+def common_training() -> dict:
+    return {
+        "epochs": 600, "batch_size": 16000, "pred_batch_size": 16000,
+        "num_workers": 0, "lr": 5.0e-5, "val_split": 0.0,
+        "log_every": 10, "log_psnr_every": 100, "psnr_sample_ratio": 0.1,
+        "save_every": 600, "early_stop_patience": 0, "loss_type": "mse",
+        "seed": 42, "sampler": "budgeted_random", "batches_per_epoch_budget": 1500,
+        "scheduler": {"enabled": True, "step_size": 40, "gamma": 0.92},
+    }
+
+
+def evaluation() -> dict:
+    return {"batch_size": 16000, "save_predictions": True}
+
+
+def generate_unified_single() -> int:
+    count = 0
+    for family, defaults in DEFAULT_MODELS.items():
+        model_slug = defaults["volume"]["name"].replace("_", "-")
+        for dataset, meta in DATASETS.items():
+            for target in meta["targets"]:
+                payload = {
+                    "experiment": f"{dataset}_{model_slug}_{target}",
+                    "exp_id": f"{model_slug}-{dataset}-{target}",
+                    "experiment_root": "runs",
+                    "data": unified_data(dataset, False, target),
+                    "model": deepcopy(defaults[meta["kind"]]),
+                    "training": common_training(),
+                    "evaluation": evaluation(),
+                }
+                dump(CONFIGS / family / f"{dataset}__{target}.yaml", payload)
+                count += 1
+        for size in SIZES:
+            for target in DATASETS["ionization"]["targets"]:
+                payload = {
+                    "experiment": f"ionization_{model_slug}_{size.lower()}_{target}",
+                    "exp_id": f"{model_slug}-ionization-{size.lower()}-{target}",
+                    "experiment_root": "runs",
+                    "data": unified_data("ionization", True, target),
+                    "model": deepcopy(UNIFIED_SIZE_MODELS[family][size]),
+                    "training": common_training(),
+                    "evaluation": evaluation(),
+                }
+                dump(CONFIGS / family / size / f"ionization__{target}.yaml", payload)
+                count += 1
+    return count
+
+
+def var_training(dataset: str, nested: bool, experts: int = 6) -> dict:
+    payload = common_training()
+    payload["multiview_ema_loss"] = {
+        "enabled": True, "beta": 0.95, "eps": 1.0e-8,
+        "w_min": 0.2, "w_max": 5.0, "warmup_steps": 45000,
+    }
+    payload["pretrain"] = {
+        "enabled": dataset == "ionization",
+        "epochs": 5 if dataset == "ionization" else 0,
+        "lr": 5.0e-5,
+    }
+    if dataset == "ionization":
+        payload["pretrain"]["cluster_seed"] = 42
+        payload["pretrain"]["assignments_cache_path"] = (
+            f"{rel_prefix(nested)}data/cache/ionization_voxel_assignments_{experts}.npy"
+        )
+    return payload
+
+
+def generate_var_expert() -> int:
+    count = 0
+    for dataset, meta in DATASETS.items():
+        base_dim = 24 if dataset == "ionization" else 8
+        payload = {
+            "experiment": f"{dataset}_var_expert",
+            "exp_id": f"var-expert-{dataset}",
+            "experiment_root": "runs",
+            "data": unified_data(dataset, False),
+            "model": {"name": "var_expert", "in_features": 4, "num_experts": 6, "base_dim": base_dim, "top_k": 3},
+            "training": var_training(dataset, False),
+            "evaluation": evaluation(),
+        }
+        dump(CONFIGS / "VarExpert" / f"{dataset}.yaml", payload)
+        count += 1
+    for size, dim in VAR_SIZE_DIMS.items():
+        payload = {
+            "experiment": f"ionization_var_expert_{size.lower()}",
+            "exp_id": f"var-expert-ionization-{size.lower()}",
+            "experiment_root": "runs",
+            "data": unified_data("ionization", True),
+            "model": {"name": "var_expert", "in_features": 4, "num_experts": 6, "base_dim": dim, "top_k": 3},
+            "training": var_training("ionization", True),
+            "evaluation": evaluation(),
+        }
+        dump(CONFIGS / "VarExpert" / size / "ionization.yaml", payload)
+        count += 1
+    for experts in range(4, 9):
+        payload = {
+            "experiment": f"ionization_var_expert_e{experts}_k3",
+            "exp_id": f"var-expert-ionization-e{experts}-k3",
+            "experiment_root": "runs",
+            "data": unified_data("ionization", False),
+            "model": {"name": "var_expert", "in_features": 4, "num_experts": experts, "base_dim": 27, "top_k": 3},
+            "training": var_training("ionization", False, experts),
+            "evaluation": evaluation(),
+        }
+        dump(CONFIGS / "VarExpert" / f"ionization_e{experts}_k3.yaml", payload)
+        count += 1
+    return count
+
+
+def mc_payload(dataset: str, nested: bool, hidden: int) -> dict:
+    meta = DATASETS[dataset]
+    return {
+        "experiment": f"{dataset}_mc_inr",
+        "exp_id": f"mc-inr-{dataset}" + (f"-h{hidden}" if nested else ""),
+        "experiment_root": "runs",
+        "data": unified_data(dataset, nested),
+        "model": {"name": "mc_inr", "hidden_features": hidden, "gfe_layers": 5, "lfe_layers": 6},
+        "training": {
+            "epochs": 60, "batch_size": 16000, "pred_batch_size": 16000,
+            "num_workers": 0, "lr": 5.0e-5, "weight_decay": 0.0,
+            "loss_type": "mse", "log_every": 10, "save_every": 0,
+            "seed": 42, "device": "cuda", "initial_k": 12,
+            "cluster_init_method": "voxel_clustering" if meta["kind"] == "volume" else "coord_kmeans",
+            "assignments_cache_path": f"{rel_prefix(nested)}data/cache/mc_inr/{dataset}_assignments_k12.npy",
+            "meta_iterations": 60, "meta_inner_steps": 5, "meta_inner_batch_size": 16000,
+            "meta_inner_lr": 1.0e-4, "meta_batch_clusters": 4,
+            "meta_support_max_rows": 32000, "meta_outer_lr": 1.0e-3,
+            "convergence_patience": 0, "convergence_delta": 0.0,
+            "finetune_epochs": 600, "batches_per_epoch_budget": 1500,
+            "finetune_lr": 5.0e-5, "finetune_sampling_ratio": 1.0,
+            "recluster_after_finetune": False, "split_threshold": 5.0e-4,
+            "min_split_points": 32, "max_recluster_rounds": 0,
+            "cluster_aware_batches": False,
+            "scheduler": {"enabled": True, "step_size": 40, "gamma": 0.92},
+        },
+        "evaluation": evaluation(),
+    }
+
+
+def generate_mc() -> int:
+    count = 0
+    for dataset in DATASETS:
+        dump(CONFIGS / "MC-INR" / f"{dataset}.yaml", mc_payload(dataset, False, 128 if dataset == "ionization" else 96))
+        count += 1
+    for size, hidden in MC_SIZE_DIMS.items():
+        payload = mc_payload("ionization", True, hidden)
+        payload["experiment"] = f"ionization_mc_inr_{size.lower()}"
+        payload["exp_id"] = f"mc-inr-ionization-{size.lower()}"
+        dump(CONFIGS / "MC-INR" / size / "ionization.yaml", payload)
+        count += 1
+    return count
+
+
+def neural_model(dataset: str, dim: int, nested: bool, target: str, manager_pretrain: bool, size: str | None) -> dict:
+    model_name = "inr_moe_ionization" if dataset == "ionization" else "inr_moe_mesh"
+    size_token = size.lower() if size else "default"
+    manager_path = (
+        f"{rel_prefix(nested)}runs/neural_expert/pretrained_managers/{dataset}/{size_token}/"
+        f"pt_{model_name}_{target}_managerpretraining.pth"
+    )
+    return {
+        "model_name": model_name, "in_dim": 4, "out_dim": 1,
+        "decoder_hidden_dim": dim, "decoder_n_hidden_layers": 2,
+        "decoder_input_encoding": f"learned_{dim * 8}_2_sine_siren_none",
+        "decoder_nl": "sine", "decoder_init_type": "siren", "n_experts": 8,
+        "outermost_linear": True, "input_encoding": "none", "decoder_freqs": 30.0,
+        "decoder_trainable_freqs": False, "top_k": 1,
+        "manager_hidden_dim": dim * 2, "manager_n_hidden_layers": 2,
+        "manager_input_encoding": f"learned_{dim * 2}_2_sine_siren_none",
+        "manager_nl": "sine", "manager_init": "siren", "manager_type": "standard",
+        "experts_bias_std": 0.1, "experts_bias_weight": 1.0,
+        "manager_softmax_temperature": 1.0, "manager_softmax_temp_trainable": False,
+        "manager_q_activation": "softmax", "manager_clamp_q": 0.0,
+        "manager_conditioning": "cat", "manager_pt_path": manager_path,
+        "load_pt_manager": not manager_pretrain, "shared_encoder": False,
+    }
+
+
+def neural_data(dataset: str, target: str, nested: bool) -> dict:
+    data = {
+        "dataset_name": dataset, "target": target, "targets": targets_for(dataset, nested),
+        "target_stats_path": f"{rel_prefix(nested)}data/cache/neural_expert/{dataset}/target_stats_{target}.npz",
+        "normalize_inputs": dataset == "ionization", "normalize_targets": False,
+    }
+    if dataset == "ionization":
+        data.update({"volume_shape": deepcopy(ION_SHAPE), "segmentation_type": "random_balanced", "grid_patch_size": 4, "n_segments": 8})
+    else:
+        meta = DATASETS[dataset]
+        data.update({
+            "association": "point",
+            "source_path": f"{rel_prefix(nested)}data/{meta['dir']}/{meta['coords']}",
+            "stats_key": target,
+        })
+    return data
+
+
+def neural_payload(dataset: str, target: str, nested: bool, manager_pretrain: bool, dim: int, size: str | None) -> dict:
+    suffix = "-managerpretrain" if manager_pretrain else ""
+    exp_size = f"-{size.lower()}" if size else ""
+    loss_name = "1000segmentation" if manager_pretrain else "1000valrecon"
+    training = {
+        "n_points": 16000, "lr": 3.0e-5, "lr_gamma": 0.9999,
+        "lr_scheduler": "ExponentialLR",
+        "num_epochs": 30000 if manager_pretrain else 900000,
+        "batch_size": 1, "num_workers": 0, "grad_clip_norm": 10.0,
+        "save_every": 500, "segmentation_mode": manager_pretrain,
+        "log_every": 100,
+        "stages": [{"end_iteration_frac": 1.0, "params": "all", "loss_type": loss_name}],
+    }
+    if dataset != "ionization":
+        training["pretrain_assignment"] = {
+            "method": "coord_kmeans", "fit_samples": 50000,
+            "cache_path": f"{rel_prefix(nested)}data/cache/neural_expert/{dataset}/coord_kmeans_{target}.npz",
+            "normalize_features": False, "random_seed": 0, "chunk_size": 65536,
+        }
+    return {
+        "seed": 0, "wandb_project": f"inr_moe_{dataset}",
+        "experiment": f"neural_expert_{dataset}{exp_size}_{target}{suffix}",
+        "exp_id": f"neural-expert-{dataset}{exp_size}-{target}{suffix}",
+        "experiment_root": f"{rel_prefix(nested)}runs/neural_expert",
+        "MODEL": neural_model(dataset, dim, nested, target, manager_pretrain, size),
+        "LOSS": {
+            "scale_by_q_grad": False, "loss_type": loss_name,
+            "segmentation_type": "both" if dataset == "ionization" else "ce",
+            "sample_bias_correction": False, "entropy_metric": "kl",
+        },
+        "DATA": neural_data(dataset, target, nested),
+        "TRAINING": training,
+    }
+
+
+def generate_neural() -> int:
+    count = 0
+    for dataset, meta in DATASETS.items():
+        for target in meta["targets"]:
+            for pretrain in (True, False):
+                suffix = "__managerpretrain" if pretrain else ""
+                dump(
+                    CONFIGS / "NeuralExpert" / f"{dataset}__{target}{suffix}.yaml",
+                    neural_payload(dataset, target, False, pretrain, 64, None),
+                )
+                count += 1
+    for size, dim in NEURAL_SIZE_DIMS.items():
+        for target in DATASETS["ionization"]["targets"]:
+            for pretrain in (True, False):
+                suffix = "__managerpretrain" if pretrain else ""
+                dump(
+                    CONFIGS / "NeuralExpert" / size / f"ionization__{target}{suffix}.yaml",
+                    neural_payload("ionization", target, True, pretrain, dim, size),
+                )
+                count += 1
+    return count
+
+
+def volume_data(target: str, nested: bool, upper: bool = False) -> dict:
+    key = "DATA" if upper else "data"
+    del key
+    return {
+        "kind": "volume", "dataset_name": "ionization", "split": "train",
+        "target": target, "targets": targets_for("ionization", nested),
+        "volume_shape": deepcopy(ION_SHAPE),
+    }
+
+
+def apmg_payload(target: str, nested: bool, size: str | None) -> dict:
+    grids, features, nodes = APMG_SIZE[size] if size else (64, 2, 64)
+    tag = f"-{size.lower()}" if size else ""
+    return {
+        "experiment": f"apmgsrn_ionization{tag}_{target}",
+        "exp_id": f"apmgsrn-ionization{tag}-{target}",
+        "experiment_root": f"{rel_prefix(nested)}runs",
+        "MODEL": {
+            "model_name": "apmgsrn", "n_dims": 3, "n_outputs": 1,
+            "feature_grid_shape": [8, 8, 8], "n_features": features,
+            "n_grids": grids, "nodes_per_layer": nodes, "n_layers": 2,
+            "use_bias": False, "use_tcnn_if_available": True,
+            "grid_initialization": "default",
+            "requires_padded_feats": True if size else None,
+        },
+        "DATA": {
+            "dataset_name": "ionization", "target": target,
+            "targets": targets_for("ionization", nested),
+            "volume_shape": deepcopy(ION_SHAPE), "align_corners": True,
+        },
+        "TRAINING": {
+            "iterations": 9000, "points_per_iteration": 16000,
+            "prediction_points_per_batch": 16000, "lr": 0.01,
+            "beta_1": 0.9, "beta_2": 0.99, "device": "cuda:0",
+            "data_device": "same", "save_every": 0, "log_every": 100,
+            "time_indices": "all", "seed": 42, "early_stopping": False,
+        },
+    }
+
+
+def dc_payload(target: str, nested: bool, size: str | None) -> dict:
+    tag = f"-{size.lower()}" if size else ""
+    compression = {"max_initial_neurons": 2048, "min_initial_neurons": 4}
+    if size:
+        compression["target_size_mib"] = SIZES[size]
+    else:
+        compression["target_cr"] = 20.0
+    return {
+        "experiment": f"dc_inr_ionization{tag}_{target}",
+        "exp_id": f"dc-inr-ionization{tag}-{target}",
+        "experiment_root": "runs/dc_inr",
+        "data": volume_data(target, nested),
+        "model": {"name": "dc_inr"},
+        "partition": {
+            "candidate_block_shapes": [
+                {"sx": 150, "sy": 8, "sz": 124}, {"sx": 150, "sy": 124, "sz": 8},
+                {"sx": 300, "sy": 4, "sz": 124}, {"sx": 300, "sy": 124, "sz": 4},
+            ],
+            "dbscan_eps": 1.0e-2, "dbscan_min_samples": 1,
+            "entropy_bins": 256, "distance_matrix_max_bytes": 1073741824,
+        },
+        "compression": compression,
+        "training": {
+            "epochs": 300, "total_steps": 900000, "batch_size": 16000,
+            "lr": 1.0e-4, "beta_1": 0.9, "beta_2": 0.999,
+            "points_per_timestep": 160, "prediction_batch_size": 16000,
+            "lr_milestones": [450000, 675000], "lr_gamma": 0.5,
+            "log_every": 100, "seed": 42, "device": "cuda",
+        },
+        "evaluation": evaluation(),
+    }
+
+
+def fv_payload(target: str, nested: bool, size: str | None) -> dict:
+    resolution, channels = FV_SIZE[size] if size else (32, 16)
+    tag = f"-{size.lower()}" if size else ""
+    return {
+        "experiment": f"fv_srn_ionization{tag}_{target}",
+        "exp_id": f"fv-srn-ionization{tag}-{target}",
+        "experiment_root": "runs/fv_srn",
+        "data": volume_data(target, nested),
+        "model": {
+            "name": "fv_srn", "grid_resolution": resolution,
+            "grid_channels": channels, "grid_init_std": 0.01,
+            "keyframe_indices": [0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99],
+            "fourier_features": 14, "fourier_mode": "nerf",
+            "hidden_features": 32, "hidden_layers": 3,
+            "activation": "snake_alt", "activation_frequency": 1.0,
+            "time_encoding": "none",
+        },
+        "training": {
+            "epochs": 600, "samples_per_timestep": 240000,
+            "validation_fraction": 0.0, "batch_size": 16000,
+            "prediction_batch_size": 16000, "lr": 0.01,
+            "beta_1": 0.9, "beta_2": 0.999, "lr_step": 100,
+            "lr_gamma": 0.5, "l1_weight": 1.0, "l2_weight": 0.0,
+            "importance_floor": 0.01, "rebuild_every": 51,
+            "rebuild_grid_size": 32, "rebuild_samples_per_cell": 2,
+            "save_every": 20, "log_every": 1, "seed": 42, "device": "cuda",
+        },
+        "evaluation": {**evaluation(), "run_after_training": True, "default_model": "compact"},
+    }
+
+
+def rm_payload(target: str, nested: bool, size: str | None) -> dict:
+    resolution, channels = RM_SIZE[size] if size else (32, 16)
+    tag = f"-{size.lower()}" if size else ""
+    return {
+        "experiment": f"rmdsrn_ionization{tag}_{target}",
+        "exp_id": f"rmdsrn-ionization{tag}-{target}",
+        "experiment_root": "runs/rmdsrn",
+        "data": volume_data(target, nested),
+        "model": {
+            "name": "rmdsrn", "base_encoder": "temporal_fv_srn",
+            "grid_resolution": resolution, "grid_channels": channels,
+            "grid_init_std": 0.01,
+            "keyframe_indices": [0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99],
+            "fourier_features": 14, "fourier_mode": "nerf",
+            "decoder_count": 5, "decoder_hidden_features": 64,
+            "decoder_hidden_layers": 2, "activation": "snake_alt",
+            "activation_frequency": 1.0,
+        },
+        "training": {
+            "steps": 900000, "batch_size": 16000, "lr": 5.0e-3,
+            "beta_1": 0.9, "beta_2": 0.999, "min_lr": 1.0e-7,
+            "lambda_min": 0.0, "lambda_max": 10.0,
+            "lambda_growth_rate": 500.0, "epsilon": 1.0e-12,
+            "save_every": 5000, "log_every": 100, "seed": 42, "device": "cuda",
+        },
+        "evaluation": {
+            "batch_size": 16000, "save_mean": True, "save_variance": True,
+            "run_after_training": True, "default_model": "artifact",
+            "uncertainty_sample_size": 1000000, "topk_fractions": [0.01, 0.05],
+            "seed": 42,
+        },
+    }
+
+
+def generate_volume_only() -> int:
+    count = 0
+    builders = {
+        "APMGSRN": apmg_payload, "DC-INR": dc_payload,
+        "fV-SRN": fv_payload, "RMDSRN": rm_payload,
+    }
+    for family, builder in builders.items():
+        for target in DATASETS["ionization"]["targets"]:
+            dump(CONFIGS / family / f"ionization__{target}.yaml", builder(target, False, None))
+            count += 1
+        for size in SIZES:
+            for target in DATASETS["ionization"]["targets"]:
+                dump(CONFIGS / family / size / f"ionization__{target}.yaml", builder(target, True, size))
+                count += 1
+    return count
+
+
+def main() -> None:
+    if CONFIGS.exists():
+        shutil.rmtree(CONFIGS)
+    CONFIGS.mkdir(parents=True)
+    counts = {
+        "unified_single": generate_unified_single(),
+        "var_expert": generate_var_expert(),
+        "mc_inr": generate_mc(),
+        "neural_expert": generate_neural(),
+        "volume_only": generate_volume_only(),
+    }
+    total = sum(counts.values())
+    if total != 336:
+        raise RuntimeError(f"Expected 336 configs, generated {total}: {counts}")
+    print(f"Generated {total} configs: {counts}")
+
+
+if __name__ == "__main__":
+    main()

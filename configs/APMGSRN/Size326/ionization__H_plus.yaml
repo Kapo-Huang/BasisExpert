@@ -1,0 +1,48 @@
+experiment: apmgsrn_ionization-size326_H_plus
+exp_id: apmgsrn-ionization-size326-H_plus
+experiment_root: ../../../runs
+MODEL:
+  model_name: apmgsrn
+  n_dims: 3
+  n_outputs: 1
+  feature_grid_shape:
+  - 8
+  - 8
+  - 8
+  n_features: 3
+  n_grids: 7
+  nodes_per_layer: 64
+  n_layers: 2
+  use_bias: false
+  use_tcnn_if_available: true
+  grid_initialization: default
+  requires_padded_feats: true
+DATA:
+  dataset_name: ionization
+  target: H_plus
+  targets:
+    GT: ../../../data/Volume/Ionization/target_GT.npy
+    H_plus: ../../../data/Volume/Ionization/target_H+.npy
+    H2: ../../../data/Volume/Ionization/target_H2.npy
+    He: ../../../data/Volume/Ionization/target_He.npy
+    PD: ../../../data/Volume/Ionization/target_PD.npy
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
+  align_corners: true
+TRAINING:
+  iterations: 9000
+  points_per_iteration: 16000
+  prediction_points_per_batch: 16000
+  lr: 0.01
+  beta_1: 0.9
+  beta_2: 0.99
+  device: cuda:0
+  data_device: same
+  save_every: 0
+  log_every: 100
+  time_indices: all
+  seed: 42
+  early_stopping: false
