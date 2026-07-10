@@ -80,7 +80,9 @@ def load_config(config_path: str | Path, *, target_override: str | None = None, 
     else:
         cfg["exp_id"] = str(cfg.get("exp_id") or f"neural-expert-{cfg['DATA']['dataset_name']}")
     cfg["experiment"] = str(cfg.get("experiment") or cfg["exp_id"])
-    cfg["experiment_root"] = str(cfg.get("experiment_root") or "runs/neural_expert")
+    cfg["experiment_root"] = str(
+        resolve_path(str(cfg.get("experiment_root") or "runs/neural_expert"), base_dir=path.parent)
+    )
     cfg["CONFIG_PATH"] = str(path)
     return cfg
 

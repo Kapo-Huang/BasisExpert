@@ -2,7 +2,7 @@ seed: 0
 wandb_project: inr_moe_katrina
 experiment: neural_expert_katrina_v
 exp_id: neural-expert-katrina-v
-experiment_root: ../../runs/neural_expert
+experiment_root: ${REPO_ROOT}/runs/neural_expert
 MODEL:
   model_name: inr_moe_mesh
   in_dim: 4
@@ -31,7 +31,7 @@ MODEL:
   manager_q_activation: softmax
   manager_clamp_q: 0.0
   manager_conditioning: cat
-  manager_pt_path: ../../runs/neural_expert/pretrained_managers/katrina/default/pt_inr_moe_mesh_v_managerpretraining.pth
+  manager_pt_path: ${REPO_ROOT}/runs/neural_expert/pretrained_managers/katrina/default/pt_inr_moe_mesh_v_managerpretraining.pth
   load_pt_manager: true
   shared_encoder: false
 LOSS:
@@ -44,16 +44,16 @@ DATA:
   dataset_name: katrina
   target: v
   targets:
-    fort63: ../../data/Mesh/Katrina/target_fort63.npy
-    fort64: ../../data/Mesh/Katrina/target_fort64.npy
-    fort73: ../../data/Mesh/Katrina/target_fort73.npy
-    speed: ../../data/Mesh/Katrina/target_speed.npy
-    v: ../../data/Mesh/Katrina/target_v.npy
-  target_stats_path: ../../data/cache/neural_expert/katrina/target_stats_v.npz
+    fort63: ${REPO_ROOT}/data/Mesh/Katrina/target_fort63.npy
+    fort64: ${REPO_ROOT}/data/Mesh/Katrina/target_fort64.npy
+    fort73: ${REPO_ROOT}/data/Mesh/Katrina/target_fort73.npy
+    speed: ${REPO_ROOT}/data/Mesh/Katrina/target_speed.npy
+    v: ${REPO_ROOT}/data/Mesh/Katrina/target_v.npy
+  target_stats_path: ${REPO_ROOT}/data/cache/neural_expert/katrina/target_stats_v.npz
   normalize_inputs: false
   normalize_targets: false
   association: point
-  source_path: ../../data/Mesh/Katrina/source_XYZT.npy
+  source_path: ${REPO_ROOT}/data/Mesh/Katrina/source_XYZT.npy
   stats_key: v
 TRAINING:
   n_points: 16000
@@ -74,7 +74,7 @@ TRAINING:
   pretrain_assignment:
     method: coord_kmeans
     fit_samples: 50000
-    cache_path: ../../data/cache/neural_expert/katrina/coord_kmeans_v.npz
+    cache_path: ${REPO_ROOT}/data/cache/neural_expert/katrina/coord_kmeans_v.npz
     normalize_features: false
     random_seed: 0
     chunk_size: 65536

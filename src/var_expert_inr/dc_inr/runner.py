@@ -508,6 +508,21 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict[str
             Path(dirs["checkpoint_dir"]) / f"{config.exp_id}.pth",
             checkpoint_payload,
         )
+        _json_dump(
+            Path(dirs["metrics_dir"]) / "training_summary.json",
+            {
+                "selected_block_shape": selection.block_shape.to_dict(),
+                "selected_block_grid_shape": selection.grid_shape.to_dict(),
+                "selected_M": int(selection.selected_M),
+                "representative_count": int(selection.representative_block_ids.size),
+                "training": training_summary,
+            },
+        )
+        if not bool(config.evaluation.save_predictions):
+            logger.info("Skipping automatic prediction/evaluation after training.")
+            return {
+                "checkpoint_path": str(checkpoint_path),
+            }
         prediction_path = _predict_volume_from_payload(
             payload=saved_payload,
             device=device,
@@ -521,16 +536,6 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict[str
             checkpoint_bytes=int(saved_payload["checkpoint_bytes"]),
         )
         metrics_path = save_metrics(Path(dirs["metrics_dir"]) / f"{config.exp_id}.json", metrics_payload)
-        _json_dump(
-            Path(dirs["metrics_dir"]) / "training_summary.json",
-            {
-                "selected_block_shape": selection.block_shape.to_dict(),
-                "selected_block_grid_shape": selection.grid_shape.to_dict(),
-                "selected_M": int(selection.selected_M),
-                "representative_count": int(selection.representative_block_ids.size),
-                "training": training_summary,
-            },
-        )
         return {
             "checkpoint_path": str(checkpoint_path),
             "prediction_path": str(prediction_path),

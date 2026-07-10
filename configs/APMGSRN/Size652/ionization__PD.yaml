@@ -1,6 +1,6 @@
 experiment: apmgsrn_ionization-size652_PD
 exp_id: apmgsrn-ionization-size652-PD
-experiment_root: ../../../runs
+experiment_root: ${REPO_ROOT}/runs
 MODEL:
   model_name: apmgsrn
   n_dims: 3
@@ -21,11 +21,11 @@ DATA:
   dataset_name: ionization
   target: PD
   targets:
-    GT: ../../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../../data/Volume/Ionization/target_H+.npy
-    H2: ../../../data/Volume/Ionization/target_H2.npy
-    He: ../../../data/Volume/Ionization/target_He.npy
-    PD: ../../../data/Volume/Ionization/target_PD.npy
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
   volume_shape:
     X: 600
     Y: 248
@@ -46,3 +46,5 @@ TRAINING:
   time_indices: all
   seed: 42
   early_stopping: false
+EVALUATION:
+  run_after_training: false

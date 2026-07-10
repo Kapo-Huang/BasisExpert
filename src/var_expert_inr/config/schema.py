@@ -96,7 +96,7 @@ class PSNRLogConfig:
 class TimingLogConfig:
     enabled: bool = True
     epoch_breakdown: bool = True
-    step_window: bool = True
+    step_window: bool = False
     step_window_every_steps: int = 100
     cuda_sync: bool = False
 

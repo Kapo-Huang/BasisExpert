@@ -18,6 +18,7 @@ TOP_LEVEL_KEYS = {
     "MODEL",
     "DATA",
     "TRAINING",
+    "EVALUATION",
 }
 MODEL_KEYS = {
     "model_name",
@@ -55,6 +56,9 @@ TRAINING_KEYS = {
     "time_indices",
     "seed",
     "early_stopping",
+}
+EVALUATION_KEYS = {
+    "run_after_training",
 }
 
 
@@ -257,6 +261,13 @@ def _normalize_training_section(training_cfg: dict[str, Any], *, time_count: int
     return normalized
 
 
+def _normalize_evaluation_section(evaluation_cfg: dict[str, Any]) -> dict[str, Any]:
+    _reject_unknown_keys(evaluation_cfg, EVALUATION_KEYS, label="EVALUATION")
+    return {
+        "run_after_training": bool(evaluation_cfg.get("run_after_training", True)),
+    }
+
+
 def config_payload(cfg: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in cfg.items() if key != "CONFIG_PATH"}
 
@@ -276,6 +287,9 @@ def load_config(config_path: str | Path, *, target_override: str | None = None, 
         _ensure_mapping(cfg.get("TRAINING"), label="TRAINING"),
         time_count=int(normalized_data["volume_shape"]["T"]),
     )
+    normalized_evaluation = _normalize_evaluation_section(
+        _ensure_mapping(cfg.get("EVALUATION"), label="EVALUATION"),
+    )
 
     exp_id_default = f"apmgsrn-ionization-{normalized_data['target']}"
     return {
@@ -285,6 +299,7 @@ def load_config(config_path: str | Path, *, target_override: str | None = None, 
         "MODEL": normalized_model,
         "DATA": normalized_data,
         "TRAINING": normalized_training,
+        "EVALUATION": normalized_evaluation,
         "CONFIG_PATH": str(path),
     }
 

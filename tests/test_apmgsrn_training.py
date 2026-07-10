@@ -148,6 +148,30 @@ class APMGSRNTrainingTestCase(unittest.TestCase):
         self.assertEqual(second["completed_timesteps"], [0, 1, 2])
         self.assertEqual(second["skipped_timesteps"], [])
 
+    def test_run_after_training_false_keeps_checkpoints_only(self):
+        volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(1, 2, 2, 2)
+        target_path = self.root / "target_checkpoint_only.npy"
+        np.save(target_path, volume)
+
+        config = self._base_config(target_path)
+        config["exp_id"] = "apmgsrn-checkpoint-only"
+        config["DATA"]["volume_shape"]["T"] = 1
+        config["TRAINING"]["iterations"] = 1
+        config["TRAINING"]["time_indices"] = [0]
+        config["EVALUATION"] = {"run_after_training": False}
+        config_path = self._write_yaml(self.root / "checkpoint_only.yaml", config)
+
+        result = run_train(config_path)
+        run_dir = Path(result["run_dir"])
+        manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+        self.assertNotIn("prediction_path", result)
+        self.assertNotIn("metrics_path", result)
+        self.assertTrue(Path(manifest["timesteps"]["t000"]["checkpoint_path"]).exists())
+        self.assertIsNone(manifest["timesteps"]["t000"]["prediction_path"])
+        self.assertIsNone(manifest["timesteps"]["t000"]["metrics_path"])
+        self.assertEqual(list((run_dir / "predictions").glob("*.npy")), [])
+        self.assertEqual(list((run_dir / "metrics").glob("*.json")), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -83,6 +83,37 @@ class ConfigMatrixTestCase(unittest.TestCase):
             if data.get("dataset_name") == "ionization":
                 self.assertEqual(data["volume_shape"]["T"], 100, path)
 
+    def test_generated_paths_are_repo_root_relative(self):
+        for path in self.paths:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for value_path, value in self._walk_strings(payload):
+                if "../" in value or "..\\" in value:
+                    self.fail(f"Generated config contains ambiguous relative path at {path}:{value_path}: {value}")
+                if self._looks_like_generated_path(value_path, value):
+                    self.assertTrue(
+                        value.startswith("${REPO_ROOT}/"),
+                        f"Expected repo-root path at {path}:{value_path}, got {value!r}",
+                    )
+
+    def test_generated_configs_disable_training_predictions_and_step_windows(self):
+        for path in self.paths:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+            family = path.relative_to(self.config_root).parts[0]
+            if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR", "MC-INR", "DC-INR", "fV-SRN"}:
+                self.assertFalse(payload["evaluation"]["save_predictions"], path)
+            if family in {"fV-SRN", "RMDSRN"}:
+                self.assertFalse(payload["evaluation"]["run_after_training"], path)
+            if family == "APMGSRN":
+                self.assertFalse(payload["EVALUATION"]["run_after_training"], path)
+            timing = (payload.get("log") or {}).get("timing")
+            if timing is not None:
+                self.assertFalse(timing["step_window"], path)
+
+    def test_var_expert_alpha_is_five(self):
+        for path in (self.config_root / "VarExpert").rglob("*.yaml"):
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["training"]["multiview_ema_loss"]["alpha"], 5.0, path)
+
     def test_primary_training_budget_is_exact(self):
         expected = 16_000 * 1_500 * 600
         for path in self.paths:
@@ -186,6 +217,25 @@ class ConfigMatrixTestCase(unittest.TestCase):
     def _assert_size(self, model, target_mib, family, size, multiplier=1):
         actual_mib = sum(parameter.numel() for parameter in model.parameters()) * 2 * multiplier / (1024**2)
         self.assertLessEqual(abs(actual_mib - target_mib) / target_mib, 0.05, (family, size, actual_mib))
+
+    def _walk_strings(self, value, prefix=""):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield from self._walk_strings(item, f"{prefix}.{key}" if prefix else str(key))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                yield from self._walk_strings(item, f"{prefix}[{index}]")
+        elif isinstance(value, str):
+            yield prefix, value
+
+    def _looks_like_generated_path(self, value_path: str, value: str) -> bool:
+        key = value_path.rsplit(".", 1)[-1]
+        return (
+            key.endswith("_path")
+            or key == "experiment_root"
+            or ".targets." in value_path
+            or value.startswith("${REPO_ROOT}/")
+        )
 
 
 if __name__ == "__main__":

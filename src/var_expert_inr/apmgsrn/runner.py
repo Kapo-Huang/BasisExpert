@@ -348,6 +348,22 @@ def _train_single_timestep(
             stats=stats,
         ),
     )
+    if not bool(cfg["EVALUATION"]["run_after_training"]):
+        logger.info(
+            "APMGSRN timestep %s complete: checkpoint=%s prediction=<skipped>",
+            _timestep_token(time_index),
+            checkpoint_path,
+        )
+        return {
+            "time_index": int(time_index),
+            "status": "completed",
+            "config_hash": str(config_hash),
+            "checkpoint_path": str(checkpoint_path),
+            "prediction_path": None,
+            "metrics_path": None,
+            "checkpoint_bytes": int(checkpoint_path.stat().st_size),
+            "model_stats": dict(stats),
+        }
     prediction = dataset.reconstruct(model, batch_size=prediction_batch_size, model_device=train_device)
     prediction_path = timestep_dir / "prediction.npy"
     np.save(prediction_path, prediction)
@@ -504,38 +520,63 @@ def run_train(config_path: str | Path, *, target: str | None = None, identifier:
             _json_dump(manifest_file, manifest)
             completed_timesteps.append(int(time_index))
 
-        prediction_path, metrics_path, aggregate_payload = _build_aggregate_artifacts(
-            cfg=cfg,
-            reader=reader,
-            manifest=manifest,
-            run_dir=run_dir,
-        )
-        manifest["aggregate"] = {
-            "prediction_path": str(prediction_path),
-            "metrics_path": str(metrics_path),
-            "checkpoint_bytes": int(aggregate_payload["aggregate"]["checkpoint_bytes"]),
-            "raw_target_bytes": int(aggregate_payload["aggregate"]["raw_target_bytes"]),
-            "cr": float(aggregate_payload["aggregate"]["cr"]),
-            "psnr": float(aggregate_payload["aggregate"]["psnr"]),
-            "mse": float(aggregate_payload["aggregate"]["mse"]),
-            "mae": float(aggregate_payload["aggregate"]["mae"]),
-        }
+        if bool(cfg["EVALUATION"]["run_after_training"]):
+            prediction_path, metrics_path, aggregate_payload = _build_aggregate_artifacts(
+                cfg=cfg,
+                reader=reader,
+                manifest=manifest,
+                run_dir=run_dir,
+            )
+            manifest["aggregate"] = {
+                "prediction_path": str(prediction_path),
+                "metrics_path": str(metrics_path),
+                "checkpoint_bytes": int(aggregate_payload["aggregate"]["checkpoint_bytes"]),
+                "raw_target_bytes": int(aggregate_payload["aggregate"]["raw_target_bytes"]),
+                "cr": float(aggregate_payload["aggregate"]["cr"]),
+                "psnr": float(aggregate_payload["aggregate"]["psnr"]),
+                "mse": float(aggregate_payload["aggregate"]["mse"]),
+                "mae": float(aggregate_payload["aggregate"]["mae"]),
+            }
+            logger.info(
+                "APMGSRN aggregate complete: prediction=%s metrics=%s skipped=%d completed=%d",
+                prediction_path,
+                metrics_path,
+                len(skipped_timesteps),
+                len(completed_timesteps),
+            )
+            result_payload: dict[str, Any] = {
+                "run_dir": str(run_dir),
+                "manifest_path": str(manifest_file),
+                "prediction_path": str(prediction_path),
+                "metrics_path": str(metrics_path),
+                "completed_timesteps": completed_timesteps,
+                "skipped_timesteps": skipped_timesteps,
+            }
+        else:
+            total_checkpoint_bytes = sum(
+                int(entry.get("checkpoint_bytes", 0))
+                for entry in manifest["timesteps"].values()
+                if isinstance(entry, dict)
+            )
+            manifest["aggregate"] = {
+                "prediction_path": None,
+                "metrics_path": None,
+                "checkpoint_bytes": int(total_checkpoint_bytes),
+                "raw_target_bytes": int(reader.raw_bytes_for_indices(cfg["TRAINING"]["time_indices"])),
+            }
+            logger.info(
+                "APMGSRN aggregate prediction skipped: completed=%d checkpoint_bytes=%d",
+                len(completed_timesteps),
+                int(total_checkpoint_bytes),
+            )
+            result_payload = {
+                "run_dir": str(run_dir),
+                "manifest_path": str(manifest_file),
+                "completed_timesteps": completed_timesteps,
+                "skipped_timesteps": skipped_timesteps,
+            }
         manifest["status"] = "completed"
         _json_dump(manifest_file, manifest)
-        logger.info(
-            "APMGSRN aggregate complete: prediction=%s metrics=%s skipped=%d completed=%d",
-            prediction_path,
-            metrics_path,
-            len(skipped_timesteps),
-            len(completed_timesteps),
-        )
-        return {
-            "run_dir": str(run_dir),
-            "manifest_path": str(manifest_file),
-            "prediction_path": str(prediction_path),
-            "metrics_path": str(metrics_path),
-            "completed_timesteps": completed_timesteps,
-            "skipped_timesteps": skipped_timesteps,
-        }
+        return result_payload
     finally:
         close_file_handlers()

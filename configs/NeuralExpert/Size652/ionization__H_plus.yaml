@@ -2,7 +2,7 @@ seed: 0
 wandb_project: inr_moe_ionization
 experiment: neural_expert_ionization-size652_H_plus
 exp_id: neural-expert-ionization-size652-H_plus
-experiment_root: ../../../runs/neural_expert
+experiment_root: ${REPO_ROOT}/runs/neural_expert
 MODEL:
   model_name: inr_moe_ionization
   in_dim: 4
@@ -31,7 +31,7 @@ MODEL:
   manager_q_activation: softmax
   manager_clamp_q: 0.0
   manager_conditioning: cat
-  manager_pt_path: ../../../runs/neural_expert/pretrained_managers/ionization/size652/pt_inr_moe_ionization_H_plus_managerpretraining.pth
+  manager_pt_path: ${REPO_ROOT}/runs/neural_expert/pretrained_managers/ionization/size652/pt_inr_moe_ionization_H_plus_managerpretraining.pth
   load_pt_manager: true
   shared_encoder: false
 LOSS:
@@ -44,12 +44,12 @@ DATA:
   dataset_name: ionization
   target: H_plus
   targets:
-    GT: ../../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../../data/Volume/Ionization/target_H+.npy
-    H2: ../../../data/Volume/Ionization/target_H2.npy
-    He: ../../../data/Volume/Ionization/target_He.npy
-    PD: ../../../data/Volume/Ionization/target_PD.npy
-  target_stats_path: ../../../data/cache/neural_expert/ionization/target_stats_H_plus.npz
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+  target_stats_path: ${REPO_ROOT}/data/cache/neural_expert/ionization/target_stats_H_plus.npz
   normalize_inputs: true
   normalize_targets: false
   volume_shape:

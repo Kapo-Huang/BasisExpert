@@ -1514,6 +1514,13 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
             epochs_no_improve=int(finetune_result["epochs_no_improve"]),
             extra_payload={"split_round": int(current_split_round)},
         )
+        if not bool(config.evaluation.save_predictions):
+            logger.info("Skipping automatic prediction/evaluation after training.")
+            return {
+                "checkpoint_path": str(final_checkpoint),
+                "stage_checkpoints": stage_checkpoints,
+                "training_summary": training_summary,
+            }
 
         prediction_result = _predict_and_save_streaming(
             model=model,

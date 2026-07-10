@@ -296,7 +296,7 @@ def load_config(path: str | Path) -> MCExperimentConfig:
     return MCExperimentConfig(
         experiment=str(experiment) if experiment is not None else None,
         exp_id=str(exp_id),
-        experiment_root=str(payload.get("experiment_root", "runs")),
+        experiment_root=str(resolve_path(payload.get("experiment_root", "runs"), base_dir=config_path.parent)),
         data=data_cfg,
         model=model_cfg,
         training=training_cfg,

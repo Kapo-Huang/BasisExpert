@@ -1,16 +1,16 @@
 experiment: bathymetry_var_expert
 exp_id: var-expert-bathymetry
-experiment_root: runs
+experiment_root: ${REPO_ROOT}/runs
 data:
   kind: node
   dataset_name: bathymetry
   split: train
-  coords_path: ../../data/Mesh/Bathymetry/source_XYZT.npy
+  coords_path: ${REPO_ROOT}/data/Mesh/Bathymetry/source_XYZT.npy
   targets:
-    SALT: ../../data/Mesh/Bathymetry/target_SALT.npy
-    TEMP: ../../data/Mesh/Bathymetry/target_TEMP.npy
-    U: ../../data/Mesh/Bathymetry/target_U.npy
-    V: ../../data/Mesh/Bathymetry/target_V.npy
+    SALT: ${REPO_ROOT}/data/Mesh/Bathymetry/target_SALT.npy
+    TEMP: ${REPO_ROOT}/data/Mesh/Bathymetry/target_TEMP.npy
+    U: ${REPO_ROOT}/data/Mesh/Bathymetry/target_U.npy
+    V: ${REPO_ROOT}/data/Mesh/Bathymetry/target_V.npy
 model:
   name: var_expert
   in_features: 4
@@ -44,10 +44,18 @@ training:
     w_min: 0.2
     w_max: 5.0
     warmup_steps: 45000
+    alpha: 5.0
   pretrain:
     enabled: false
     epochs: 0
     lr: 5.0e-05
 evaluation:
   batch_size: 16000
-  save_predictions: true
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

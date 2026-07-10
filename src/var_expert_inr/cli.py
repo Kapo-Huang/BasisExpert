@@ -232,11 +232,13 @@ def run_train(config_path: str | Path) -> dict:
             config_hash=config_hash,
             prediction_dir=dirs["prediction_dir"],
             exp_id=config.exp_id,
+            predict_after_training=bool(config.evaluation.save_predictions),
         )
         if config.log.startup_timing:
             logger.info("Train total: %.2fs", time.perf_counter() - train_started_at)
-        metrics = evaluate_predictions(dataset, result["predictions"], checkpoint_path=result["checkpoint_path"])
-        save_metrics(dirs["metrics_dir"] / f"{config.exp_id}.json", metrics)
+        if "predictions" in result:
+            metrics = evaluate_predictions(dataset, result["predictions"], checkpoint_path=result["checkpoint_path"])
+            save_metrics(dirs["metrics_dir"] / f"{config.exp_id}.json", metrics)
         return result
     finally:
         close_file_handlers()

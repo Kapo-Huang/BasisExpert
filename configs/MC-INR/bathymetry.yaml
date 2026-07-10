@@ -1,16 +1,16 @@
 experiment: bathymetry_mc_inr
 exp_id: mc-inr-bathymetry
-experiment_root: runs
+experiment_root: ${REPO_ROOT}/runs
 data:
   kind: node
   dataset_name: bathymetry
   split: train
-  coords_path: ../../data/Mesh/Bathymetry/source_XYZT.npy
+  coords_path: ${REPO_ROOT}/data/Mesh/Bathymetry/source_XYZT.npy
   targets:
-    SALT: ../../data/Mesh/Bathymetry/target_SALT.npy
-    TEMP: ../../data/Mesh/Bathymetry/target_TEMP.npy
-    U: ../../data/Mesh/Bathymetry/target_U.npy
-    V: ../../data/Mesh/Bathymetry/target_V.npy
+    SALT: ${REPO_ROOT}/data/Mesh/Bathymetry/target_SALT.npy
+    TEMP: ${REPO_ROOT}/data/Mesh/Bathymetry/target_TEMP.npy
+    U: ${REPO_ROOT}/data/Mesh/Bathymetry/target_U.npy
+    V: ${REPO_ROOT}/data/Mesh/Bathymetry/target_V.npy
 model:
   name: mc_inr
   hidden_features: 96
@@ -30,7 +30,7 @@ training:
   device: cuda
   initial_k: 12
   cluster_init_method: coord_kmeans
-  assignments_cache_path: ../../data/cache/mc_inr/bathymetry_assignments_k12.npy
+  assignments_cache_path: ${REPO_ROOT}/data/cache/mc_inr/bathymetry_assignments_k12.npy
   meta_iterations: 60
   meta_inner_steps: 5
   meta_inner_batch_size: 16000
@@ -55,4 +55,11 @@ training:
     gamma: 0.92
 evaluation:
   batch_size: 16000
-  save_predictions: true
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

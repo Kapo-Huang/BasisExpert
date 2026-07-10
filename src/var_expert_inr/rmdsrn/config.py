@@ -273,7 +273,9 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     return {
         "experiment": str(raw.get("experiment") or f"rmdsrn_ionization_{selected}"),
         "exp_id": str(raw.get("exp_id") or f"rmdsrn-ionization-{selected}"),
-        "experiment_root": str(raw.get("experiment_root") or "runs/rmdsrn"),
+        "experiment_root": str(
+            resolve_path(str(raw.get("experiment_root") or "runs/rmdsrn"), base_dir=config_path.parent)
+        ),
         "data": data,
         "model": model,
         "training": training,

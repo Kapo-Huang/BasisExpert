@@ -419,6 +419,7 @@ def train_model(
     config_hash: str,
     prediction_dir: str | Path,
     exp_id: str,
+    predict_after_training: bool = True,
 ):
     timing_enabled = bool(log_cfg.timing.enabled)
     epoch_timing_enabled = timing_enabled and bool(log_cfg.timing.epoch_breakdown)
@@ -822,6 +823,11 @@ def train_model(
         config_hash=config_hash,
         path=Path(checkpoint_dir) / f"{exp_id}.pth",
     )
+    if not bool(predict_after_training):
+        logger.info("Skipping automatic prediction/evaluation after training.")
+        return {
+            "checkpoint_path": final_ckpt,
+        }
     predictions = predict_dataset(
         model,
         dataset,

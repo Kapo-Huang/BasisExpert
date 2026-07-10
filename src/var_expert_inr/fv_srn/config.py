@@ -194,7 +194,9 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     cfg["log"] = log
     cfg["experiment"] = str(cfg.get("experiment") or f"fv_srn_{selected}")
     cfg["exp_id"] = str(cfg.get("exp_id") or f"fv-srn-{selected}")
-    cfg["experiment_root"] = str(cfg.get("experiment_root") or "runs/fv_srn")
+    cfg["experiment_root"] = str(
+        resolve_path(str(cfg.get("experiment_root") or "runs/fv_srn"), base_dir=config_path.parent)
+    )
     cfg["CONFIG_PATH"] = str(config_path)
     return cfg
 

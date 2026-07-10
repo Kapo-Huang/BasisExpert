@@ -9,6 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs"
+REPO_ROOT_TOKEN = "${REPO_ROOT}"
 SIZES = {
     "Size082": 0.82,
     "Size163": 1.63,
@@ -97,7 +98,12 @@ def dump(path: Path, payload: dict) -> None:
 
 
 def rel_prefix(nested: bool) -> str:
-    return "../../../" if nested else "../../"
+    del nested
+    return f"{REPO_ROOT_TOKEN}/"
+
+
+def repo_path(relative: str) -> str:
+    return f"{REPO_ROOT_TOKEN}/{relative.strip('/')}"
 
 
 def targets_for(dataset: str, nested: bool) -> dict[str, str]:
@@ -134,7 +140,19 @@ def common_training() -> dict:
 
 
 def evaluation() -> dict:
-    return {"batch_size": 16000, "save_predictions": True}
+    return {"batch_size": 16000, "save_predictions": False}
+
+
+def log_config() -> dict:
+    return {
+        "timing": {
+            "enabled": True,
+            "epoch_breakdown": True,
+            "step_window": False,
+            "step_window_every_steps": 100,
+            "cuda_sync": False,
+        }
+    }
 
 
 def generate_unified_single() -> int:
@@ -146,11 +164,12 @@ def generate_unified_single() -> int:
                 payload = {
                     "experiment": f"{dataset}_{model_slug}_{target}",
                     "exp_id": f"{model_slug}-{dataset}-{target}",
-                    "experiment_root": "runs",
+                    "experiment_root": repo_path("runs"),
                     "data": unified_data(dataset, False, target),
                     "model": deepcopy(defaults[meta["kind"]]),
                     "training": common_training(),
                     "evaluation": evaluation(),
+                    "log": log_config(),
                 }
                 dump(CONFIGS / family / f"{dataset}__{target}.yaml", payload)
                 count += 1
@@ -159,11 +178,12 @@ def generate_unified_single() -> int:
                 payload = {
                     "experiment": f"ionization_{model_slug}_{size.lower()}_{target}",
                     "exp_id": f"{model_slug}-ionization-{size.lower()}-{target}",
-                    "experiment_root": "runs",
+                    "experiment_root": repo_path("runs"),
                     "data": unified_data("ionization", True, target),
                     "model": deepcopy(UNIFIED_SIZE_MODELS[family][size]),
                     "training": common_training(),
                     "evaluation": evaluation(),
+                    "log": log_config(),
                 }
                 dump(CONFIGS / family / size / f"ionization__{target}.yaml", payload)
                 count += 1
@@ -175,6 +195,7 @@ def var_training(dataset: str, nested: bool, experts: int = 6) -> dict:
     payload["multiview_ema_loss"] = {
         "enabled": True, "beta": 0.95, "eps": 1.0e-8,
         "w_min": 0.2, "w_max": 5.0, "warmup_steps": 45000,
+        "alpha": 5.0,
     }
     payload["pretrain"] = {
         "enabled": dataset == "ionization",
@@ -196,11 +217,12 @@ def generate_var_expert() -> int:
         payload = {
             "experiment": f"{dataset}_var_expert",
             "exp_id": f"var-expert-{dataset}",
-            "experiment_root": "runs",
+            "experiment_root": repo_path("runs"),
             "data": unified_data(dataset, False),
             "model": {"name": "var_expert", "in_features": 4, "num_experts": 6, "base_dim": base_dim, "top_k": 3},
             "training": var_training(dataset, False),
             "evaluation": evaluation(),
+            "log": log_config(),
         }
         dump(CONFIGS / "VarExpert" / f"{dataset}.yaml", payload)
         count += 1
@@ -208,11 +230,12 @@ def generate_var_expert() -> int:
         payload = {
             "experiment": f"ionization_var_expert_{size.lower()}",
             "exp_id": f"var-expert-ionization-{size.lower()}",
-            "experiment_root": "runs",
+            "experiment_root": repo_path("runs"),
             "data": unified_data("ionization", True),
             "model": {"name": "var_expert", "in_features": 4, "num_experts": 6, "base_dim": dim, "top_k": 3},
             "training": var_training("ionization", True),
             "evaluation": evaluation(),
+            "log": log_config(),
         }
         dump(CONFIGS / "VarExpert" / size / "ionization.yaml", payload)
         count += 1
@@ -220,11 +243,12 @@ def generate_var_expert() -> int:
         payload = {
             "experiment": f"ionization_var_expert_e{experts}_k3",
             "exp_id": f"var-expert-ionization-e{experts}-k3",
-            "experiment_root": "runs",
+            "experiment_root": repo_path("runs"),
             "data": unified_data("ionization", False),
             "model": {"name": "var_expert", "in_features": 4, "num_experts": experts, "base_dim": 27, "top_k": 3},
             "training": var_training("ionization", False, experts),
             "evaluation": evaluation(),
+            "log": log_config(),
         }
         dump(CONFIGS / "VarExpert" / f"ionization_e{experts}_k3.yaml", payload)
         count += 1
@@ -236,7 +260,7 @@ def mc_payload(dataset: str, nested: bool, hidden: int) -> dict:
     return {
         "experiment": f"{dataset}_mc_inr",
         "exp_id": f"mc-inr-{dataset}" + (f"-h{hidden}" if nested else ""),
-        "experiment_root": "runs",
+        "experiment_root": repo_path("runs"),
         "data": unified_data(dataset, nested),
         "model": {"name": "mc_inr", "hidden_features": hidden, "gfe_layers": 5, "lfe_layers": 6},
         "training": {
@@ -258,6 +282,7 @@ def mc_payload(dataset: str, nested: bool, hidden: int) -> dict:
             "scheduler": {"enabled": True, "step_size": 40, "gamma": 0.92},
         },
         "evaluation": evaluation(),
+        "log": log_config(),
     }
 
 
@@ -413,6 +438,7 @@ def apmg_payload(target: str, nested: bool, size: str | None) -> dict:
             "data_device": "same", "save_every": 0, "log_every": 100,
             "time_indices": "all", "seed": 42, "early_stopping": False,
         },
+        "EVALUATION": {"run_after_training": False},
     }
 
 
@@ -426,7 +452,7 @@ def dc_payload(target: str, nested: bool, size: str | None) -> dict:
     return {
         "experiment": f"dc_inr_ionization{tag}_{target}",
         "exp_id": f"dc-inr-ionization{tag}-{target}",
-        "experiment_root": "runs/dc_inr",
+        "experiment_root": repo_path("runs/dc_inr"),
         "data": volume_data(target, nested),
         "model": {"name": "dc_inr"},
         "partition": {
@@ -446,6 +472,7 @@ def dc_payload(target: str, nested: bool, size: str | None) -> dict:
             "log_every": 100, "seed": 42, "device": "cuda",
         },
         "evaluation": evaluation(),
+        "log": log_config(),
     }
 
 
@@ -455,7 +482,7 @@ def fv_payload(target: str, nested: bool, size: str | None) -> dict:
     return {
         "experiment": f"fv_srn_ionization{tag}_{target}",
         "exp_id": f"fv-srn-ionization{tag}-{target}",
-        "experiment_root": "runs/fv_srn",
+        "experiment_root": repo_path("runs/fv_srn"),
         "data": volume_data(target, nested),
         "model": {
             "name": "fv_srn", "grid_resolution": resolution,
@@ -476,7 +503,7 @@ def fv_payload(target: str, nested: bool, size: str | None) -> dict:
             "rebuild_grid_size": 32, "rebuild_samples_per_cell": 2,
             "save_every": 20, "log_every": 1, "seed": 42, "device": "cuda",
         },
-        "evaluation": {**evaluation(), "run_after_training": True, "default_model": "compact"},
+        "evaluation": {**evaluation(), "run_after_training": False, "default_model": "compact"},
     }
 
 
@@ -486,7 +513,7 @@ def rm_payload(target: str, nested: bool, size: str | None) -> dict:
     return {
         "experiment": f"rmdsrn_ionization{tag}_{target}",
         "exp_id": f"rmdsrn-ionization{tag}-{target}",
-        "experiment_root": "runs/rmdsrn",
+        "experiment_root": repo_path("runs/rmdsrn"),
         "data": volume_data(target, nested),
         "model": {
             "name": "rmdsrn", "base_encoder": "temporal_fv_srn",
@@ -507,7 +534,7 @@ def rm_payload(target: str, nested: bool, size: str | None) -> dict:
         },
         "evaluation": {
             "batch_size": 16000, "save_mean": True, "save_variance": True,
-            "run_after_training": True, "default_model": "artifact",
+            "run_after_training": False, "default_model": "artifact",
             "uncertainty_sample_size": 1000000, "topk_fractions": [0.01, 0.05],
             "seed": 42,
         },

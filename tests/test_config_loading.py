@@ -1,4 +1,5 @@
-﻿import tempfile
+﻿import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -63,6 +64,26 @@ class ConfigLoadingTestCase(unittest.TestCase):
             loaded = load_experiment_config(path)
             self.assertTrue(path.exists())
             self.assertTrue(str(loaded.source_config_path).endswith(".yaml"))
+
+    def test_repo_root_placeholder_resolves_from_non_repo_cwd(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        config_path = repo_root / "configs" / "VarExpert" / "Size1304" / "ionization.yaml"
+        previous_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            try:
+                loaded = load_experiment_config(config_path)
+            finally:
+                os.chdir(previous_cwd)
+        self.assertEqual(Path(loaded.experiment_root), repo_root / "runs")
+        self.assertEqual(
+            Path(loaded.training.pretrain.assignments_cache_path),
+            repo_root / "data" / "cache" / "ionization_voxel_assignments_6.npy",
+        )
+        self.assertEqual(
+            Path(loaded.data.targets["GT"]),
+            repo_root / "data" / "Volume" / "Ionization" / "target_GT.npy",
+        )
 
     def test_load_config_rejects_unknown_top_level_key(self):
         config = {

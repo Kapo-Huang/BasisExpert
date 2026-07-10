@@ -8,6 +8,32 @@ from typing import Any
 import yaml
 
 
+REPO_ROOT_PLACEHOLDER = "${REPO_ROOT}"
+
+
+def find_repo_root(start: str | Path | None = None) -> Path:
+    """Find the project root used by generated configs.
+
+    Generated YAML files can refer to paths with ``${REPO_ROOT}``.  Prefer a
+    root discovered from the config location, but fall back to this module's
+    source tree so callers outside the repo cwd still resolve consistently.
+    """
+
+    search_starts: list[Path] = []
+    if start is not None:
+        search_starts.append(Path(start).resolve())
+    search_starts.append(Path(__file__).resolve())
+
+    for candidate_start in search_starts:
+        current = candidate_start if candidate_start.is_dir() else candidate_start.parent
+        for parent in (current, *current.parents):
+            if (parent / "src" / "var_expert_inr").exists() and (parent / "configs").exists():
+                return parent
+            if (parent / "pyproject.toml").exists() and (parent / "src").exists():
+                return parent
+    return Path(__file__).resolve().parents[3]
+
+
 def ensure_parent(path: str | Path) -> Path:
     resolved = Path(path)
     resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -44,7 +70,15 @@ def sha256_payload(payload: Any) -> str:
 def resolve_path(path_value: str | None, *, base_dir: str | Path | None = None) -> str | None:
     if path_value is None:
         return None
-    path = Path(path_value)
+    text = str(path_value)
+    if (
+        text == REPO_ROOT_PLACEHOLDER
+        or text.startswith(f"{REPO_ROOT_PLACEHOLDER}/")
+        or text.startswith(f"{REPO_ROOT_PLACEHOLDER}\\")
+    ):
+        suffix = text[len(REPO_ROOT_PLACEHOLDER) :].lstrip("/\\")
+        return str((find_repo_root(base_dir) / suffix).resolve())
+    path = Path(text)
     if path.is_absolute():
         return str(path)
     if base_dir is None:

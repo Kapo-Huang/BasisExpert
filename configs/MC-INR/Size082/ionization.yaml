@@ -1,6 +1,6 @@
 experiment: ionization_mc_inr_size082
 exp_id: mc-inr-ionization-size082
-experiment_root: runs
+experiment_root: ${REPO_ROOT}/runs
 data:
   kind: volume
   dataset_name: ionization
@@ -11,11 +11,11 @@ data:
     Z: 248
     T: 100
   targets:
-    GT: ../../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../../data/Volume/Ionization/target_H+.npy
-    H2: ../../../data/Volume/Ionization/target_H2.npy
-    He: ../../../data/Volume/Ionization/target_He.npy
-    PD: ../../../data/Volume/Ionization/target_PD.npy
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
 model:
   name: mc_inr
   hidden_features: 23
@@ -35,7 +35,7 @@ training:
   device: cuda
   initial_k: 12
   cluster_init_method: voxel_clustering
-  assignments_cache_path: ../../../data/cache/mc_inr/ionization_assignments_k12.npy
+  assignments_cache_path: ${REPO_ROOT}/data/cache/mc_inr/ionization_assignments_k12.npy
   meta_iterations: 60
   meta_inner_steps: 5
   meta_inner_batch_size: 16000
@@ -60,4 +60,11 @@ training:
     gamma: 0.92
 evaluation:
   batch_size: 16000
-  save_predictions: true
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

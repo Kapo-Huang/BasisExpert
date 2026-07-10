@@ -2,7 +2,7 @@ seed: 0
 wandb_project: inr_moe_bathymetry
 experiment: neural_expert_bathymetry_U
 exp_id: neural-expert-bathymetry-U
-experiment_root: ../../runs/neural_expert
+experiment_root: ${REPO_ROOT}/runs/neural_expert
 MODEL:
   model_name: inr_moe_mesh
   in_dim: 4
@@ -31,7 +31,7 @@ MODEL:
   manager_q_activation: softmax
   manager_clamp_q: 0.0
   manager_conditioning: cat
-  manager_pt_path: ../../runs/neural_expert/pretrained_managers/bathymetry/default/pt_inr_moe_mesh_U_managerpretraining.pth
+  manager_pt_path: ${REPO_ROOT}/runs/neural_expert/pretrained_managers/bathymetry/default/pt_inr_moe_mesh_U_managerpretraining.pth
   load_pt_manager: true
   shared_encoder: false
 LOSS:
@@ -44,15 +44,15 @@ DATA:
   dataset_name: bathymetry
   target: U
   targets:
-    SALT: ../../data/Mesh/Bathymetry/target_SALT.npy
-    TEMP: ../../data/Mesh/Bathymetry/target_TEMP.npy
-    U: ../../data/Mesh/Bathymetry/target_U.npy
-    V: ../../data/Mesh/Bathymetry/target_V.npy
-  target_stats_path: ../../data/cache/neural_expert/bathymetry/target_stats_U.npz
+    SALT: ${REPO_ROOT}/data/Mesh/Bathymetry/target_SALT.npy
+    TEMP: ${REPO_ROOT}/data/Mesh/Bathymetry/target_TEMP.npy
+    U: ${REPO_ROOT}/data/Mesh/Bathymetry/target_U.npy
+    V: ${REPO_ROOT}/data/Mesh/Bathymetry/target_V.npy
+  target_stats_path: ${REPO_ROOT}/data/cache/neural_expert/bathymetry/target_stats_U.npz
   normalize_inputs: false
   normalize_targets: false
   association: point
-  source_path: ../../data/Mesh/Bathymetry/source_XYZT.npy
+  source_path: ${REPO_ROOT}/data/Mesh/Bathymetry/source_XYZT.npy
   stats_key: U
 TRAINING:
   n_points: 16000
@@ -73,7 +73,7 @@ TRAINING:
   pretrain_assignment:
     method: coord_kmeans
     fit_samples: 50000
-    cache_path: ../../data/cache/neural_expert/bathymetry/coord_kmeans_U.npz
+    cache_path: ${REPO_ROOT}/data/cache/neural_expert/bathymetry/coord_kmeans_U.npz
     normalize_features: false
     random_seed: 0
     chunk_size: 65536

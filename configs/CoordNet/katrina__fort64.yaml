@@ -1,17 +1,17 @@
 experiment: katrina_coordnet_fort64
 exp_id: coordnet-katrina-fort64
-experiment_root: runs
+experiment_root: ${REPO_ROOT}/runs
 data:
   kind: node
   dataset_name: katrina
   split: train
-  coords_path: ../../data/Mesh/Katrina/source_XYZT.npy
+  coords_path: ${REPO_ROOT}/data/Mesh/Katrina/source_XYZT.npy
   targets:
-    fort63: ../../data/Mesh/Katrina/target_fort63.npy
-    fort64: ../../data/Mesh/Katrina/target_fort64.npy
-    fort73: ../../data/Mesh/Katrina/target_fort73.npy
-    speed: ../../data/Mesh/Katrina/target_speed.npy
-    v: ../../data/Mesh/Katrina/target_v.npy
+    fort63: ${REPO_ROOT}/data/Mesh/Katrina/target_fort63.npy
+    fort64: ${REPO_ROOT}/data/Mesh/Katrina/target_fort64.npy
+    fort73: ${REPO_ROOT}/data/Mesh/Katrina/target_fort73.npy
+    speed: ${REPO_ROOT}/data/Mesh/Katrina/target_speed.npy
+    v: ${REPO_ROOT}/data/Mesh/Katrina/target_v.npy
   target: fort64
 model:
   name: coordnet
@@ -40,4 +40,11 @@ training:
     gamma: 0.92
 evaluation:
   batch_size: 16000
-  save_predictions: true
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

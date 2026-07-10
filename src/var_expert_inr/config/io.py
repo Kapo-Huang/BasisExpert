@@ -109,6 +109,9 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     )
     scheduler_payload = _ensure_mapping(training_payload.get("scheduler"), label="training.scheduler")
     pretrain_payload = _ensure_mapping(training_payload.get("pretrain"), label="training.pretrain")
+    pretrain_payload["assignments_cache_path"] = (
+        resolve_path(pretrain_payload.get("assignments_cache_path"), base_dir=config_path.parent) or ""
+    )
     psnr_log_payload = _ensure_mapping(log_payload.get("psnr"), label="log.psnr")
     timing_log_payload = _ensure_mapping(log_payload.get("timing"), label="log.timing")
 
@@ -167,7 +170,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     return ExperimentConfig(
         experiment=experiment,
         exp_id=str(exp_id or model_cfg.name.lower()),
-        experiment_root=str(payload.get("experiment_root", "runs")),
+        experiment_root=str(resolve_path(payload.get("experiment_root", "runs"), base_dir=config_path.parent)),
         data=data_cfg,
         model=model_cfg,
         training=training_cfg,

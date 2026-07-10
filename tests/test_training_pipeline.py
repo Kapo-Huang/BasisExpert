@@ -149,6 +149,52 @@ class TrainingPipelineTestCase(unittest.TestCase):
         self.assertTrue(Path(eval_result["metrics_path"]).exists())
         self.assertEqual(Path(eval_result["metrics_path"]).parent, run_dir / "metrics")
 
+    def test_train_can_skip_automatic_predictions(self):
+        volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
+        volume_path = self.root / "skip_volume.npy"
+        np.save(volume_path, volume)
+        config = {
+            "experiment": "skip-auto-predictions",
+            "exp_id": "skip-auto-predictions",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "volume",
+                "target_path": str(volume_path),
+            },
+            "model": {
+                "name": "siren",
+                "in_features": 4,
+                "hidden_features": 8,
+                "hidden_layers": 1,
+            },
+            "training": {
+                "epochs": 1,
+                "batch_size": 4,
+                "pred_batch_size": 4,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 2,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 0,
+                "sampler": "uniform_random",
+            },
+            "evaluation": {"batch_size": 4, "save_predictions": False},
+        }
+        config_path = self._write_yaml(self.root / "skip_auto_predictions.yaml", config)
+        train_result = run_train(config_path)
+        self.assertTrue(Path(train_result["checkpoint_path"]).exists())
+        self.assertNotIn("predictions", train_result)
+        run_dir = Path(train_result["checkpoint_path"]).parent.parent
+        self.assertEqual(list((run_dir / "predictions").glob("*.npy")), [])
+        self.assertEqual(list((run_dir / "metrics").glob("*.json")), [])
+
+        predict_result = run_predict(config_path)
+        self.assertTrue(all(path.exists() for path in predict_result["prediction_paths"].values()))
+        evaluate_result = run_evaluate(config_path)
+        self.assertTrue(Path(evaluate_result["metrics_path"]).exists())
+
     def test_predict_and_evaluate_require_existing_timestamp_run(self):
         volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
         volume_path = self.root / "missing_volume.npy"

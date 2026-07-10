@@ -1,17 +1,17 @@
 experiment: fv_srn_ionization-size082_H2
 exp_id: fv-srn-ionization-size082-H2
-experiment_root: runs/fv_srn
+experiment_root: ${REPO_ROOT}/runs/fv_srn
 data:
   kind: volume
   dataset_name: ionization
   split: train
   target: H2
   targets:
-    GT: ../../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../../data/Volume/Ionization/target_H+.npy
-    H2: ../../../data/Volume/Ionization/target_H2.npy
-    He: ../../../data/Volume/Ionization/target_He.npy
-    PD: ../../../data/Volume/Ionization/target_PD.npy
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
   volume_shape:
     X: 600
     Y: 248
@@ -65,6 +65,6 @@ training:
   device: cuda
 evaluation:
   batch_size: 16000
-  save_predictions: true
-  run_after_training: true
+  save_predictions: false
+  run_after_training: false
   default_model: compact

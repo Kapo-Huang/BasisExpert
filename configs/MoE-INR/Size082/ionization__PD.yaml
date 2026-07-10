@@ -1,6 +1,6 @@
 experiment: ionization_moe-inr_size082_PD
 exp_id: moe-inr-ionization-size082-PD
-experiment_root: runs
+experiment_root: ${REPO_ROOT}/runs
 data:
   kind: volume
   dataset_name: ionization
@@ -11,11 +11,11 @@ data:
     Z: 248
     T: 100
   targets:
-    GT: ../../../data/Volume/Ionization/target_GT.npy
-    H_plus: ../../../data/Volume/Ionization/target_H+.npy
-    H2: ../../../data/Volume/Ionization/target_H2.npy
-    He: ../../../data/Volume/Ionization/target_He.npy
-    PD: ../../../data/Volume/Ionization/target_PD.npy
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
   target: PD
 model:
   name: moe_inr
@@ -45,4 +45,11 @@ training:
     gamma: 0.92
 evaluation:
   batch_size: 16000
-  save_predictions: true
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false
