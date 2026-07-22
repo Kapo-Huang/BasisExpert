@@ -36,8 +36,8 @@ class ConfigMatrixTestCase(unittest.TestCase):
         cls.config_root = cls.repo_root / "configs"
         cls.paths = sorted(cls.config_root.rglob("*.yaml"))
 
-    def test_matrix_contains_exactly_336_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 336)
+    def test_matrix_contains_exactly_337_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 337)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
@@ -113,6 +113,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
         for path in (self.config_root / "VarExpert").rglob("*.yaml"):
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             self.assertEqual(payload["training"]["multiview_ema_loss"]["alpha"], 5.0, path)
+
+    def test_var_expert_ionization_dwa_config_uses_dwa_not_ema(self):
+        payload = yaml.safe_load((self.config_root / "VarExpert" / "ionization_dwa.yaml").read_text(encoding="utf-8"))
+        self.assertFalse(payload["training"]["multiview_ema_loss"]["enabled"])
+        self.assertTrue(payload["training"]["multiview_dwa_loss"]["enabled"])
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["temperature"], 2.0)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["eps"], 1.0e-12)
 
     def test_primary_training_budget_is_exact(self):
         expected = 16_000 * 1_500 * 600

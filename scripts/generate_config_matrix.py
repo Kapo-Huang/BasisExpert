@@ -226,6 +226,18 @@ def generate_var_expert() -> int:
         }
         dump(CONFIGS / "VarExpert" / f"{dataset}.yaml", payload)
         count += 1
+        if dataset == "ionization":
+            dwa_payload = deepcopy(payload)
+            dwa_payload["experiment"] = "ionization_var_expert_dwa"
+            dwa_payload["exp_id"] = "var-expert-ionization-dwa"
+            dwa_payload["training"]["multiview_ema_loss"]["enabled"] = False
+            dwa_payload["training"]["multiview_dwa_loss"] = {
+                "enabled": True,
+                "temperature": 2.0,
+                "eps": 1.0e-12,
+            }
+            dump(CONFIGS / "VarExpert" / "ionization_dwa.yaml", dwa_payload)
+            count += 1
     for size, dim in VAR_SIZE_DIMS.items():
         payload = {
             "experiment": f"ionization_var_expert_{size.lower()}",
@@ -570,8 +582,8 @@ def main() -> None:
         "volume_only": generate_volume_only(),
     }
     total = sum(counts.values())
-    if total != 336:
-        raise RuntimeError(f"Expected 336 configs, generated {total}: {counts}")
+    if total != 337:
+        raise RuntimeError(f"Expected 337 configs, generated {total}: {counts}")
     print(f"Generated {total} configs: {counts}")
 
 

@@ -176,8 +176,8 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne 336 ]]; then
-    printf 'Expected 336 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
+if [[ "${total}" -ne 337 ]]; then
+    printf 'Expected 337 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
     exit 2
 fi
 

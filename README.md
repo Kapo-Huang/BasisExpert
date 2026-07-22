@@ -22,10 +22,11 @@ python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization__GT
 python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization__GT.yaml
 ```
 
-The checked-in experiment matrix contains 336 configs. General models cover
+The checked-in experiment matrix contains 337 configs. General models cover
 Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
 single-target model has one config per attribute, and Ionization additionally
-has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants.
+has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants plus a
+VarExpert DWA loss-balancing config.
 All primary training stages consume 14.4 billion samples with an effective
 batch size of 16,000. Model-size tiers use all parameters at two bytes per
 parameter (theoretical FP16 size).
