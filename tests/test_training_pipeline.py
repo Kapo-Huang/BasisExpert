@@ -766,6 +766,92 @@ class TrainingPipelineTestCase(unittest.TestCase):
         self.assertIn("a=", log_text)
         self.assertIn("b=", log_text)
 
+    def test_var_expert_logs_dwa_state(self):
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0, 1.0],
+                [0.5, 0.5, 0.0, 0.5],
+                [0.2, 0.8, 0.0, 0.5],
+            ],
+            dtype=np.float32,
+        )
+        target_a = coords[:, :1] * 0.5
+        target_b = np.concatenate([coords[:, 1:2], coords[:, 3:4]], axis=1)
+        coords_path = self.root / "coords.npy"
+        a_path = self.root / "a.npy"
+        b_path = self.root / "b.npy"
+        np.save(coords_path, coords)
+        np.save(a_path, target_a)
+        np.save(b_path, target_b)
+
+        config = {
+            "experiment": "var-expert-dwa-logs",
+            "exp_id": "var-expert-dwa-logs",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "node",
+                "coords_path": str(coords_path),
+                "targets": {"a": str(a_path), "b": str(b_path)},
+            },
+            "model": {
+                "name": "var_expert",
+                "in_features": 4,
+                "num_experts": 2,
+                "base_dim": 2,
+                "top_k": 1,
+                "expert_num_layers": 2,
+                "gate_num_layers": 2,
+                "decoder_num_layers": 2,
+                "head_num_layers": 2,
+            },
+            "training": {
+                "epochs": 3,
+                "batch_size": 3,
+                "pred_batch_size": 3,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 7,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 0,
+                "sampler": "uniform_random",
+                "multiview_dwa_loss": {
+                    "enabled": True,
+                    "temperature": 2.0,
+                },
+            },
+            "log": {
+                "effective_config": True,
+                "model_stats": True,
+                "epoch_summary": True,
+                "startup_timing": False,
+                "psnr": {
+                    "enabled": False,
+                    "per_target": True,
+                },
+                "timing": {
+                    "enabled": False,
+                    "epoch_breakdown": True,
+                    "step_window": False,
+                    "step_window_every_steps": 1,
+                    "cuda_sync": False,
+                },
+            },
+        }
+        config_path = self._write_yaml(self.root / "var_expert_dwa_logs.yaml", config)
+        run_train(config_path)
+
+        log_text = self._read_log_text("var-expert-dwa-logs")
+        self.assertIn("DWA balance state: completed_epochs=3", log_text)
+        self.assertIn("next_epoch_weights={", log_text)
+        self.assertIn("DWA per-target loss (epoch avg):", log_text)
+        self.assertIn("a=", log_text)
+        self.assertIn("b=", log_text)
+
     def test_train_log_switches_can_disable_outputs(self):
         volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
         volume_path = self.root / "volume.npy"

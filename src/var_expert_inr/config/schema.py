@@ -65,6 +65,13 @@ class MultiAttrEMALossConfig:
 
 
 @dataclass(frozen=True)
+class MultiAttrDWALossConfig:
+    enabled: bool = False
+    temperature: float = 2.0
+    eps: float = 1e-12
+
+
+@dataclass(frozen=True)
 class SchedulerConfig:
     enabled: bool = False
     step_size: int = 0
@@ -180,6 +187,7 @@ class TrainingConfig:
     hard_topk_warmup_epochs: int = 0
     gradient_balancer: GradientBalancerConfig = field(default_factory=GradientBalancerConfig)
     multiview_ema_loss: MultiAttrEMALossConfig = field(default_factory=MultiAttrEMALossConfig)
+    multiview_dwa_loss: MultiAttrDWALossConfig = field(default_factory=MultiAttrDWALossConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     pretrain: PretrainConfig = field(default_factory=PretrainConfig)
 

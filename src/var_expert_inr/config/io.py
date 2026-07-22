@@ -11,6 +11,7 @@ from .schema import (
     GradientBalancerConfig,
     LogConfig,
     ModelConfig,
+    MultiAttrDWALossConfig,
     MultiAttrEMALossConfig,
     PSNRLogConfig,
     PretrainConfig,
@@ -107,6 +108,10 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         training_payload.get("multiview_ema_loss"),
         label="training.multiview_ema_loss",
     )
+    multiview_dwa_payload = _ensure_mapping(
+        training_payload.get("multiview_dwa_loss"),
+        label="training.multiview_dwa_loss",
+    )
     scheduler_payload = _ensure_mapping(training_payload.get("scheduler"), label="training.scheduler")
     pretrain_payload = _ensure_mapping(training_payload.get("pretrain"), label="training.pretrain")
     pretrain_payload["assignments_cache_path"] = (
@@ -152,6 +157,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         hard_topk_warmup_epochs=int(training_payload.get("hard_topk_warmup_epochs", 0)),
         gradient_balancer=GradientBalancerConfig(**gradient_balancer_payload),
         multiview_ema_loss=MultiAttrEMALossConfig(**multiview_ema_payload),
+        multiview_dwa_loss=MultiAttrDWALossConfig(**multiview_dwa_payload),
         scheduler=SchedulerConfig(**scheduler_payload),
         pretrain=PretrainConfig(**pretrain_payload),
     )

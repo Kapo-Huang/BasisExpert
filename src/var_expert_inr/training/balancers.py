@@ -131,6 +131,156 @@ class MultiAttrEMALoss(nn.Module):
         return total, losses_t, w
 
 
+class MultiAttrDWALoss(nn.Module):
+    """Original Dynamic Weight Average loss balancer.
+
+    Buffer semantics:
+    current_weights is the weight vector used by the current epoch.
+    epoch_loss_sum accumulates detached per-attribute batch losses in the current epoch.
+    epoch_batch_count counts training batches accumulated in the current epoch.
+    last_epoch_loss stores the most recent completed epoch mean loss.
+    second_last_epoch_loss stores the completed epoch mean loss before last_epoch_loss.
+    completed_epochs counts epochs submitted through end_epoch().
+    """
+
+    def __init__(
+        self,
+        attr_names,
+        temperature: float = 2.0,
+        eps: float = 1e-12,
+    ):
+        super().__init__()
+        attr_names = list(attr_names)
+        if not attr_names:
+            raise ValueError("attr_names must be non-empty")
+        if len(set(attr_names)) != len(attr_names):
+            raise ValueError("attr_names must not contain duplicates")
+        if float(temperature) <= 0.0:
+            raise ValueError("temperature must be > 0")
+        if float(eps) <= 0.0:
+            raise ValueError("eps must be > 0")
+        self.attr_names = attr_names
+        self.temperature = float(temperature)
+        self.eps = float(eps)
+        n_attrs = len(self.attr_names)
+        self.register_buffer("current_weights", torch.ones(n_attrs))
+        self.register_buffer("epoch_loss_sum", torch.zeros(n_attrs))
+        self.register_buffer("last_epoch_loss", torch.zeros(n_attrs))
+        self.register_buffer("second_last_epoch_loss", torch.zeros(n_attrs))
+        self.register_buffer("epoch_batch_count", torch.zeros((), dtype=torch.long))
+        self.register_buffer("completed_epochs", torch.zeros((), dtype=torch.long))
+
+    def _to_ordered_tensor(self, per_attr_losses: Dict[str, torch.Tensor]) -> torch.Tensor:
+        for name in self.attr_names:
+            if name not in per_attr_losses:
+                raise KeyError(f"Missing loss for attribute: {name!r}")
+            loss_tensor = per_attr_losses[name]
+            if not torch.is_tensor(loss_tensor):
+                raise TypeError(f"Loss for attribute {name!r} must be a torch.Tensor")
+            if loss_tensor.dim() != 0:
+                raise ValueError(f"Loss for attribute {name!r} must be a scalar tensor")
+            if not bool(torch.isfinite(loss_tensor.detach()).all().item()):
+                raise ValueError(f"Loss for attribute {name!r} must be finite")
+        return torch.stack([per_attr_losses[name] for name in self.attr_names], dim=0)
+
+    def forward(
+        self,
+        per_attr_losses: Dict[str, torch.Tensor],
+        *,
+        return_details: bool = False,
+        return_tensors: bool = False,
+        update_stats: bool = True,
+    ):
+        losses_t = self._to_ordered_tensor(per_attr_losses)
+        weights = self.current_weights.to(
+            device=losses_t.device,
+            dtype=losses_t.dtype,
+        )
+        total = torch.sum(weights * losses_t)
+        if update_stats:
+            with torch.no_grad():
+                self.epoch_loss_sum.add_(
+                    losses_t.detach().to(
+                        device=self.epoch_loss_sum.device,
+                        dtype=self.epoch_loss_sum.dtype,
+                    )
+                )
+                self.epoch_batch_count.add_(1)
+        if not return_details and not return_tensors:
+            return total
+        details = None
+        if return_details:
+            details = {
+                "method": "dwa",
+                "per_attr_loss": {n: float(losses_t[i].detach().item()) for i, n in enumerate(self.attr_names)},
+                "weights": {n: float(weights[i].detach().item()) for i, n in enumerate(self.attr_names)},
+                "total": float(total.detach().item()),
+                "temperature": float(self.temperature),
+                "completed_epochs": int(self.completed_epochs.detach().item()),
+                "current_epoch_batch_count": int(self.epoch_batch_count.detach().item()),
+            }
+        if return_details and return_tensors:
+            return total, losses_t, weights, details
+        if return_details:
+            return total, details
+        return total, losses_t, weights
+
+    @torch.no_grad()
+    def end_epoch(
+        self,
+        *,
+        return_details: bool = False,
+    ):
+        epoch_batches = int(self.epoch_batch_count.detach().item())
+        if epoch_batches <= 0:
+            raise ValueError("Cannot end a DWA epoch with no accumulated training batches")
+        batch_count_t = self.epoch_batch_count.to(
+            device=self.epoch_loss_sum.device,
+            dtype=self.epoch_loss_sum.dtype,
+        )
+        epoch_loss = self.epoch_loss_sum / batch_count_t
+        self.second_last_epoch_loss.copy_(self.last_epoch_loss)
+        self.last_epoch_loss.copy_(epoch_loss)
+        self.completed_epochs.add_(1)
+
+        loss_ratio = None
+        if int(self.completed_epochs.detach().item()) >= 2:
+            loss_ratio = self.last_epoch_loss / self.second_last_epoch_loss.clamp_min(self.eps)
+            next_weights = float(len(self.attr_names)) * torch.softmax(
+                loss_ratio / float(self.temperature),
+                dim=0,
+            )
+            self.current_weights.copy_(
+                next_weights.to(
+                    device=self.current_weights.device,
+                    dtype=self.current_weights.dtype,
+                )
+            )
+        else:
+            self.current_weights.fill_(1.0)
+
+        details = None
+        if return_details:
+            details = {
+                "method": "dwa",
+                "epoch_loss": {n: float(epoch_loss[i].detach().item()) for i, n in enumerate(self.attr_names)},
+                "next_weights": {
+                    n: float(self.current_weights[i].detach().item()) for i, n in enumerate(self.attr_names)
+                },
+                "temperature": float(self.temperature),
+                "completed_epochs": int(self.completed_epochs.detach().item()),
+                "epoch_batch_count": epoch_batches,
+            }
+            if loss_ratio is not None:
+                details["loss_ratio"] = {
+                    n: float(loss_ratio[i].detach().item()) for i, n in enumerate(self.attr_names)
+                }
+
+        self.epoch_loss_sum.zero_()
+        self.epoch_batch_count.zero_()
+        return details if return_details else None
+
+
 def _get_trainable_params(model: torch.nn.Module) -> List[torch.nn.Parameter]:
     return [param for param in model.parameters() if param.requires_grad]
 

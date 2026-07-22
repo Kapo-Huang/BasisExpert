@@ -177,6 +177,34 @@ class ConfigLoadingTestCase(unittest.TestCase):
             self.assertFalse(loaded.log.timing.enabled)
             self.assertEqual(loaded.log.timing.step_window_every_steps, 5)
 
+    def test_load_config_accepts_multiview_dwa_loss_section(self):
+        config = {
+            "exp_id": "with-dwa",
+            "experiment_root": "runs",
+            "data": {
+                "kind": "volume",
+                "target_path": "./target.npy",
+            },
+            "model": {
+                "name": "siren",
+            },
+            "training": {
+                "device": "cpu",
+                "multiview_dwa_loss": {
+                    "enabled": True,
+                    "temperature": 3.0,
+                    "eps": 1.0e-10,
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+            loaded = load_experiment_config(config_path)
+            self.assertTrue(loaded.training.multiview_dwa_loss.enabled)
+            self.assertEqual(loaded.training.multiview_dwa_loss.temperature, 3.0)
+            self.assertEqual(loaded.training.multiview_dwa_loss.eps, 1.0e-10)
+
     def test_load_config_rejects_unknown_log_key(self):
         config = {
             "exp_id": "bad-log",

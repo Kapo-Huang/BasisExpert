@@ -14,7 +14,7 @@ from ..evaluation.metrics import PSNRAccumulator
 from ..pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ..utils.checkpoint import save_checkpoint
 from ..utils.timing import TimingBreakdown, log_epoch_timing, log_step_timing_window, timing_elapsed, timing_start
-from .balancers import GradNormBalancer, MultiAttrEMALoss, apply_multitask_gradient
+from .balancers import GradNormBalancer, MultiAttrDWALoss, MultiAttrEMALoss, apply_multitask_gradient
 from .losses import pointwise_loss, reconstruction_loss_with_breakdown
 from .samplers import build_pretrain_sampler, build_train_sampler
 
@@ -463,7 +463,11 @@ def train_model(
             gamma=float(cfg.scheduler.gamma),
         )
 
+    if cfg.multiview_ema_loss.enabled and cfg.multiview_dwa_loss.enabled:
+        raise ValueError("training.multiview_ema_loss and training.multiview_dwa_loss cannot both be enabled")
+
     ema_balancer = None
+    dwa_balancer = None
     gradnorm_balancer = None
     if dataset.meta.is_multitarget and cfg.multiview_ema_loss.enabled:
         ema_balancer = MultiAttrEMALoss(
@@ -474,6 +478,12 @@ def train_model(
             w_max=float(cfg.multiview_ema_loss.w_max),
             warmup_steps=int(cfg.multiview_ema_loss.warmup_steps),
             alpha=float(cfg.multiview_ema_loss.alpha),
+        ).to(device)
+    if dataset.meta.is_multitarget and cfg.multiview_dwa_loss.enabled:
+        dwa_balancer = MultiAttrDWALoss(
+            dataset.target_names(),
+            temperature=float(cfg.multiview_dwa_loss.temperature),
+            eps=float(cfg.multiview_dwa_loss.eps),
         ).to(device)
     if dataset.meta.is_multitarget and cfg.gradient_balancer.enabled and cfg.gradient_balancer.method == "gradnorm":
         gradnorm_balancer = GradNormBalancer(dataset.target_names(), cfg.gradient_balancer, device)
@@ -500,6 +510,7 @@ def train_model(
         window_training = 0.0
         expert_select_counts = None
         last_ema_state = None
+        dwa_epoch_state = None
         ema_target_loss_sums = (
             {name: 0.0 for name in dataset.target_names()}
             if ema_balancer is not None
@@ -582,6 +593,8 @@ def train_model(
                         "warmup_steps": int(ema_details["warmup_steps"]),
                         "effective_weights": dict(ema_details["weights"]),
                     }
+                if dwa_balancer is not None:
+                    total_loss = dwa_balancer(task_losses)
                 if gradnorm_balancer is not None:
                     total_loss, _ = gradnorm_balancer.build_weighted_loss(task_losses)
                     total_loss.backward(retain_graph=True)
@@ -661,6 +674,12 @@ def train_model(
             )
             epoch_timing.others += time.perf_counter() - log_started_at
 
+        if dwa_balancer is not None:
+            other_started_at = time.perf_counter() if timing_enabled else 0.0
+            dwa_epoch_state = dwa_balancer.end_epoch(return_details=True)
+            if timing_enabled:
+                epoch_timing.others += time.perf_counter() - other_started_at
+
         other_started_at = time.perf_counter() if timing_enabled else 0.0
         if scheduler is not None:
             scheduler.step()
@@ -727,6 +746,17 @@ def train_model(
                         for name in dataset.target_names()
                     )
                     logger.info("EMA per-target loss (epoch avg): %s", ema_target_loss_text)
+            if dwa_epoch_state is not None:
+                logger.info(
+                    "DWA balance state: completed_epochs=%d next_epoch_weights=%s",
+                    int(dwa_epoch_state.get("completed_epochs", 0)),
+                    dwa_epoch_state.get("next_weights", {}),
+                )
+                dwa_target_loss_text = " ".join(
+                    f"{name}={dwa_epoch_state['epoch_loss'][name]:.6e}"
+                    for name in dataset.target_names()
+                )
+                logger.info("DWA per-target loss (epoch avg): %s", dwa_target_loss_text)
             if expert_select_counts is not None:
                 sum_count = float(expert_select_counts.sum().item())
                 if sum_count > 0.0:
