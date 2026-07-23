@@ -102,6 +102,7 @@ append_serial_family "VarExpert"
 append_attribute_groups "SIREN" "all"
 append_attribute_groups "CoordNet" "all"
 append_attribute_groups "MoE-INR" "all"
+append_volume_attribute_groups "CompactNGP"
 append_serial_family "MC-INR"
 append_attribute_groups "NeuralExpert" "manager"
 append_attribute_groups "NeuralExpert" "main"
@@ -176,8 +177,8 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne 337 ]]; then
-    printf 'Expected 337 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
+if [[ "${total}" -ne 342 ]]; then
+    printf 'Expected 342 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
     exit 2
 fi
 

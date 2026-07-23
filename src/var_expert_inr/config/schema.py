@@ -171,6 +171,9 @@ class TrainingConfig:
     pred_batch_size: int = 8192
     num_workers: int = 0
     lr: float = 5e-5
+    beta_1: float = 0.9
+    beta_2: float = 0.999
+    epsilon: float = 1e-8
     weight_decay: float = 0.0
     loss_type: str = "mse"
     val_split: float = 0.1
@@ -194,6 +197,12 @@ class TrainingConfig:
     def __post_init__(self) -> None:
         object.__setattr__(self, "loss_type", _normalize_loss_type(self.loss_type))
         object.__setattr__(self, "sampler", _normalize_sampler(self.sampler))
+        if not (0.0 <= float(self.beta_1) < 1.0):
+            raise ValueError(f"training.beta_1 must be in [0, 1), got {self.beta_1}")
+        if not (0.0 <= float(self.beta_2) < 1.0):
+            raise ValueError(f"training.beta_2 must be in [0, 1), got {self.beta_2}")
+        if float(self.epsilon) <= 0.0:
+            raise ValueError(f"training.epsilon must be positive, got {self.epsilon}")
         if not (0.0 <= float(self.val_split) < 1.0):
             raise ValueError(f"training.val_split must be in [0, 1), got {self.val_split}")
 

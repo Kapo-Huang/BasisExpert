@@ -4,7 +4,7 @@ from ..config.schema import DataConfig
 from .node import NodeFieldDataset
 from .volume import VolumeFieldDataset
 
-SINGLE_TARGET_SELECTOR_MODELS = {"siren", "coordnet", "moe_inr"}
+SINGLE_TARGET_SELECTOR_MODELS = {"siren", "coordnet", "moe_inr", "compact_ngp"}
 
 def build_dataset(data_cfg: DataConfig, *, model_name: str | None = None):
     selected_targets = data_cfg.targets

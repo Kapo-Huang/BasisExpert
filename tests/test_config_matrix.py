@@ -36,8 +36,8 @@ class ConfigMatrixTestCase(unittest.TestCase):
         cls.config_root = cls.repo_root / "configs"
         cls.paths = sorted(cls.config_root.rglob("*.yaml"))
 
-    def test_matrix_contains_exactly_337_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 337)
+    def test_matrix_contains_exactly_342_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 342)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
@@ -67,6 +67,18 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     for path in (self.config_root / family / size).glob("ionization__*.yaml")
                 }
                 self.assertEqual(sized, DATASET_TARGETS["ionization"])
+
+        compact_targets = {
+            path.stem.split("__")[1]
+            for path in (self.config_root / "CompactNGP").glob("ionization__*.yaml")
+        }
+        self.assertEqual(compact_targets, DATASET_TARGETS["ionization"])
+        self.assertEqual(
+            list((self.config_root / "CompactNGP").glob("bathymetry__*.yaml")), []
+        )
+        self.assertEqual(
+            list((self.config_root / "CompactNGP").glob("katrina__*.yaml")), []
+        )
 
     def test_neural_expert_has_matching_manager_pretrains(self):
         root = self.config_root / "NeuralExpert"
@@ -99,7 +111,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         for path in self.paths:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             family = path.relative_to(self.config_root).parts[0]
-            if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR", "MC-INR", "DC-INR", "fV-SRN"}:
+            if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR", "CompactNGP", "MC-INR", "DC-INR", "fV-SRN"}:
                 self.assertFalse(payload["evaluation"]["save_predictions"], path)
             if family in {"fV-SRN", "RMDSRN"}:
                 self.assertFalse(payload["evaluation"]["run_after_training"], path)
@@ -128,7 +140,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 continue
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             family = path.relative_to(self.config_root).parts[0]
-            if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR"}:
+            if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR", "CompactNGP"}:
                 training = payload["training"]
                 total = training["batch_size"] * training["batches_per_epoch_budget"] * training["epochs"]
             elif family == "NeuralExpert":

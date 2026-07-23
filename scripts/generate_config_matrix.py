@@ -139,6 +139,55 @@ def common_training() -> dict:
     }
 
 
+def compact_ngp_model() -> dict:
+    return {
+        "name": "compact_ngp",
+        "in_features": 4,
+        "out_features": 1,
+        "num_levels": 16,
+        "features_per_level": 2,
+        "feature_table_size": 1024,
+        "index_table_size": 65536,
+        "num_probes": 4,
+        "base_resolution": 16,
+        "max_resolution": 2048,
+        "hidden_features": 64,
+        "hidden_layers": 2,
+    }
+
+
+def compact_ngp_training() -> dict:
+    payload = common_training()
+    payload.update(
+        {
+            "lr": 1.0e-2,
+            "beta_1": 0.9,
+            "beta_2": 0.99,
+            "epsilon": 1.0e-15,
+            "weight_decay": 1.0e-6,
+        }
+    )
+    return payload
+
+
+def generate_compact_ngp() -> int:
+    count = 0
+    for target in DATASETS["ionization"]["targets"]:
+        payload = {
+            "experiment": f"ionization_compact-ngp_{target}",
+            "exp_id": f"compact-ngp-ionization-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": unified_data("ionization", False, target),
+            "model": compact_ngp_model(),
+            "training": compact_ngp_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(CONFIGS / "CompactNGP" / f"ionization__{target}.yaml", payload)
+        count += 1
+    return count
+
+
 def evaluation() -> dict:
     return {"batch_size": 16000, "save_predictions": False}
 
@@ -576,14 +625,15 @@ def main() -> None:
     CONFIGS.mkdir(parents=True)
     counts = {
         "unified_single": generate_unified_single(),
+        "compact_ngp": generate_compact_ngp(),
         "var_expert": generate_var_expert(),
         "mc_inr": generate_mc(),
         "neural_expert": generate_neural(),
         "volume_only": generate_volume_only(),
     }
     total = sum(counts.values())
-    if total != 337:
-        raise RuntimeError(f"Expected 337 configs, generated {total}: {counts}")
+    if total != 342:
+        raise RuntimeError(f"Expected 342 configs, generated {total}: {counts}")
     print(f"Generated {total} configs: {counts}")
 
 

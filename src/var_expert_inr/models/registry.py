@@ -7,6 +7,7 @@ from ..data.base import DatasetMeta
 from .var_expert.shared_enc_inr import build_shared_enc_inr_from_config
 from .var_expert.var_expert import build_var_expert_from_config
 from .common import ModelAdapter, require_single_target, view_specs_from_meta
+from .sota.compact_ngp import build_compact_ngp_from_config
 from .sota.coordnet import build_coordnet_from_config
 from .sota.moe_inr import build_moe_inr_from_config
 from .sota.siren import build_siren_from_config
@@ -112,6 +113,10 @@ def _build_moe_inr(cfg: dict, meta: DatasetMeta):
     return build_moe_inr_from_config(cfg)
 
 
+def _build_compact_ngp(cfg: dict, meta: DatasetMeta):
+    return build_compact_ngp_from_config(cfg)
+
+
 def _build_var_expert(cfg: dict, meta: DatasetMeta):
     return build_var_expert_from_config(cfg, view_specs_from_meta(meta))
 
@@ -196,6 +201,36 @@ def _materialize_moe_inr(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, An
         "policy_num_layers": int(cfg.get("policy_num_layers", 3)),
         "policy_first_omega_0": float(cfg.get("policy_first_omega_0", 30.0)),
         "policy_hidden_omega_0": float(cfg.get("policy_hidden_omega_0", 30.0)),
+    }
+
+
+def _materialize_compact_ngp(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
+    allowed = {
+        "in_features",
+        "out_features",
+        "num_levels",
+        "features_per_level",
+        "feature_table_size",
+        "index_table_size",
+        "num_probes",
+        "base_resolution",
+        "max_resolution",
+        "hidden_features",
+        "hidden_layers",
+    }
+    _reject_unknown_model_keys(cfg, allowed, "compact_ngp")
+    return {
+        "in_features": _resolve_in_features(cfg, meta, "compact_ngp"),
+        "out_features": _resolve_single_target_out_features(cfg, meta, "compact_ngp"),
+        "num_levels": int(cfg.get("num_levels", 16)),
+        "features_per_level": int(cfg.get("features_per_level", 2)),
+        "feature_table_size": int(cfg.get("feature_table_size", 1024)),
+        "index_table_size": int(cfg.get("index_table_size", 65536)),
+        "num_probes": int(cfg.get("num_probes", 4)),
+        "base_resolution": int(cfg.get("base_resolution", 16)),
+        "max_resolution": int(cfg.get("max_resolution", 2048)),
+        "hidden_features": int(cfg.get("hidden_features", 64)),
+        "hidden_layers": int(cfg.get("hidden_layers", 2)),
     }
 
 
@@ -336,6 +371,7 @@ MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "siren": _build_siren,
     "coordnet": _build_coordnet,
     "moe_inr": _build_moe_inr,
+    "compact_ngp": _build_compact_ngp,
     "var_expert": _build_var_expert,
     "shared_enc_inr": _build_shared_enc_inr,
 }
@@ -344,6 +380,7 @@ MODEL_CONFIG_MATERIALIZERS: dict[str, ModelConfigMaterializer] = {
     "siren": _materialize_siren,
     "coordnet": _materialize_coordnet,
     "moe_inr": _materialize_moe_inr,
+    "compact_ngp": _materialize_compact_ngp,
     "var_expert": _materialize_var_expert,
     "shared_enc_inr": _materialize_shared_enc_inr,
 }

@@ -14,6 +14,8 @@ from .config.io import load_experiment_config, save_experiment_config
 from .data import build_dataset
 from .evaluation.metrics import evaluate_predictions, save_metrics
 from .models import build_model, effective_model_config, materialize_model_config
+from .models.common import ModelAdapter
+from .models.sota.compact_ngp import load_compact_ngp_artifact
 from .training.engine import predict_dataset, save_predictions, train_model
 from .utils.checkpoint import (
     read_checkpoint_payload,
@@ -56,6 +58,7 @@ def _build_run_dirs(run_dir: Path) -> dict[str, Path | str]:
     prediction_dir = run_dir / "predictions"
     metrics_dir = run_dir / "metrics"
     logs_dir = run_dir / "logs"
+    artifact_dir = run_dir / "artifacts"
     return {
         "experiment_dir": run_dir.parent,
         "run_dir": run_dir,
@@ -65,6 +68,7 @@ def _build_run_dirs(run_dir: Path) -> dict[str, Path | str]:
         "prediction_dir": prediction_dir,
         "metrics_dir": metrics_dir,
         "logs_dir": logs_dir,
+        "artifact_dir": artifact_dir,
     }
 
 
@@ -77,6 +81,7 @@ def _ensure_run_dirs(run_dir: Path) -> dict[str, Path | str]:
         dirs["prediction_dir"],
         dirs["metrics_dir"],
         dirs["logs_dir"],
+        dirs["artifact_dir"],
     ):
         path.mkdir(parents=True, exist_ok=True)
     return dirs
@@ -105,6 +110,18 @@ def _resolve_checkpoint_run_dir(checkpoint_path: str | Path) -> Path | None:
     return run_dir
 
 
+def _resolve_artifact_run_dir(artifact_path: str | Path) -> Path | None:
+    resolved = Path(artifact_path).resolve()
+    if resolved.parent.name != "artifacts":
+        return None
+    run_dir = resolved.parent.parent
+    if not _is_timestamped_run_dir(run_dir):
+        raise FileNotFoundError(
+            f"Artifact path must live under runs/<exp_id>/<timestamp>/artifacts: {resolved}"
+        )
+    return run_dir
+
+
 def _resolve_latest_run_dir(config) -> Path:
     experiment_dir = _experiment_dir(config)
     candidates = []
@@ -117,10 +134,18 @@ def _resolve_latest_run_dir(config) -> Path:
     return candidates[-1]
 
 
-def _resolve_existing_run_dirs(config, checkpoint_path: str | Path | None = None):
+def _resolve_existing_run_dirs(
+    config,
+    checkpoint_path: str | Path | None = None,
+    artifact_path: str | Path | None = None,
+):
+    if checkpoint_path is not None and artifact_path is not None:
+        raise ValueError("checkpoint_path and artifact_path are mutually exclusive")
     run_dir = None
     if checkpoint_path is not None:
         run_dir = _resolve_checkpoint_run_dir(checkpoint_path)
+    if artifact_path is not None:
+        run_dir = _resolve_artifact_run_dir(artifact_path)
     if run_dir is None:
         run_dir = _resolve_latest_run_dir(config)
     return _ensure_run_dirs(run_dir)
@@ -142,6 +167,7 @@ def _prepare_runtime(
     *,
     create_run: bool,
     checkpoint_path: str | Path | None = None,
+    artifact_path: str | Path | None = None,
 ):
     config_started_at = time.perf_counter()
     config = load_experiment_config(config_path)
@@ -151,7 +177,11 @@ def _prepare_runtime(
     if create_run:
         dirs = _create_train_run_dirs(config)
     else:
-        dirs = _resolve_existing_run_dirs(config, checkpoint_path=checkpoint_path)
+        dirs = _resolve_existing_run_dirs(
+            config,
+            checkpoint_path=checkpoint_path,
+            artifact_path=artifact_path,
+        )
     run_dir_prepare_seconds = time.perf_counter() - dirs_started_at
 
     setup_logging(log_dir=dirs["logs_dir"], log_file=f"run_{dirs['run_token']}.log")
@@ -189,6 +219,53 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
     )
     prediction_paths = save_predictions(dataset, predictions, dirs["prediction_dir"], config.exp_id)
     return {"checkpoint_path": checkpoint_path, "predictions": predictions, "prediction_paths": prediction_paths}
+
+
+def _predict_from_artifact(
+    config,
+    dirs,
+    dataset,
+    device: torch.device,
+    artifact_path: str | Path,
+) -> dict:
+    model, payload = load_compact_ngp_artifact(artifact_path, device=device)
+    expected_model_config = effective_model_config(config.model, dataset.meta)
+    if payload.get("model_config") != expected_model_config:
+        raise ValueError(
+            "CompactNGP artifact model config mismatch. "
+            f"artifact={payload.get('model_config')} current={expected_model_config}"
+        )
+    expected_targets = list(dataset.target_names())
+    if list(payload.get("target_names_order", [])) != expected_targets:
+        raise ValueError(
+            "CompactNGP artifact target order mismatch. "
+            f"artifact={payload.get('target_names_order')} current={expected_targets}"
+        )
+    expected_shape = (
+        dataset.meta.volume_shape.to_dict()
+        if dataset.meta.volume_shape is not None
+        else None
+    )
+    if payload.get("volume_shape") != expected_shape:
+        raise ValueError(
+            "CompactNGP artifact volume shape mismatch. "
+            f"artifact={payload.get('volume_shape')} current={expected_shape}"
+        )
+    predictions = predict_dataset(
+        ModelAdapter(model),
+        dataset,
+        batch_size=config.evaluation.batch_size or config.training.pred_batch_size,
+        device=device,
+        hard_topk=True,
+    )
+    prediction_paths = save_predictions(
+        dataset, predictions, dirs["prediction_dir"], config.exp_id
+    )
+    return {
+        "artifact_path": Path(artifact_path),
+        "predictions": predictions,
+        "prediction_paths": prediction_paths,
+    }
 
 
 def run_train(config_path: str | Path) -> dict:
@@ -233,7 +310,16 @@ def run_train(config_path: str | Path) -> dict:
             prediction_dir=dirs["prediction_dir"],
             exp_id=config.exp_id,
             predict_after_training=bool(config.evaluation.save_predictions),
+            artifact_dir=dirs["artifact_dir"],
+            model_config=effective_payload["model"],
         )
+        if "artifact_path" in result:
+            result.update(
+                {
+                    "training_param_count": int(stats["param_count"]),
+                    "training_fp16_size_bytes": int(stats["fp16_size_bytes"]),
+                }
+            )
         if config.log.startup_timing:
             logger.info("Train total: %.2fs", time.perf_counter() - train_started_at)
         if "predictions" in result:
@@ -244,33 +330,57 @@ def run_train(config_path: str | Path) -> dict:
         close_file_handlers()
 
 
-def run_predict(config_path: str | Path, checkpoint_path: str | Path | None = None) -> dict:
+def run_predict(
+    config_path: str | Path,
+    checkpoint_path: str | Path | None = None,
+    artifact_path: str | Path | None = None,
+) -> dict:
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(
             config_path,
             create_run=False,
             checkpoint_path=checkpoint_path,
+            artifact_path=artifact_path,
         )
-        result = _predict_from_runtime(config, dirs, dataset, device, checkpoint_path=checkpoint_path)
+        if artifact_path is not None:
+            result = _predict_from_artifact(config, dirs, dataset, device, artifact_path)
+        else:
+            result = _predict_from_runtime(
+                config, dirs, dataset, device, checkpoint_path=checkpoint_path
+            )
         return {"predictions": result["predictions"], "prediction_paths": result["prediction_paths"]}
     finally:
         close_file_handlers()
 
 
-def run_evaluate(config_path: str | Path, checkpoint_path: str | Path | None = None) -> dict:
+def run_evaluate(
+    config_path: str | Path,
+    checkpoint_path: str | Path | None = None,
+    artifact_path: str | Path | None = None,
+) -> dict:
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(
             config_path,
             create_run=False,
             checkpoint_path=checkpoint_path,
+            artifact_path=artifact_path,
         )
-        predict_result = _predict_from_runtime(config, dirs, dataset, device, checkpoint_path=checkpoint_path)
+        if artifact_path is not None:
+            predict_result = _predict_from_artifact(
+                config, dirs, dataset, device, artifact_path
+            )
+            source_path = predict_result["artifact_path"]
+        else:
+            predict_result = _predict_from_runtime(
+                config, dirs, dataset, device, checkpoint_path=checkpoint_path
+            )
+            source_path = predict_result["checkpoint_path"]
         metrics = evaluate_predictions(
             dataset,
             predict_result["predictions"],
-            checkpoint_path=predict_result["checkpoint_path"],
+            checkpoint_path=source_path,
         )
         metrics_path = save_metrics(dirs["metrics_dir"] / f"{config.exp_id}.json", metrics)
         return {"metrics": metrics, "metrics_path": metrics_path}
@@ -287,11 +397,15 @@ def parse_args() -> argparse.Namespace:
 
     predict_parser = subparsers.add_parser("predict", help="Generate predictions from a checkpoint")
     predict_parser.add_argument("--config", required=True, help="Path to the experiment config")
-    predict_parser.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
+    predict_source = predict_parser.add_mutually_exclusive_group()
+    predict_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
+    predict_source.add_argument("--artifact", default=None, help="Optional CompactNGP inference artifact")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a checkpoint")
     eval_parser.add_argument("--config", required=True, help="Path to the experiment config")
-    eval_parser.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
+    eval_source = eval_parser.add_mutually_exclusive_group()
+    eval_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
+    eval_source.add_argument("--artifact", default=None, help="Optional CompactNGP inference artifact")
     return parser.parse_args()
 
 
@@ -302,11 +416,19 @@ def main() -> None:
         logger.info("Training completed. Checkpoint: %s", result["checkpoint_path"])
         return
     if args.command == "predict":
-        result = run_predict(args.config, checkpoint_path=args.checkpoint)
+        result = run_predict(
+            args.config,
+            checkpoint_path=args.checkpoint,
+            artifact_path=args.artifact,
+        )
         logger.info("Predictions saved: %s", result["prediction_paths"])
         return
     if args.command == "evaluate":
-        result = run_evaluate(args.config, checkpoint_path=args.checkpoint)
+        result = run_evaluate(
+            args.config,
+            checkpoint_path=args.checkpoint,
+            artifact_path=args.artifact,
+        )
         logger.info("Metrics saved: %s", result["metrics_path"])
         return
     raise ValueError(f"Unknown command: {args.command}")

@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, Subset, random_split
 
 from ..config.schema import LogConfig
 from ..evaluation.metrics import PSNRAccumulator
+from ..models.sota.compact_ngp import CompactNGP, save_compact_ngp_artifact
 from ..pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ..utils.checkpoint import save_checkpoint
 from ..utils.timing import TimingBreakdown, log_epoch_timing, log_step_timing_window, timing_elapsed, timing_start
@@ -420,6 +421,8 @@ def train_model(
     prediction_dir: str | Path,
     exp_id: str,
     predict_after_training: bool = True,
+    artifact_dir: str | Path | None = None,
+    model_config: dict | None = None,
 ):
     timing_enabled = bool(log_cfg.timing.enabled)
     epoch_timing_enabled = timing_enabled and bool(log_cfg.timing.epoch_breakdown)
@@ -454,7 +457,13 @@ def train_model(
 
     model = model.to(device)
     _run_pretrain(model, dataset, cfg, device, log_cfg)
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg.lr), weight_decay=float(cfg.weight_decay))
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=float(cfg.lr),
+        betas=(float(cfg.beta_1), float(cfg.beta_2)),
+        eps=float(cfg.epsilon),
+        weight_decay=float(cfg.weight_decay),
+    )
     scheduler = None
     if cfg.scheduler.enabled and cfg.scheduler.step_size > 0 and cfg.scheduler.gamma != 1.0:
         scheduler = torch.optim.lr_scheduler.StepLR(
@@ -853,11 +862,28 @@ def train_model(
         config_hash=config_hash,
         path=Path(checkpoint_dir) / f"{exp_id}.pth",
     )
+    result = {"checkpoint_path": final_ckpt}
+    backbone = getattr(model, "backbone", model)
+    if isinstance(backbone, CompactNGP):
+        if artifact_dir is None or model_config is None:
+            raise ValueError("CompactNGP training requires artifact_dir and model_config")
+        artifact_result = save_compact_ngp_artifact(
+            Path(artifact_dir) / f"{exp_id}.pt",
+            model=model,
+            model_config=model_config,
+            dataset=dataset,
+            config_hash=config_hash,
+        )
+        result.update(artifact_result)
+        logger.info(
+            "CompactNGP artifact: path=%s payload=%s bytes file=%s bytes",
+            artifact_result["artifact_path"],
+            artifact_result["compact_payload_bytes"],
+            artifact_result["artifact_file_bytes"],
+        )
     if not bool(predict_after_training):
         logger.info("Skipping automatic prediction/evaluation after training.")
-        return {
-            "checkpoint_path": final_ckpt,
-        }
+        return result
     predictions = predict_dataset(
         model,
         dataset,
@@ -866,8 +892,5 @@ def train_model(
         hard_topk=True,
     )
     saved_predictions = save_predictions(dataset, predictions, prediction_dir, exp_id)
-    return {
-        "checkpoint_path": final_ckpt,
-        "predictions": predictions,
-        "prediction_paths": saved_predictions,
-    }
+    result.update({"predictions": predictions, "prediction_paths": saved_predictions})
+    return result

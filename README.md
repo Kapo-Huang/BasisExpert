@@ -13,6 +13,7 @@ From the repository root:
 ```bash
 python -m var_expert_inr.cli train --config configs/VarExpert/ionization.yaml
 python -m var_expert_inr.cli train --config configs/SIREN/ionization__GT.yaml
+python -m var_expert_inr.cli train --config configs/CompactNGP/ionization__GT.yaml
 python -m var_expert_inr.mc_inr.cli train --config configs/MC-INR/ionization.yaml
 python -m var_expert_inr.neural_expert.cli train --config configs/NeuralExpert/ionization__GT__managerpretrain.yaml
 python -m var_expert_inr.neural_expert.cli train --config configs/NeuralExpert/ionization__GT.yaml
@@ -22,7 +23,7 @@ python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization__GT
 python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization__GT.yaml
 ```
 
-The checked-in experiment matrix contains 337 configs. General models cover
+The checked-in experiment matrix contains 342 configs. General models cover
 Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
 single-target model has one config per attribute, and Ionization additionally
 has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants plus a
@@ -45,6 +46,9 @@ When running without installation, this repository ships a small package shim so
 
 Each train run writes outputs into `runs/<exp_id>/<timestamp>/`, including
 `checkpoints/`, `configs/`, `logs/`, `metrics/`, and `predictions/`.
+CompactNGP runs additionally write a baked FP16/2-bit representation under
+`artifacts/`. Unified `predict` and `evaluate` accept it through `--artifact`;
+checkpoint inference bakes the learned confidence tables once before querying.
 The resolved effective config is saved as `runs/<exp_id>/<timestamp>/configs/config.yaml`.
 When `predict` or `evaluate` runs without an explicit checkpoint, it reuses the
 latest timestamped run under the matching `exp_id`.
