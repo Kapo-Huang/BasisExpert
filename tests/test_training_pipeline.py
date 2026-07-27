@@ -8,6 +8,7 @@ import yaml
 
 from var_expert_inr.cli import run_evaluate, run_predict, run_train
 from var_expert_inr.training.engine import select_psnr_indices
+from var_expert_inr.utils.checkpoint import read_checkpoint_payload
 
 
 class TrainingPipelineTestCase(unittest.TestCase):
@@ -194,6 +195,62 @@ class TrainingPipelineTestCase(unittest.TestCase):
         self.assertTrue(all(path.exists() for path in predict_result["prediction_paths"].values()))
         evaluate_result = run_evaluate(config_path)
         self.assertTrue(Path(evaluate_result["metrics_path"]).exists())
+
+    def test_gradient_accumulation_crosses_epoch_boundaries(self):
+        volume = np.linspace(
+            -1.0,
+            1.0,
+            4,
+            dtype=np.float32,
+        ).reshape(2, 1, 1, 2)
+        volume_path = self.root / "accumulation_volume.npy"
+        np.save(volume_path, volume)
+        config = {
+            "experiment": "cross-epoch-accumulation",
+            "exp_id": "cross-epoch-accumulation",
+            "experiment_root": str(self.root / "runs"),
+            "data": {
+                "kind": "volume",
+                "target_path": str(volume_path),
+            },
+            "model": {
+                "name": "siren",
+                "in_features": 4,
+                "hidden_features": 8,
+                "hidden_layers": 1,
+            },
+            "training": {
+                "epochs": 4,
+                "batch_size": 2,
+                "pred_batch_size": 2,
+                "gradient_accumulation_steps": 4,
+                "num_workers": 0,
+                "lr": 1.0e-3,
+                "device": "cpu",
+                "seed": 3,
+                "val_split": 0.0,
+                "log_every": 1,
+                "save_every": 4,
+                "sampler": "budgeted_random",
+                "batches_per_epoch_budget": 3,
+            },
+            "evaluation": {
+                "batch_size": 2,
+                "save_predictions": False,
+            },
+        }
+        config_path = self._write_yaml(
+            self.root / "cross_epoch_accumulation.yaml",
+            config,
+        )
+        result = run_train(config_path)
+        self.assertEqual(result["global_data_step"], 12)
+        self.assertEqual(result["global_optimizer_step"], 3)
+        self.assertEqual(result["gradient_accumulation_count"], 0)
+        payload = read_checkpoint_payload(result["checkpoint_path"])
+        self.assertEqual(payload["global_data_step"], 12)
+        self.assertEqual(payload["global_optimizer_step"], 3)
+        self.assertEqual(payload["gradient_accumulation_count"], 0)
 
     def test_predict_and_evaluate_require_existing_timestamp_run(self):
         volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)

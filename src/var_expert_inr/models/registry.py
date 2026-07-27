@@ -9,6 +9,21 @@ from .var_expert.var_expert import build_var_expert_from_config
 from .common import ModelAdapter, require_single_target, view_specs_from_meta
 from .sota.compact_ngp import build_compact_ngp_from_config
 from .sota.coordnet import build_coordnet_from_config
+from .sota.fa_tr_inr import (
+    DEFAULT_FREQUENCY_COORDINATES,
+    DEFAULT_TENSOR_RING_RANKS,
+    build_fa_tr_inr_from_config,
+)
+from .sota.instant_ngp import (
+    INSTANT_NGP_BASE_RESOLUTION,
+    INSTANT_NGP_FEATURES_PER_LEVEL,
+    INSTANT_NGP_FINEST_RESOLUTION,
+    INSTANT_NGP_HIDDEN_FEATURES,
+    INSTANT_NGP_HIDDEN_LAYERS,
+    INSTANT_NGP_LEVELS,
+    INSTANT_NGP_LOG2_HASHMAP_SIZE,
+    build_instant_ngp_from_config,
+)
 from .sota.moe_inr import build_moe_inr_from_config
 from .sota.siren import build_siren_from_config
 
@@ -115,6 +130,14 @@ def _build_moe_inr(cfg: dict, meta: DatasetMeta):
 
 def _build_compact_ngp(cfg: dict, meta: DatasetMeta):
     return build_compact_ngp_from_config(cfg)
+
+
+def _build_fa_tr_inr(cfg: dict, meta: DatasetMeta):
+    return build_fa_tr_inr_from_config(cfg)
+
+
+def _build_instant_ngp(cfg: dict, meta: DatasetMeta):
+    return build_instant_ngp_from_config(cfg)
 
 
 def _build_var_expert(cfg: dict, meta: DatasetMeta):
@@ -231,6 +254,94 @@ def _materialize_compact_ngp(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str
         "max_resolution": int(cfg.get("max_resolution", 2048)),
         "hidden_features": int(cfg.get("hidden_features", 64)),
         "hidden_layers": int(cfg.get("hidden_layers", 2)),
+    }
+
+
+def _materialize_fa_tr_inr(
+    cfg: dict[str, Any],
+    meta: DatasetMeta,
+) -> dict[str, Any]:
+    allowed = {
+        "in_features",
+        "out_features",
+        "frequency_coordinates",
+        "omega",
+        "factor_mlp_depth",
+        "factor_hidden_width",
+        "integration_mlp_depth",
+        "tensor_ring_ranks",
+    }
+    _reject_unknown_model_keys(cfg, allowed, "fa_tr_inr")
+    if meta.kind != "volume":
+        raise ValueError("fa_tr_inr only supports volume datasets")
+    return {
+        "in_features": _resolve_in_features(cfg, meta, "fa_tr_inr"),
+        "out_features": _resolve_single_target_out_features(
+            cfg, meta, "fa_tr_inr"
+        ),
+        "frequency_coordinates": [
+            float(value)
+            for value in cfg.get(
+                "frequency_coordinates",
+                DEFAULT_FREQUENCY_COORDINATES,
+            )
+        ],
+        "omega": float(cfg.get("omega", 19.0)),
+        "factor_mlp_depth": int(cfg.get("factor_mlp_depth", 4)),
+        "factor_hidden_width": int(cfg.get("factor_hidden_width", 128)),
+        "integration_mlp_depth": int(
+            cfg.get("integration_mlp_depth", 2)
+        ),
+        "tensor_ring_ranks": [
+            int(rank)
+            for rank in cfg.get(
+                "tensor_ring_ranks",
+                DEFAULT_TENSOR_RING_RANKS,
+            )
+        ],
+    }
+
+
+def _materialize_instant_ngp(
+    cfg: dict[str, Any],
+    meta: DatasetMeta,
+) -> dict[str, Any]:
+    allowed = {
+        "in_features",
+        "out_features",
+        "n_levels",
+        "n_features_per_level",
+        "base_resolution",
+        "finest_resolution",
+        "log2_hashmap_size",
+        "hidden_features",
+        "hidden_layers",
+    }
+    _reject_unknown_model_keys(cfg, allowed, "instant_ngp")
+    if meta.kind != "volume" or meta.volume_shape is None:
+        raise ValueError("instant_ngp only supports volume datasets")
+
+    fixed_values = {
+        "n_levels": INSTANT_NGP_LEVELS,
+        "n_features_per_level": INSTANT_NGP_FEATURES_PER_LEVEL,
+        "base_resolution": INSTANT_NGP_BASE_RESOLUTION,
+        "finest_resolution": INSTANT_NGP_FINEST_RESOLUTION,
+        "log2_hashmap_size": INSTANT_NGP_LOG2_HASHMAP_SIZE,
+        "hidden_features": INSTANT_NGP_HIDDEN_FEATURES,
+        "hidden_layers": INSTANT_NGP_HIDDEN_LAYERS,
+    }
+    for key, expected in fixed_values.items():
+        actual = int(cfg.get(key, expected))
+        if actual != expected:
+            raise ValueError(
+                f"instant_ngp requires {key}={expected}, got {actual}"
+            )
+    return {
+        "in_features": _resolve_in_features(cfg, meta, "instant_ngp"),
+        "out_features": _resolve_single_target_out_features(
+            cfg, meta, "instant_ngp"
+        ),
+        **fixed_values,
     }
 
 
@@ -372,6 +483,8 @@ MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "coordnet": _build_coordnet,
     "moe_inr": _build_moe_inr,
     "compact_ngp": _build_compact_ngp,
+    "fa_tr_inr": _build_fa_tr_inr,
+    "instant_ngp": _build_instant_ngp,
     "var_expert": _build_var_expert,
     "shared_enc_inr": _build_shared_enc_inr,
 }
@@ -381,6 +494,8 @@ MODEL_CONFIG_MATERIALIZERS: dict[str, ModelConfigMaterializer] = {
     "coordnet": _materialize_coordnet,
     "moe_inr": _materialize_moe_inr,
     "compact_ngp": _materialize_compact_ngp,
+    "fa_tr_inr": _materialize_fa_tr_inr,
+    "instant_ngp": _materialize_instant_ngp,
     "var_expert": _materialize_var_expert,
     "shared_enc_inr": _materialize_shared_enc_inr,
 }

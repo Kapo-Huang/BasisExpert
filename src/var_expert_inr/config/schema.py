@@ -26,6 +26,15 @@ def _normalize_sampler(name: str) -> str:
     return normalized
 
 
+def _normalize_scheduler_interval(interval: str) -> str:
+    normalized = str(interval).strip().lower()
+    if normalized not in {"epoch", "optimizer_step"}:
+        raise ValueError(
+            f"Unsupported scheduler.interval: {interval!r}"
+        )
+    return normalized
+
+
 @dataclass(frozen=True)
 class VolumeShape:
     X: int
@@ -76,6 +85,29 @@ class SchedulerConfig:
     enabled: bool = False
     step_size: int = 0
     gamma: float = 1.0
+    interval: str = "epoch"
+    milestones: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "interval",
+            _normalize_scheduler_interval(self.interval),
+        )
+        milestones = tuple(int(value) for value in self.milestones)
+        if any(value <= 0 for value in milestones):
+            raise ValueError("scheduler.milestones must contain positive integers")
+        if tuple(sorted(set(milestones))) != milestones:
+            raise ValueError(
+                "scheduler.milestones must be strictly increasing"
+            )
+        object.__setattr__(self, "milestones", milestones)
+        if self.enabled and not milestones and int(self.step_size) <= 0:
+            raise ValueError(
+                "enabled scheduler requires positive step_size or milestones"
+            )
+        if float(self.gamma) <= 0.0:
+            raise ValueError("scheduler.gamma must be positive")
 
 
 @dataclass(frozen=True)
@@ -186,6 +218,7 @@ class TrainingConfig:
     device: str = "cuda"
     sampler: str = "uniform_random"
     batches_per_epoch_budget: int = 0
+    gradient_accumulation_steps: int = 1
     freeze_router_at: float = 0.0
     hard_topk_warmup_epochs: int = 0
     gradient_balancer: GradientBalancerConfig = field(default_factory=GradientBalancerConfig)
@@ -205,6 +238,10 @@ class TrainingConfig:
             raise ValueError(f"training.epsilon must be positive, got {self.epsilon}")
         if not (0.0 <= float(self.val_split) < 1.0):
             raise ValueError(f"training.val_split must be in [0, 1), got {self.val_split}")
+        if int(self.gradient_accumulation_steps) <= 0:
+            raise ValueError(
+                "training.gradient_accumulation_steps must be positive"
+            )
 
 
 @dataclass(frozen=True)

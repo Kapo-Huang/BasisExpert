@@ -188,6 +188,126 @@ def generate_compact_ngp() -> int:
     return count
 
 
+def instant_ngp_model() -> dict:
+    return {
+        "name": "instant_ngp",
+        "in_features": 4,
+        "out_features": 1,
+        "n_levels": 16,
+        "n_features_per_level": 2,
+        "base_resolution": 16,
+        "finest_resolution": 600,
+        "log2_hashmap_size": 19,
+        "hidden_features": 64,
+        "hidden_layers": 2,
+    }
+
+
+def instant_ngp_training() -> dict:
+    payload = common_training()
+    payload.update(
+        {
+            "gradient_accumulation_steps": 16,
+            "lr": 1.0e-2,
+            "beta_1": 0.9,
+            "beta_2": 0.99,
+            "epsilon": 1.0e-15,
+            "weight_decay": 0.0,
+            "scheduler": {
+                "enabled": True,
+                "interval": "optimizer_step",
+                "milestones": [20480, 30720],
+                "gamma": 0.33,
+            },
+            "pretrain": {"enabled": False},
+        }
+    )
+    return payload
+
+
+def generate_instant_ngp() -> int:
+    count = 0
+    all_targets = targets_for("ionization", False)
+    for target in DATASETS["ionization"]["targets"]:
+        data = {
+            "kind": "volume",
+            "dataset_name": "ionization",
+            "split": "train",
+            "volume_shape": deepcopy(ION_SHAPE),
+            "targets": {target: all_targets[target]},
+        }
+        payload = {
+            "experiment": f"ionization_instant_ngp_{target}",
+            "exp_id": f"instant-ngp-ionization-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": data,
+            "model": instant_ngp_model(),
+            "training": instant_ngp_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(
+            CONFIGS / "InstantNGP" / f"ionization__{target}.yaml",
+            payload,
+        )
+        count += 1
+    return count
+
+
+def fa_tr_inr_model() -> dict:
+    return {
+        "name": "fa_tr_inr",
+        "in_features": 4,
+        "out_features": 1,
+        "frequency_coordinates": [1.0, 2.0, 3.0],
+        "omega": 19.0,
+        "factor_mlp_depth": 4,
+        "factor_hidden_width": 128,
+        "integration_mlp_depth": 2,
+        "tensor_ring_ranks": [22, 88, 3, 3, 5],
+    }
+
+
+def fa_tr_inr_training() -> dict:
+    payload = common_training()
+    payload.update(
+        {
+            "lr": 1.0e-4,
+            "beta_1": 0.9,
+            "beta_2": 0.999,
+            "epsilon": 1.0e-8,
+            "weight_decay": 0.0,
+            "scheduler": {
+                "enabled": False,
+                "step_size": 0,
+                "gamma": 1.0,
+            },
+        }
+    )
+    return payload
+
+
+def generate_fa_tr_inr() -> int:
+    count = 0
+    for target in DATASETS["ionization"]["targets"]:
+        payload = {
+            "experiment": f"ionization_fa-tr-inr_{target}",
+            "exp_id": f"fa-tr-inr-ionization-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": unified_data("ionization", False, target),
+            "model": fa_tr_inr_model(),
+            "training": fa_tr_inr_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(
+            CONFIGS / "FA-TR-INR" / f"ionization__{target}.yaml",
+            payload,
+        )
+        count += 1
+    return count
+
+
 def evaluation() -> dict:
     return {"batch_size": 16000, "save_predictions": False}
 
@@ -626,14 +746,16 @@ def main() -> None:
     counts = {
         "unified_single": generate_unified_single(),
         "compact_ngp": generate_compact_ngp(),
+        "instant_ngp": generate_instant_ngp(),
+        "fa_tr_inr": generate_fa_tr_inr(),
         "var_expert": generate_var_expert(),
         "mc_inr": generate_mc(),
         "neural_expert": generate_neural(),
         "volume_only": generate_volume_only(),
     }
     total = sum(counts.values())
-    if total != 342:
-        raise RuntimeError(f"Expected 342 configs, generated {total}: {counts}")
+    if total != 352:
+        raise RuntimeError(f"Expected 352 configs, generated {total}: {counts}")
     print(f"Generated {total} configs: {counts}")
 
 

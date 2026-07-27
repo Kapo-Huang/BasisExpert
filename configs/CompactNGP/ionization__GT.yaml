@@ -5,7 +5,11 @@ data:
   kind: volume
   dataset_name: ionization
   split: train
-  volume_shape: {X: 600, Y: 248, Z: 248, T: 100}
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
   targets:
     GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
     H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
@@ -13,7 +17,7 @@ data:
     He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
     PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
   target: GT
-model: &compact_ngp_model
+model:
   name: compact_ngp
   in_features: 4
   out_features: 1
@@ -31,11 +35,7 @@ training:
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
-  lr: 1.0e-2
-  beta_1: 0.9
-  beta_2: 0.99
-  epsilon: 1.0e-15
-  weight_decay: 1.0e-6
+  lr: 0.01
   val_split: 0.0
   log_every: 10
   log_psnr_every: 100
@@ -46,8 +46,17 @@ training:
   seed: 42
   sampler: budgeted_random
   batches_per_epoch_budget: 1500
-  scheduler: {enabled: true, step_size: 40, gamma: 0.92}
-evaluation: {batch_size: 16000, save_predictions: false}
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+  beta_1: 0.9
+  beta_2: 0.99
+  epsilon: 1.0e-15
+  weight_decay: 1.0e-06
+evaluation:
+  batch_size: 16000
+  save_predictions: false
 log:
   timing:
     enabled: true

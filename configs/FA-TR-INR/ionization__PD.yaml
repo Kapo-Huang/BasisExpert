@@ -1,5 +1,5 @@
-experiment: ionization_compact-ngp_H_plus
-exp_id: compact-ngp-ionization-H_plus
+experiment: ionization_fa-tr-inr_PD
+exp_id: fa-tr-inr-ionization-PD
 experiment_root: ${REPO_ROOT}/runs
 data:
   kind: volume
@@ -16,26 +16,31 @@ data:
     H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
     He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
     PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
-  target: H_plus
+  target: PD
 model:
-  name: compact_ngp
+  name: fa_tr_inr
   in_features: 4
   out_features: 1
-  num_levels: 16
-  features_per_level: 2
-  feature_table_size: 1024
-  index_table_size: 65536
-  num_probes: 4
-  base_resolution: 16
-  max_resolution: 2048
-  hidden_features: 64
-  hidden_layers: 2
+  frequency_coordinates:
+  - 1.0
+  - 2.0
+  - 3.0
+  omega: 19.0
+  factor_mlp_depth: 4
+  factor_hidden_width: 128
+  integration_mlp_depth: 2
+  tensor_ring_ranks:
+  - 22
+  - 88
+  - 3
+  - 3
+  - 5
 training:
   epochs: 600
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
-  lr: 0.01
+  lr: 0.0001
   val_split: 0.0
   log_every: 10
   log_psnr_every: 100
@@ -47,13 +52,13 @@ training:
   sampler: budgeted_random
   batches_per_epoch_budget: 1500
   scheduler:
-    enabled: true
-    step_size: 40
-    gamma: 0.92
+    enabled: false
+    step_size: 0
+    gamma: 1.0
   beta_1: 0.9
-  beta_2: 0.99
-  epsilon: 1.0e-15
-  weight_decay: 1.0e-06
+  beta_2: 0.999
+  epsilon: 1.0e-08
+  weight_decay: 0.0
 evaluation:
   batch_size: 16000
   save_predictions: false

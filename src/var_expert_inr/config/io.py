@@ -121,6 +121,11 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     timing_log_payload = _ensure_mapping(log_payload.get("timing"), label="log.timing")
 
     _reject_unknown_keys(pretrain_payload, _field_names(PretrainConfig), label="training.pretrain")
+    _reject_unknown_keys(
+        scheduler_payload,
+        _field_names(SchedulerConfig),
+        label="training.scheduler",
+    )
     _reject_unknown_keys(psnr_log_payload, _field_names(PSNRLogConfig), label="log.psnr")
     _reject_unknown_keys(timing_log_payload, _field_names(TimingLogConfig), label="log.timing")
 
@@ -156,6 +161,9 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         device=str(training_payload.get("device", "cuda")),
         sampler=str(training_payload.get("sampler", "uniform_random")),
         batches_per_epoch_budget=int(training_payload.get("batches_per_epoch_budget", 0)),
+        gradient_accumulation_steps=int(
+            training_payload.get("gradient_accumulation_steps", 1)
+        ),
         freeze_router_at=float(training_payload.get("freeze_router_at", 0.0)),
         hard_topk_warmup_epochs=int(training_payload.get("hard_topk_warmup_epochs", 0)),
         gradient_balancer=GradientBalancerConfig(**gradient_balancer_payload),

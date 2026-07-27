@@ -1,5 +1,5 @@
-experiment: ionization_compact-ngp_H_plus
-exp_id: compact-ngp-ionization-H_plus
+experiment: ionization_instant_ngp_PD
+exp_id: instant-ngp-ionization-PD
 experiment_root: ${REPO_ROOT}/runs
 data:
   kind: volume
@@ -11,23 +11,16 @@ data:
     Z: 248
     T: 100
   targets:
-    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
-    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
-    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
-    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
     PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
-  target: H_plus
 model:
-  name: compact_ngp
+  name: instant_ngp
   in_features: 4
   out_features: 1
-  num_levels: 16
-  features_per_level: 2
-  feature_table_size: 1024
-  index_table_size: 65536
-  num_probes: 4
+  n_levels: 16
+  n_features_per_level: 2
   base_resolution: 16
-  max_resolution: 2048
+  finest_resolution: 600
+  log2_hashmap_size: 19
   hidden_features: 64
   hidden_layers: 2
 training:
@@ -48,12 +41,18 @@ training:
   batches_per_epoch_budget: 1500
   scheduler:
     enabled: true
-    step_size: 40
-    gamma: 0.92
+    interval: optimizer_step
+    milestones:
+    - 20480
+    - 30720
+    gamma: 0.33
+  gradient_accumulation_steps: 16
   beta_1: 0.9
   beta_2: 0.99
   epsilon: 1.0e-15
-  weight_decay: 1.0e-06
+  weight_decay: 0.0
+  pretrain:
+    enabled: false
 evaluation:
   batch_size: 16000
   save_predictions: false

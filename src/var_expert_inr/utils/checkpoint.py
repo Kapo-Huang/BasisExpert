@@ -25,7 +25,14 @@ def save_checkpoint(
     epoch: int,
     config_hash: str,
     path: str | Path,
+    global_data_step: int = 0,
+    global_optimizer_step: int = 0,
+    gradient_accumulation_count: int = 0,
 ) -> Path:
+    if int(gradient_accumulation_count) != 0:
+        raise ValueError(
+            "Checkpoints may only be saved at a completed optimizer step"
+        )
     checkpoint_path = Path(path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -33,6 +40,11 @@ def save_checkpoint(
         "optimizer_state": optimizer.state_dict() if optimizer is not None else None,
         "scheduler_state": scheduler.state_dict() if scheduler is not None else None,
         "epoch": int(epoch),
+        "global_data_step": int(global_data_step),
+        "global_optimizer_step": int(global_optimizer_step),
+        "gradient_accumulation_count": int(
+            gradient_accumulation_count
+        ),
         "target_names_order": list(dataset.target_names()),
         "config_hash": str(config_hash),
     }

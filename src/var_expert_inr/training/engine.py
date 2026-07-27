@@ -12,6 +12,10 @@ from torch.utils.data import DataLoader, Subset, random_split
 from ..config.schema import LogConfig
 from ..evaluation.metrics import PSNRAccumulator
 from ..models.sota.compact_ngp import CompactNGP, save_compact_ngp_artifact
+from ..models.sota.instant_ngp import (
+    INSTANT_NGP_DECODER_L2_WEIGHT,
+    InstantNGP,
+)
 from ..pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ..utils.checkpoint import save_checkpoint
 from ..utils.timing import TimingBreakdown, log_epoch_timing, log_step_timing_window, timing_elapsed, timing_start
@@ -20,6 +24,39 @@ from .losses import pointwise_loss, reconstruction_loss_with_breakdown
 from .samplers import build_pretrain_sampler, build_train_sampler
 
 logger = logging.getLogger(__name__)
+
+
+def build_training_scheduler(optimizer, scheduler_cfg):
+    if not scheduler_cfg.enabled:
+        return None
+    if scheduler_cfg.milestones:
+        return torch.optim.lr_scheduler.MultiStepLR(
+            optimizer,
+            milestones=list(scheduler_cfg.milestones),
+            gamma=float(scheduler_cfg.gamma),
+        )
+    return torch.optim.lr_scheduler.StepLR(
+        optimizer,
+        step_size=int(scheduler_cfg.step_size),
+        gamma=float(scheduler_cfg.gamma),
+    )
+
+
+def training_budget(
+    *,
+    epochs: int,
+    data_steps_per_epoch: int,
+    batch_size: int,
+    gradient_accumulation_steps: int,
+) -> dict[str, int]:
+    data_steps = int(epochs) * int(data_steps_per_epoch)
+    accumulation = int(gradient_accumulation_steps)
+    return {
+        "data_steps": data_steps,
+        "samples": data_steps * int(batch_size),
+        "optimizer_steps": data_steps // accumulation,
+        "remainder": data_steps % accumulation,
+    }
 
 
 def _resolve_base_dataset(dataset):
@@ -455,6 +492,37 @@ def train_model(
     if log_cfg.startup_timing:
         logger.info("DataLoader build: %.2fs", time.perf_counter() - dataloader_started_at)
 
+    accumulation_steps = int(cfg.gradient_accumulation_steps)
+    budget = training_budget(
+        epochs=int(cfg.epochs),
+        data_steps_per_epoch=len(train_loader),
+        batch_size=int(cfg.batch_size),
+        gradient_accumulation_steps=accumulation_steps,
+    )
+    if budget["remainder"] != 0:
+        raise ValueError(
+            "Training data-step budget must be divisible by "
+            "gradient_accumulation_steps: "
+            f"data_steps={budget['data_steps']} "
+            f"accumulation={accumulation_steps}"
+        )
+    if (
+        int(cfg.save_every) > 0
+        and (int(cfg.save_every) * len(train_loader)) % accumulation_steps != 0
+    ):
+        raise ValueError(
+            "save_every must land on a completed gradient accumulation window"
+        )
+    if accumulation_steps > 1 and (
+        cfg.gradient_balancer.enabled
+        or cfg.multiview_ema_loss.enabled
+        or cfg.multiview_dwa_loss.enabled
+    ):
+        raise ValueError(
+            "gradient accumulation greater than one is not supported with "
+            "multi-task loss or gradient balancers"
+        )
+
     model = model.to(device)
     _run_pretrain(model, dataset, cfg, device, log_cfg)
     optimizer = torch.optim.Adam(
@@ -464,13 +532,7 @@ def train_model(
         eps=float(cfg.epsilon),
         weight_decay=float(cfg.weight_decay),
     )
-    scheduler = None
-    if cfg.scheduler.enabled and cfg.scheduler.step_size > 0 and cfg.scheduler.gamma != 1.0:
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=int(cfg.scheduler.step_size),
-            gamma=float(cfg.scheduler.gamma),
-        )
+    scheduler = build_training_scheduler(optimizer, cfg.scheduler)
 
     if cfg.multiview_ema_loss.enabled and cfg.multiview_dwa_loss.enabled:
         raise ValueError("training.multiview_ema_loss and training.multiview_dwa_loss cannot both be enabled")
@@ -503,11 +565,22 @@ def train_model(
     router_frozen = False
     psnr_dataset = _build_psnr_dataset(dataset, sample_ratio=cfg.psnr_sample_ratio, seed=cfg.seed)
     started_at = time.time()
-    is_var_expert = type(getattr(model, "backbone", model)).__name__ == "VarExpert"
+    backbone = getattr(model, "backbone", model)
+    is_var_expert = type(backbone).__name__ == "VarExpert"
+    is_instant_ngp = isinstance(backbone, InstantNGP)
+    global_data_step = 0
+    global_optimizer_step = 0
+    accumulation_count = 0
+    stopped_early = False
+    completed_epoch = 0
+    optimizer.zero_grad(set_to_none=True)
 
     for epoch in range(1, cfg.epochs + 1):
+        completed_epoch = epoch
         model.train()
         epoch_loss = 0.0
+        epoch_regularization = 0.0
+        epoch_optimizer_steps = 0
         steps = 0
         hard_topk = int(epoch) > int(cfg.hard_topk_warmup_epochs)
         epoch_timing = TimingBreakdown()
@@ -569,7 +642,6 @@ def train_model(
                 window_transfer += transfer_seconds
                 stage_started_at = timing_start(device, sync_timing)
 
-            optimizer.zero_grad()
             if _is_multitarget(batch.targets):
                 if is_var_expert:
                     preds, aux = _predict_batch_with_aux(
@@ -611,7 +683,7 @@ def train_model(
                 elif cfg.gradient_balancer.enabled:
                     apply_multitask_gradient(model, task_losses, cfg)
                 else:
-                    total_loss.backward()
+                    (total_loss / float(accumulation_steps)).backward()
             else:
                 if is_var_expert:
                     preds, aux = _predict_batch_with_aux(
@@ -626,8 +698,32 @@ def train_model(
                 target_name = dataset.target_names()[0]
                 total_loss = pointwise_loss(preds[target_name], targets, cfg.loss_type)
                 loss_to_log = total_loss
-                total_loss.backward()
-            optimizer.step()
+                (total_loss / float(accumulation_steps)).backward()
+
+            global_data_step += 1
+            accumulation_count += 1
+            if accumulation_count == accumulation_steps:
+                regularization = None
+                if is_instant_ngp:
+                    regularization = (
+                        INSTANT_NGP_DECODER_L2_WEIGHT
+                        * backbone.decoder_l2_regularization()
+                    )
+                    regularization.backward()
+                    regularization_value = float(
+                        regularization.detach().item()
+                    )
+                    epoch_regularization += regularization_value
+                optimizer.step()
+                global_optimizer_step += 1
+                epoch_optimizer_steps += 1
+                if (
+                    scheduler is not None
+                    and cfg.scheduler.interval == "optimizer_step"
+                ):
+                    scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
+                accumulation_count = 0
 
             if is_var_expert and "probs" in aux:
                 probs = aux["probs"].detach()
@@ -690,7 +786,10 @@ def train_model(
                 epoch_timing.others += time.perf_counter() - other_started_at
 
         other_started_at = time.perf_counter() if timing_enabled else 0.0
-        if scheduler is not None:
+        if (
+            scheduler is not None
+            and cfg.scheduler.interval == "epoch"
+        ):
             scheduler.step()
         if timing_enabled:
             epoch_timing.others += time.perf_counter() - other_started_at
@@ -732,14 +831,34 @@ def train_model(
             log_started_at = time.perf_counter() if timing_enabled else 0.0
             elapsed = time.time() - started_at
             if val_loss is None:
-                logger.info("Epoch %s/%s train=%.6e time=%.1fs", epoch, cfg.epochs, epoch_loss / max(steps, 1), elapsed)
-            else:
                 logger.info(
-                    "Epoch %s/%s train=%.6e val=%.6e time=%.1fs",
+                    "Epoch %s/%s train=%.6e reg=%.6e "
+                    "data_step=%d optimizer_step=%d updates=%d lr=%.6e "
+                    "time=%.1fs",
                     epoch,
                     cfg.epochs,
                     epoch_loss / max(steps, 1),
+                    epoch_regularization / max(epoch_optimizer_steps, 1),
+                    global_data_step,
+                    global_optimizer_step,
+                    epoch_optimizer_steps,
+                    float(optimizer.param_groups[0]["lr"]),
+                    elapsed,
+                )
+            else:
+                logger.info(
+                    "Epoch %s/%s train=%.6e reg=%.6e val=%.6e "
+                    "data_step=%d optimizer_step=%d updates=%d lr=%.6e "
+                    "time=%.1fs",
+                    epoch,
+                    cfg.epochs,
+                    epoch_loss / max(steps, 1),
+                    epoch_regularization / max(epoch_optimizer_steps, 1),
                     val_loss,
+                    global_data_step,
+                    global_optimizer_step,
+                    epoch_optimizer_steps,
+                    float(optimizer.param_groups[0]["lr"]),
                     elapsed,
                 )
             if last_ema_state is not None:
@@ -812,6 +931,10 @@ def train_model(
                 epoch_timing.psnr += timing_elapsed(psnr_started_at, device, sync_timing)
 
         if cfg.save_every > 0 and epoch % cfg.save_every == 0:
+            if accumulation_count != 0:
+                raise RuntimeError(
+                    "Checkpoint boundary has incomplete accumulated gradients"
+                )
             save_started_at = time.perf_counter() if timing_enabled else 0.0
             save_checkpoint(
                 model=model,
@@ -820,13 +943,21 @@ def train_model(
                 dataset=dataset,
                 epoch=epoch,
                 config_hash=config_hash,
+                global_data_step=global_data_step,
+                global_optimizer_step=global_optimizer_step,
+                gradient_accumulation_count=accumulation_count,
                 path=Path(checkpoint_dir) / f"{exp_id}_epoch{epoch}.pth",
             )
             if timing_enabled:
                 epoch_timing.others += time.perf_counter() - save_started_at
 
         if cfg.early_stop_patience > 0 and no_improve >= cfg.early_stop_patience:
+            if accumulation_count != 0:
+                raise RuntimeError(
+                    "Early stopping cannot discard accumulated gradients"
+                )
             logger.info("Early stopping at epoch %s", epoch)
+            stopped_early = True
             if epoch_timing_enabled:
                 epoch_total = time.perf_counter() - epoch_started_at
                 epoch_timing.others += max(epoch_total - epoch_timing.tracked_total(), 0.0)
@@ -850,6 +981,21 @@ def train_model(
                 breakdown=epoch_timing,
             )
 
+    if accumulation_count != 0:
+        raise RuntimeError(
+            "Training ended with an incomplete gradient accumulation window"
+        )
+    if not stopped_early and global_data_step != budget["data_steps"]:
+        raise RuntimeError(
+            f"Expected {budget['data_steps']} data steps, got {global_data_step}"
+        )
+    if not stopped_early and global_optimizer_step != budget["optimizer_steps"]:
+        raise RuntimeError(
+            "Unexpected optimizer update count: "
+            f"expected {budget['optimizer_steps']}, "
+            f"got {global_optimizer_step}"
+        )
+
     if best_state is not None:
         model.load_state_dict(best_state)
 
@@ -858,11 +1004,19 @@ def train_model(
         optimizer=optimizer,
         scheduler=scheduler,
         dataset=dataset,
-        epoch=cfg.epochs,
+        epoch=completed_epoch,
         config_hash=config_hash,
+        global_data_step=global_data_step,
+        global_optimizer_step=global_optimizer_step,
+        gradient_accumulation_count=accumulation_count,
         path=Path(checkpoint_dir) / f"{exp_id}.pth",
     )
-    result = {"checkpoint_path": final_ckpt}
+    result = {
+        "checkpoint_path": final_ckpt,
+        "global_data_step": global_data_step,
+        "global_optimizer_step": global_optimizer_step,
+        "gradient_accumulation_count": accumulation_count,
+    }
     backbone = getattr(model, "backbone", model)
     if isinstance(backbone, CompactNGP):
         if artifact_dir is None or model_config is None:
