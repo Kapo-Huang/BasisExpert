@@ -36,8 +36,8 @@ class ConfigMatrixTestCase(unittest.TestCase):
         cls.config_root = cls.repo_root / "configs"
         cls.paths = sorted(cls.config_root.rglob("*.yaml"))
 
-    def test_matrix_contains_exactly_352_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 352)
+    def test_matrix_contains_exactly_360_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 360)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
@@ -67,6 +67,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     for path in (self.config_root / family / size).glob("ionization__*.yaml")
                 }
                 self.assertEqual(sized, DATASET_TARGETS["ionization"])
+
+        ecnr_targets = {
+            path.stem.split("__")[1]
+            for path in (self.config_root / "ECNR").glob("ionization__*.yaml")
+        }
+        self.assertEqual(ecnr_targets, DATASET_TARGETS["ionization"])
+        self.assertEqual(list((self.config_root / "ECNR").glob("Size*/*.yaml")), [])
 
         compact_targets = {
             path.stem.split("__")[1]
@@ -134,6 +141,27 @@ class ConfigMatrixTestCase(unittest.TestCase):
             manager = main.with_name(f"{main.stem}__managerpretrain.yaml")
             self.assertTrue(manager.exists(), main)
 
+    def test_mvnet_has_one_multi_target_config_per_base_dataset(self):
+        root = self.config_root / "MVNet"
+        self.assertEqual(
+            {path.stem for path in root.glob("*.yaml")},
+            set(DATASET_TARGETS),
+        )
+        for dataset, expected_targets in DATASET_TARGETS.items():
+            payload = yaml.safe_load(
+                (root / f"{dataset}.yaml").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                set(payload["data"]["targets"]),
+                expected_targets,
+            )
+            self.assertNotIn("target", payload["data"])
+            self.assertEqual(
+                payload["model"]["out_features"],
+                len(expected_targets),
+            )
+        self.assertEqual(list(root.glob("Size*/*.yaml")), [])
+
     def test_all_ionization_configs_use_100_timesteps(self):
         for path in self.paths:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -157,7 +185,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         for path in self.paths:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             family = path.relative_to(self.config_root).parts[0]
-            if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR", "CompactNGP", "FA-TR-INR", "InstantNGP", "MC-INR", "DC-INR", "fV-SRN"}:
+            if family in {"VarExpert", "MVNet", "SIREN", "CoordNet", "MoE-INR", "CompactNGP", "FA-TR-INR", "InstantNGP", "MC-INR", "DC-INR", "fV-SRN", "ECNR"}:
                 self.assertFalse(payload["evaluation"]["save_predictions"], path)
             if family in {"fV-SRN", "RMDSRN"}:
                 self.assertFalse(payload["evaluation"]["run_after_training"], path)
@@ -236,6 +264,47 @@ class ConfigMatrixTestCase(unittest.TestCase):
             self.assertEqual(scheduler["gamma"], 0.33)
         self.assertEqual(actual_targets, expected_targets)
 
+    def test_mvnet_uses_fixed_model_optimizer_and_budget(self):
+        expected_orders = {
+            "bathymetry": ["SALT", "TEMP", "U", "V"],
+            "katrina": ["fort63", "fort64", "fort73", "speed", "v"],
+            "ionization": ["GT", "H2", "H_plus", "He", "PD"],
+        }
+        for path in (self.config_root / "MVNet").glob("*.yaml"):
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                list(payload["data"]["targets"]),
+                expected_orders[path.stem],
+            )
+            model = payload["model"]
+            self.assertEqual(model["name"], "mvnet")
+            self.assertEqual(model["in_features"], 4)
+            self.assertEqual(model["hidden_features"], 120)
+            self.assertEqual(model["num_residual_blocks"], 10)
+            self.assertEqual(model["omega_0"], 30.0)
+            self.assertTrue(model["bias"])
+
+            training = payload["training"]
+            self.assertEqual(training["epochs"], 300)
+            self.assertEqual(training["batch_size"], 2048)
+            self.assertEqual(training["gradient_accumulation_steps"], 1)
+            self.assertEqual(training["batches_per_epoch_budget"], 1500)
+            self.assertEqual(training["sampler"], "budgeted_random")
+            self.assertEqual(training["lr"], 1.0e-4)
+            self.assertEqual(training["beta_1"], 0.9)
+            self.assertEqual(training["beta_2"], 0.999)
+            self.assertEqual(training["epsilon"], 1.0e-8)
+            self.assertEqual(training["weight_decay"], 0.0)
+            self.assertEqual(training["loss_type"], "mse")
+            self.assertEqual(training["log_psnr_every"], 0)
+            self.assertEqual(training["save_every"], 300)
+            self.assertFalse(training["pretrain"]["enabled"])
+            scheduler = training["scheduler"]
+            self.assertTrue(scheduler["enabled"])
+            self.assertEqual(scheduler["interval"], "epoch")
+            self.assertEqual(scheduler["step_size"], 15)
+            self.assertEqual(scheduler["gamma"], 0.8)
+
     def test_var_expert_ionization_dwa_config_uses_dwa_not_ema(self):
         payload = yaml.safe_load((self.config_root / "VarExpert" / "ionization_dwa.yaml").read_text(encoding="utf-8"))
         self.assertFalse(payload["training"]["multiview_ema_loss"]["enabled"])
@@ -250,6 +319,26 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 continue
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             family = path.relative_to(self.config_root).parts[0]
+            if family == "MVNet":
+                training = payload["training"]
+                total = (
+                    training["batch_size"]
+                    * training["batches_per_epoch_budget"]
+                    * training["epochs"]
+                )
+                self.assertEqual(total, 921_600_000, path)
+                continue
+            if family == "ECNR":
+                training = payload["training"]
+                total = (
+                    3
+                    * training["epochs_per_scale"]
+                    * training["batch_size"]
+                    * training["batches_per_epoch_budget"]
+                )
+                self.assertEqual(total, expected, path)
+                self.assertEqual(training["primary_sample_budget"], expected, path)
+                continue
             if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR", "CompactNGP", "FA-TR-INR", "InstantNGP"}:
                 training = payload["training"]
                 total = training["batch_size"] * training["batches_per_epoch_budget"] * training["epochs"]

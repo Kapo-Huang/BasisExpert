@@ -1,0 +1,1120 @@
+from __future__ import annotations
+
+import copy
+import json
+import logging
+import random
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+from numpy.lib.format import open_memmap
+
+from ..evaluation.metrics import PSNRAccumulator, mae, mse, psnr, save_metrics
+from ..utils.io import sha256_payload
+from ..utils.logging_utils import close_file_handlers, setup_logging
+from ..utils.runtime import apply_runtime_thread_limits, set_random_seed
+from .artifact import FORMAT as ARTIFACT_FORMAT
+from .artifact import load_artifact, save_artifact
+from .blocks import (
+    ScaleBlocks,
+    attach_clustering,
+    build_training_targets,
+    prepare_scale_blocks,
+    reconstruct_from_normalized_blocks,
+    slot_valid_matrix,
+)
+from .clustering import balanced_kmeans
+from .cnn import BoundaryCNN, forward_tiled, train_boundary_cnn
+from .config import load_config, save_config
+from .model import PackedSiren, local_coordinate_grid
+from .pruning import (
+    BIAS_CANDIDATES,
+    WEIGHT_CANDIDATES,
+    apply_cumulative_pruning,
+    family_sparsity,
+    initial_pruning_masks,
+)
+from .pyramid import PyramidScale, build_three_scale_pyramid, upsample_to_scale
+from .quantization import (
+    ModelQuantization,
+    quantize_array,
+    quantize_model,
+    unquantized_parameters,
+)
+
+
+logger = logging.getLogger(__name__)
+CHECKPOINT_FORMAT = "ecnr_checkpoint_v1"
+
+
+def _device(requested: str) -> torch.device:
+    if str(requested).lower().startswith("cuda") and not torch.cuda.is_available():
+        logger.warning("CUDA requested but unavailable; falling back to CPU")
+        return torch.device("cpu")
+    return torch.device(requested)
+
+
+def _config_hash(cfg: dict[str, Any]) -> str:
+    payload = copy.deepcopy(cfg)
+    payload.pop("CONFIG_PATH", None)
+    return sha256_payload(payload)
+
+
+def _dirs(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
+    result = {
+        "run": run_dir,
+        "configs": run_dir / "configs",
+        "checkpoints": run_dir / "checkpoints",
+        "artifacts": run_dir / "artifacts",
+        "predictions": run_dir / "predictions",
+        "metrics": run_dir / "metrics",
+        "logs": run_dir / "logs",
+        "cache": run_dir / "cache",
+    }
+    if create:
+        for path in result.values():
+            path.mkdir(parents=True, exist_ok=True)
+    return result
+
+
+def _new_run(cfg: dict[str, Any]) -> dict[str, Path]:
+    root = Path(cfg["experiment_root"]) / cfg["exp_id"]
+    root.mkdir(parents=True, exist_ok=True)
+    while True:
+        run = root / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        if not run.exists():
+            return _dirs(run)
+        time.sleep(0.001)
+
+
+def _latest_run(cfg: dict[str, Any]) -> dict[str, Path]:
+    root = Path(cfg["experiment_root"]) / cfg["exp_id"]
+    candidates = sorted(path for path in root.glob("*") if path.is_dir())
+    if not candidates:
+        raise FileNotFoundError(f"No ECNR run found under {root}")
+    return _dirs(candidates[-1])
+
+
+def _run_for_path(cfg: dict[str, Any], explicit: str | Path | None) -> dict[str, Path]:
+    if explicit is not None:
+        resolved = Path(explicit).resolve()
+        if resolved.parent.name in {"artifacts", "checkpoints"}:
+            return _dirs(resolved.parent.parent)
+    return _latest_run(cfg)
+
+
+def _load_volume(path: str | Path, shape: dict[str, int]) -> np.ndarray:
+    raw = np.load(path, mmap_mode="r")
+    expected = tuple(int(shape[axis]) for axis in ("T", "Z", "Y", "X"))
+    expected_size = int(np.prod(expected, dtype=np.int64))
+    array = raw
+    if array.ndim == 5 and array.shape[-1] == 1:
+        array = array[..., 0]
+    elif array.ndim == 2 and array.shape[1] == 1:
+        array = array[:, 0]
+    if array.ndim == 1 and array.size == expected_size:
+        array = array.reshape(expected)
+    if tuple(array.shape) != expected:
+        raise ValueError(f"ECNR target shape mismatch: expected {expected}, got {tuple(array.shape)}")
+    if not np.issubdtype(array.dtype, np.floating):
+        raise TypeError("ECNR target must be floating point")
+    for time_index in range(expected[0]):
+        frame = np.asarray(array[time_index])
+        if not np.isfinite(frame).all():
+            raise ValueError(f"ECNR target contains NaN/Inf at t={time_index}")
+        if float(frame.min()) < -1.000001 or float(frame.max()) > 1.000001:
+            raise ValueError(f"ECNR target must be pre-normalized to [-1,1], violation at t={time_index}")
+    return array
+
+
+def _axis_for_blocks(blocks: ScaleBlocks, max_slots: int) -> tuple[torch.Tensor, torch.Tensor]:
+    coordinates = local_coordinate_grid(blocks.block_shape_xyz).repeat(max_slots, 1)
+    slots = torch.arange(max_slots, dtype=torch.long).repeat_interleave(blocks.block_voxels)
+    return coordinates, slots
+
+
+def _epoch_batches(
+    axis_length: int,
+    *,
+    batch_size: int,
+    batch_count: int,
+    rng: np.random.Generator,
+):
+    required = int(batch_size) * int(batch_count)
+    emitted = 0
+    while emitted < required:
+        permutation = rng.permutation(axis_length)
+        take = min(axis_length, required - emitted)
+        selected = permutation[:take]
+        for start in range(0, take, int(batch_size)):
+            batch = selected[start : min(start + int(batch_size), take)]
+            if batch.size < int(batch_size):
+                needed = int(batch_size) - int(batch.size)
+                supplement = rng.choice(axis_length, size=needed, replace=needed > axis_length)
+                batch = np.concatenate([batch, supplement])
+            yield batch.astype(np.int64, copy=False)
+            emitted += int(batch_size)
+            if emitted >= required:
+                return
+
+
+def _full_pass_batches(
+    axis_length: int,
+    *,
+    batch_size: int,
+    rng: np.random.Generator,
+):
+    permutation = rng.permutation(axis_length)
+    for start in range(0, axis_length, int(batch_size)):
+        yield permutation[start : min(start + int(batch_size), axis_length)].astype(
+            np.int64,
+            copy=False,
+        )
+
+
+def _masked_loss(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    mask: torch.Tensor,
+) -> torch.Tensor:
+    return torch.sum(mask.to(predictions.dtype) * (predictions - targets) ** 2) / float(predictions.numel())
+
+
+def _mlp_losses(
+    model: PackedSiren,
+    targets: np.ndarray,
+    coordinates: torch.Tensor,
+    slots: torch.Tensor,
+    *,
+    batch_size: int,
+    device: torch.device,
+) -> np.ndarray:
+    sums = torch.zeros(model.mlp_count, dtype=torch.float64)
+    counts = model.slot_valid.sum(dim=1).cpu().to(torch.float64) * targets.shape[2]
+    flat_targets = targets.reshape(model.mlp_count, -1)
+    model.eval()
+    with torch.no_grad():
+        for start in range(0, coordinates.shape[0], int(batch_size)):
+            stop = min(start + int(batch_size), coordinates.shape[0])
+            batch_slots = slots[start:stop]
+            prediction = model(coordinates[start:stop].to(device), batch_slots.to(device))
+            target = torch.from_numpy(np.asarray(flat_targets[:, start:stop], dtype=np.float32)).to(device)
+            mask = model.expanded_slot_mask(batch_slots).to(device)
+            sums += torch.sum(mask * (prediction - target) ** 2, dim=1).detach().cpu().to(torch.float64)
+    return (sums / torch.clamp(counts, min=1.0)).numpy()
+
+
+def _train_scale(
+    model: PackedSiren,
+    targets: np.ndarray,
+    blocks: ScaleBlocks,
+    cfg: dict[str, Any],
+    *,
+    level: int,
+    device: torch.device,
+    cost: dict[str, Any],
+) -> tuple[dict[str, torch.Tensor], ModelQuantization]:
+    training = cfg["training"]
+    model.to(device)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=float(training["lr"]),
+        betas=(float(training["beta_1"]), float(training["beta_2"])),
+        weight_decay=float(training["weight_decay"]),
+    )
+    masks = initial_pruning_masks(model)
+    max_slots = int(targets.shape[1])
+    coordinates, slots = _axis_for_blocks(blocks, max_slots)
+    flat_targets = targets.reshape(model.mlp_count, -1)
+    rng = np.random.default_rng(int(training["seed"]) + int(level) * 1000)
+    pruning_schedule = dict(zip(training["pruning_epochs"], training["pruning_sparsities"]))
+    scale_started = time.perf_counter()
+    primary_started = scale_started
+    logical_samples = actual_predictions = optimizer_steps = 0
+
+    for epoch in range(1, int(training["epochs_per_scale"]) + 1):
+        model.train()
+        epoch_loss = 0.0
+        for indices in _epoch_batches(
+            coordinates.shape[0],
+            batch_size=int(training["batch_size"]),
+            batch_count=int(training["batches_per_epoch_budget"]),
+            rng=rng,
+        ):
+            coord_batch = coordinates[indices].to(device)
+            slot_batch = slots[indices].to(device)
+            target_batch = torch.from_numpy(np.asarray(flat_targets[:, indices], dtype=np.float32)).to(device)
+            mask_batch = model.expanded_slot_mask(slot_batch).to(device)
+            optimizer.zero_grad(set_to_none=True)
+            prediction = model(coord_batch, slot_batch)
+            loss = _masked_loss(prediction, target_batch, mask_batch)
+            loss.backward()
+            model.mask_pruned_gradients(masks)
+            optimizer.step()
+            model.apply_pruning_masks(masks)
+            epoch_loss += float(loss.detach())
+            logical_samples += int(indices.size)
+            actual_predictions += int(indices.size) * model.mlp_count
+            optimizer_steps += 1
+        if epoch in pruning_schedule:
+            losses = _mlp_losses(
+                model,
+                targets,
+                coordinates,
+                slots,
+                batch_size=int(training["batch_size"]),
+                device=device,
+            )
+            pruned = apply_cumulative_pruning(
+                model,
+                masks,
+                mlp_losses=losses,
+                target_sparsity=float(pruning_schedule[epoch]),
+                loss_weight=float(training["pruning_loss_weight"]),
+            )
+            for group in optimizer.param_groups:
+                group["lr"] *= float(training["pruning_lr_gamma"])
+            logger.info(
+                "ECNR scale=%d epoch=%d pruning=%s weight_sparsity=%.4f bias_sparsity=%.4f",
+                level,
+                epoch,
+                pruned,
+                family_sparsity(masks, WEIGHT_CANDIDATES),
+                family_sparsity(masks, BIAS_CANDIDATES),
+            )
+        if int(training["log_every"]) and epoch % int(training["log_every"]) == 0:
+            logger.info(
+                "ECNR scale=%d epoch=%d/%d loss=%.7g lr=%.7g",
+                level,
+                epoch,
+                training["epochs_per_scale"],
+                epoch_loss / max(int(training["batches_per_epoch_budget"]), 1),
+                optimizer.param_groups[0]["lr"],
+            )
+
+    primary_seconds = float(time.perf_counter() - primary_started)
+    quantization_started = time.perf_counter()
+    quantization = quantize_model(
+        model,
+        masks,
+        bits=int(cfg["quantization"]["mlp_weight_bits"]),
+        seed=int(training["seed"]) + int(level) * 10_000,
+    )
+    finetune_epochs = int(training["quantization_finetune_epochs"])
+    finetune_batches = int(training["quantization_finetune_batches_per_epoch"])
+    finetune_full_pass = finetune_batches == 0
+    if finetune_epochs:
+        finetune_optimizer = torch.optim.Adam(
+            [*quantization.codebook_parameters(), *unquantized_parameters(model)],
+            lr=float(training["quantization_finetune_lr"]),
+            betas=(float(training["beta_1"]), float(training["beta_2"])),
+            weight_decay=0.0,
+        )
+        for _ in range(finetune_epochs):
+            if finetune_full_pass:
+                batches = _full_pass_batches(
+                    coordinates.shape[0],
+                    batch_size=int(training["batch_size"]),
+                    rng=rng,
+                )
+            else:
+                batches = _epoch_batches(
+                    coordinates.shape[0],
+                    batch_size=int(training["batch_size"]),
+                    batch_count=finetune_batches,
+                    rng=rng,
+                )
+            for indices in batches:
+                quantization.materialize(model)
+                finetune_optimizer.zero_grad(set_to_none=True)
+                coord_batch = coordinates[indices].to(device)
+                slot_batch = slots[indices].to(device)
+                target_batch = torch.from_numpy(np.asarray(flat_targets[:, indices], dtype=np.float32)).to(device)
+                mask_batch = model.expanded_slot_mask(slot_batch).to(device)
+                loss = _masked_loss(model(coord_batch, slot_batch), target_batch, mask_batch)
+                loss.backward()
+                quantization.collect_codebook_gradients(model)
+                finetune_optimizer.step()
+                quantization.materialize(model)
+                cost["quantization_finetune_logical_samples"] += int(indices.size)
+                cost["quantization_finetune_actual_predictions"] += int(indices.size) * model.mlp_count
+                cost["quantization_finetune_optimizer_steps"] += 1
+    quantization.materialize(model)
+    quantization_seconds = float(time.perf_counter() - quantization_started)
+    cost["quantization_and_finetune_seconds"] += quantization_seconds
+    cost["scales"].append(
+        {
+            "level": int(level),
+            "mlp_count": int(model.mlp_count),
+            "logical_samples": int(logical_samples),
+            "actual_scalar_predictions": int(actual_predictions),
+            "optimizer_steps": int(optimizer_steps),
+            "seconds": float(time.perf_counter() - scale_started),
+            "primary_training_seconds": primary_seconds,
+            "quantization_and_finetune_seconds": quantization_seconds,
+            "weight_sparsity": family_sparsity(masks, WEIGHT_CANDIDATES),
+            "bias_sparsity": family_sparsity(masks, BIAS_CANDIDATES),
+        }
+    )
+    return masks, quantization
+
+
+def _decode_scale_model(
+    model: PackedSiren,
+    blocks: ScaleBlocks,
+    *,
+    batch_size: int,
+    device: torch.device,
+    output_path: str | Path | None = None,
+) -> np.ndarray:
+    max_slots = int(model.max_slots)
+    coordinates, slots = _axis_for_blocks(blocks, max_slots)
+    slot_shape = (model.mlp_count, max_slots, blocks.block_voxels)
+    if output_path is None:
+        decoded_slots = np.empty(slot_shape, dtype=np.float32)
+    else:
+        normalized_path = Path(output_path)
+        normalized_path.parent.mkdir(parents=True, exist_ok=True)
+        slots_path = normalized_path.with_name(f"{normalized_path.stem}_slots.npy")
+        decoded_slots = open_memmap(slots_path, mode="w+", dtype=np.float32, shape=slot_shape)
+    flat = decoded_slots.reshape(model.mlp_count, -1)
+    model.eval()
+    with torch.no_grad():
+        for start in range(0, coordinates.shape[0], int(batch_size)):
+            stop = min(start + int(batch_size), coordinates.shape[0])
+            flat[:, start:stop] = (
+                model(coordinates[start:stop].to(device), slots[start:stop].to(device))
+                .detach()
+                .cpu()
+                .numpy()
+            )
+    decoded_shape = (blocks.effective_count, blocks.block_voxels)
+    if output_path is None:
+        decoded = np.empty(decoded_shape, dtype=np.float32)
+    else:
+        decoded = open_memmap(output_path, mode="w+", dtype=np.float32, shape=decoded_shape)
+    for block_index in range(blocks.effective_count):
+        decoded[block_index] = decoded_slots[
+            blocks.block_to_mlp[block_index],
+            blocks.block_to_slot[block_index],
+        ]
+    if hasattr(decoded_slots, "flush"):
+        decoded_slots.flush()
+    if hasattr(decoded, "flush"):
+        decoded.flush()
+    return decoded
+
+
+def _serialize_blocks(blocks: ScaleBlocks) -> dict[str, Any]:
+    return {
+        "original_shape_tzyx": list(blocks.original_shape_tzyx),
+        "padded_shape_zyx": list(blocks.padded_shape_zyx),
+        "padding_zyx": [list(pair) for pair in blocks.padding_zyx],
+        "block_shape_xyz": list(blocks.block_shape_xyz),
+        "spatial_grid_zyx": list(blocks.spatial_grid_zyx),
+        "effective_mask": blocks.effective_mask,
+        "effective_positions": blocks.effective_positions,
+        "block_min": blocks.block_min,
+        "block_max": blocks.block_max,
+        "block_to_mlp": blocks.block_to_mlp,
+        "block_to_slot": blocks.block_to_slot,
+        "cluster_sizes": blocks.cluster_sizes,
+    }
+
+
+def _deserialize_blocks(payload: dict[str, Any]) -> ScaleBlocks:
+    return ScaleBlocks(
+        original_shape_tzyx=tuple(payload["original_shape_tzyx"]),
+        padded_shape_zyx=tuple(payload["padded_shape_zyx"]),
+        padding_zyx=tuple(tuple(pair) for pair in payload["padding_zyx"]),
+        block_shape_xyz=tuple(payload["block_shape_xyz"]),
+        spatial_grid_zyx=tuple(payload["spatial_grid_zyx"]),
+        effective_mask=np.asarray(payload["effective_mask"], dtype=bool),
+        effective_positions=np.asarray(payload["effective_positions"], dtype=np.int64),
+        block_min=np.asarray(payload["block_min"], dtype=np.float32),
+        block_max=np.asarray(payload["block_max"], dtype=np.float32),
+        normalized_blocks=np.empty((0, 0), dtype=np.float32),
+        block_to_mlp=np.asarray(payload["block_to_mlp"], dtype=np.int64),
+        block_to_slot=np.asarray(payload["block_to_slot"], dtype=np.int64),
+        cluster_sizes=np.asarray(payload["cluster_sizes"], dtype=np.int64),
+    )
+
+
+def _serialize_scale(
+    *,
+    level: int,
+    time_indices: np.ndarray,
+    blocks: ScaleBlocks,
+    model: PackedSiren | None,
+    quantization: ModelQuantization | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "level": int(level),
+        "time_indices": np.asarray(time_indices, dtype=np.int64),
+        "blocks": _serialize_blocks(blocks),
+        "empty": model is None,
+    }
+    if model is None:
+        return result
+    named = dict(model.named_parameters())
+    quantized_state = quantization.state_dict()
+    for item in quantized_state["parameters"].values():
+        mask = np.asarray(item["mask"], dtype=bool)
+        labels = np.asarray(item["labels"], dtype=np.int64)
+        # Masked entries are ignored during decode; zero is the canonical
+        # placeholder that lets all 8-bit labels use an actual uint8 stream.
+        item["labels"] = np.where(mask, labels, 0).astype(np.uint8)
+    result["model"] = {
+        "mlp_count": int(model.mlp_count),
+        "max_slots": int(model.max_slots),
+        "slot_valid": model.slot_valid.detach().cpu().numpy(),
+        "latent": model.latent.detach().cpu().numpy().astype(np.float32),
+        "unquantized": {
+            name: named[name].detach().cpu().numpy().astype(np.float32)
+            for name in ("layers.3.weight", "layers.0.bias", "layers.3.bias")
+        },
+        "quantization": quantized_state,
+    }
+    return result
+
+
+def _model_from_scale(payload: dict[str, Any], device: torch.device) -> PackedSiren | None:
+    if payload["empty"]:
+        return None
+    state = payload["model"]
+    model = PackedSiren(
+        mlp_count=int(state["mlp_count"]),
+        max_slots=int(state["max_slots"]),
+        slot_valid=torch.from_numpy(np.asarray(state["slot_valid"], dtype=bool)),
+    ).to(device)
+    named = dict(model.named_parameters())
+    with torch.no_grad():
+        model.latent.copy_(torch.from_numpy(np.asarray(state["latent"], dtype=np.float32)).to(device))
+        for name, values in state["unquantized"].items():
+            named[name].copy_(torch.from_numpy(np.asarray(values, dtype=np.float32)).to(device))
+        for name, item in state["quantization"]["parameters"].items():
+            labels = np.asarray(item["labels"], dtype=np.int64)
+            mask = np.asarray(item["mask"], dtype=bool)
+            codebook = torch.from_numpy(np.asarray(item["codebook"], dtype=np.float32)).to(device)
+            restored = torch.zeros(labels.shape, dtype=torch.float32, device=device)
+            label_tensor = torch.from_numpy(labels).to(device)
+            mask_tensor = torch.from_numpy(mask).to(device)
+            restored[mask_tensor] = codebook[label_tensor[mask_tensor]]
+            named[name].copy_(restored)
+    return model
+
+
+def _decode_scale_payload(
+    payload: dict[str, Any],
+    *,
+    device: torch.device,
+    batch_size: int,
+    output_path: str | Path | None = None,
+) -> np.ndarray:
+    blocks = _deserialize_blocks(payload["blocks"])
+    if payload["empty"]:
+        if output_path is None:
+            return np.zeros(blocks.original_shape_tzyx, dtype=np.float32)
+        output = open_memmap(output_path, mode="w+", dtype=np.float32, shape=blocks.original_shape_tzyx)
+        output[:] = 0.0
+        output.flush()
+        return output
+    model = _model_from_scale(payload, device)
+    decoded_path = None
+    if output_path is not None:
+        path = Path(output_path)
+        decoded_path = path.with_name(f"{path.stem}_normalized.npy")
+    decoded = _decode_scale_model(
+        model,
+        blocks,
+        batch_size=batch_size,
+        device=device,
+        output_path=decoded_path,
+    )
+    return reconstruct_from_normalized_blocks(blocks, decoded, output_path=output_path)
+
+
+def _framewise_binary(
+    left: np.ndarray,
+    right: np.ndarray,
+    output_path: str | Path,
+    *,
+    operation: str,
+) -> np.ndarray:
+    if tuple(left.shape) != tuple(right.shape):
+        raise ValueError(f"Framewise {operation} shape mismatch: {left.shape} != {right.shape}")
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    output = open_memmap(path, mode="w+", dtype=np.float32, shape=tuple(left.shape))
+    for time_index in range(left.shape[0]):
+        left_frame = np.asarray(left[time_index], dtype=np.float32)
+        right_frame = np.asarray(right[time_index], dtype=np.float32)
+        if operation == "add":
+            output[time_index] = left_frame + right_frame
+        elif operation == "subtract":
+            output[time_index] = left_frame - right_frame
+        else:
+            raise ValueError(f"Unknown framewise operation: {operation}")
+    output.flush()
+    return output
+
+
+def _clip_to_memmap(
+    values: np.ndarray,
+    output_path: str | Path,
+    *,
+    lower: float = -1.0,
+    upper: float = 1.0,
+) -> np.ndarray:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    output = open_memmap(path, mode="w+", dtype=np.float32, shape=tuple(values.shape))
+    for time_index in range(values.shape[0]):
+        output[time_index] = np.clip(
+            np.asarray(values[time_index], dtype=np.float32),
+            float(lower),
+            float(upper),
+        )
+    output.flush()
+    return output
+
+
+def _quantize_cnn(model: BoundaryCNN, *, bits: int, seed: int) -> dict[str, Any]:
+    state: dict[str, Any] = {}
+    with torch.no_grad():
+        for index, layer in enumerate(model.layers):
+            for offset, name in enumerate(("weight", "bias")):
+                values = getattr(layer, name).detach().cpu().numpy().astype(np.float32)
+                centers, labels = quantize_array(values, bits=bits, seed=seed + index * 2 + offset)
+                restored = centers[labels]
+                getattr(layer, name).copy_(torch.from_numpy(restored).to(getattr(layer, name).device))
+                state[f"layers.{index}.{name}"] = {
+                    "labels": labels.astype(np.uint16),
+                    "codebook": centers.astype(np.float32),
+                }
+    return {"bits": int(bits), "parameters": state}
+
+
+def _cnn_from_payload(payload: dict[str, Any], device: torch.device) -> BoundaryCNN:
+    model = BoundaryCNN(hidden_channels=32).to(device)
+    named = dict(model.named_parameters())
+    with torch.no_grad():
+        for name, item in payload["parameters"].items():
+            labels = np.asarray(item["labels"], dtype=np.int64)
+            codebook = np.asarray(item["codebook"], dtype=np.float32)
+            named[name].copy_(torch.from_numpy(codebook[labels]).to(device))
+    return model
+
+
+def decode_artifact_payload(
+    payload: dict[str, Any],
+    *,
+    device: torch.device,
+    batch_size: int,
+    work_dir: str | Path | None = None,
+    output_path: str | Path | None = None,
+) -> np.ndarray:
+    if payload.get("format") != ARTIFACT_FORMAT:
+        raise ValueError("Invalid ECNR payload")
+    work = None if work_dir is None else Path(work_dir)
+    if work is not None:
+        work.mkdir(parents=True, exist_ok=True)
+    composite = None
+    previous_times = None
+    for scale_payload in sorted(payload["scales"], key=lambda item: int(item["level"]), reverse=True):
+        level = int(scale_payload["level"])
+        residual_path = None if work is None else work / f"decode_residual_scale_{level}.npy"
+        residual = _decode_scale_payload(
+            scale_payload,
+            device=device,
+            batch_size=batch_size,
+            output_path=residual_path,
+        )
+        current_times = np.asarray(scale_payload["time_indices"], dtype=np.int64)
+        if composite is None:
+            composite = residual
+        else:
+            upsampled = upsample_to_scale(
+                composite,
+                previous_times,
+                fine_shape_tzyx=tuple(residual.shape),
+                fine_time_indices=current_times,
+                output_path=None if work is None else work / f"decode_upsampled_scale_{level}.npy",
+            )
+            if work is None:
+                composite = upsampled + residual
+            else:
+                composite = _framewise_binary(
+                    upsampled,
+                    residual,
+                    work / f"decode_composite_scale_{level}.npy",
+                    operation="add",
+                )
+        previous_times = current_times
+    if work is None:
+        composite = np.clip(composite, -1.0, 1.0)
+    else:
+        composite = _clip_to_memmap(composite, work / "decode_mlp_clipped.npy")
+    cnn = _cnn_from_payload(payload["cnn"], device)
+    if output_path is None:
+        output = np.empty_like(composite)
+    else:
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output = open_memmap(output_file, mode="w+", dtype=np.float32, shape=tuple(composite.shape))
+    core_shape = tuple(int(value) for value in payload["cnn_config"]["tile_core_shape_zyx"])
+    halo = int(payload["cnn_config"]["halo"])
+    cnn.eval()
+    with torch.no_grad():
+        for time_index in range(composite.shape[0]):
+            output[time_index] = forward_tiled(
+                cnn,
+                composite[time_index],
+                core_shape_zyx=core_shape,
+                halo=halo,
+                device=device,
+            ).numpy()
+    if hasattr(output, "flush"):
+        output.flush()
+    return output
+
+
+def _checkpoint_save(path: Path, payload: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, path)
+    return path
+
+
+def _checkpoint_load(path: str | Path) -> dict[str, Any]:
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:
+        payload = torch.load(path, map_location="cpu")
+    if payload.get("format") != CHECKPOINT_FORMAT:
+        raise ValueError("Unsupported ECNR checkpoint")
+    return payload
+
+
+def run_train(
+    config_path: str | Path,
+    *,
+    target: str | None = None,
+    resume: str | Path | None = None,
+) -> dict[str, Any]:
+    apply_runtime_thread_limits()
+    cfg = load_config(config_path, target_override=target)
+    config_hash = _config_hash(cfg)
+    resume_payload: dict[str, Any] | None = None
+    if resume is not None:
+        resume_payload = _checkpoint_load(resume)
+        if resume_payload.get("config_hash") != config_hash:
+            raise ValueError("ECNR resume checkpoint config mismatch")
+        if resume_payload.get("artifact_payload") is not None:
+            dirs = _run_for_path(cfg, resume)
+            artifact = save_artifact(
+                dirs["artifacts"] / f"{cfg['exp_id']}.ecnr",
+                resume_payload["artifact_payload"],
+            )
+            return {"checkpoint_path": str(resume), "artifact_path": str(artifact), "resumed_complete": True}
+
+    dirs = _run_for_path(cfg, resume) if resume_payload is not None else _new_run(cfg)
+    setup_logging(log_dir=dirs["logs"], log_file="run.log")
+    started = time.perf_counter()
+    try:
+        save_config(cfg, dirs["configs"] / "config.yaml")
+        set_random_seed(int(cfg["training"]["seed"]))
+        device = _device(cfg["training"]["device"])
+        if torch.cuda.is_available() and device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(device)
+        volume = _load_volume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
+        pyramid_started = time.perf_counter()
+        pyramid = build_three_scale_pyramid(
+            volume,
+            sigma=float(cfg["model"]["gaussian_sigma"]),
+            cache_dir=dirs["cache"],
+        )
+        pyramid_seconds = float(time.perf_counter() - pyramid_started)
+        scale_payloads: list[dict[str, Any]] = (
+            list(resume_payload.get("scale_payloads", [])) if resume_payload is not None else []
+        )
+        previous_reconstruction: np.ndarray | None = None
+        previous_times: np.ndarray | None = None
+        cost: dict[str, Any] = (
+            copy.deepcopy(resume_payload.get("cost", {})) if resume_payload is not None else {}
+        )
+        cost.setdefault(
+            "primary_logical_sample_budget",
+            int(cfg["training"]["primary_sample_budget"]),
+        )
+        cost.setdefault("scales", [])
+        cost.setdefault("quantization_finetune_logical_samples", 0)
+        cost.setdefault("quantization_finetune_actual_predictions", 0)
+        cost.setdefault("quantization_finetune_optimizer_steps", 0)
+        cost.setdefault("quantization_and_finetune_seconds", 0.0)
+        cost.setdefault("cnn", {})
+        cost["pyramid_seconds"] = float(cost.get("pyramid_seconds", 0.0)) + pyramid_seconds
+        elapsed_before_resume = float(cost.pop("elapsed_active_seconds", 0.0))
+        block_shape = tuple(int(value) for value in cfg["model"]["block_shape_xyz"])
+        completed_levels = {int(item["level"]) for item in scale_payloads}
+
+        # Recreate the exact quantized coarse-to-fine state at a scale-boundary
+        # checkpoint. No dense pre-quantization model is used for later residuals.
+        for saved_scale in sorted(scale_payloads, key=lambda item: int(item["level"]), reverse=True):
+            saved_level = int(saved_scale["level"])
+            residual = _decode_scale_payload(
+                saved_scale,
+                device=device,
+                batch_size=int(cfg["evaluation"]["batch_size"]),
+                output_path=dirs["cache"] / f"resume_residual_scale_{saved_level}.npy",
+            )
+            current_times = np.asarray(saved_scale["time_indices"], dtype=np.int64)
+            if previous_reconstruction is None:
+                previous_reconstruction = residual
+            else:
+                upsampled_resume = upsample_to_scale(
+                    previous_reconstruction,
+                    previous_times,
+                    fine_shape_tzyx=tuple(residual.shape),
+                    fine_time_indices=current_times,
+                    output_path=dirs["cache"] / f"resume_upsampled_scale_{saved_level}.npy",
+                )
+                previous_reconstruction = _framewise_binary(
+                    upsampled_resume,
+                    residual,
+                    dirs["cache"] / f"resume_composite_scale_{saved_level}.npy",
+                    operation="add",
+                )
+            previous_times = current_times
+
+        # Deserializing packed SIRENs constructs temporary initialized modules.
+        # Restore RNG only after that reconstruction so continuation is bitwise
+        # equivalent to starting the next scale in the uninterrupted run.
+        if resume_payload is not None:
+            if resume_payload.get("torch_rng_state") is not None:
+                torch.set_rng_state(resume_payload["torch_rng_state"])
+            if resume_payload.get("numpy_rng_state") is not None:
+                np.random.set_state(resume_payload["numpy_rng_state"])
+            if resume_payload.get("python_rng_state") is not None:
+                random.setstate(resume_payload["python_rng_state"])
+
+        for level in (2, 1, 0):
+            if level in completed_levels:
+                continue
+            scale: PyramidScale = pyramid[level]
+            if previous_reconstruction is None:
+                target_values = scale.values
+            else:
+                upsampled = upsample_to_scale(
+                    previous_reconstruction,
+                    previous_times,
+                    fine_shape_tzyx=tuple(scale.values.shape),
+                    fine_time_indices=scale.time_indices,
+                    output_path=dirs["cache"] / f"upsampled_to_scale_{level}.npy",
+                )
+                target_values = _framewise_binary(
+                    scale.values,
+                    upsampled,
+                    dirs["cache"] / f"residual_target_scale_{level}.npy",
+                    operation="subtract",
+                )
+            blocks = prepare_scale_blocks(
+                target_values,
+                block_shape_xyz=block_shape,
+                residual_threshold=float(cfg["model"]["residual_threshold"]),
+                keep_all=level == 2,
+                normalized_blocks_path=dirs["cache"] / f"normalized_blocks_scale_{level}.npy",
+            )
+            if blocks.effective_count == 0:
+                logger.info("ECNR scale=%d contains no effective residual blocks", level)
+                scale_payload = _serialize_scale(
+                    level=level,
+                    time_indices=scale.time_indices,
+                    blocks=blocks,
+                    model=None,
+                    quantization=None,
+                )
+                residual_reconstruction = open_memmap(
+                    dirs["cache"] / f"decoded_residual_scale_{level}.npy",
+                    mode="w+",
+                    dtype=np.float32,
+                    shape=tuple(scale.values.shape),
+                )
+                residual_reconstruction[:] = 0.0
+                residual_reconstruction.flush()
+            else:
+                target_per_mlp = int(cfg["model"]["target_blocks_per_mlp"][2 - level])
+                clustering = balanced_kmeans(
+                    blocks.normalized_blocks,
+                    target_blocks_per_mlp=target_per_mlp,
+                    seed=int(cfg["clustering"]["seed"]),
+                    n_init=int(cfg["clustering"]["n_init"]),
+                    max_iter=int(cfg["clustering"]["max_iter"]),
+                    tol=float(cfg["clustering"]["tol"]),
+                )
+                attach_clustering(blocks, clustering)
+                targets = build_training_targets(
+                    blocks,
+                    output_path=dirs["cache"] / f"training_targets_scale_{level}.npy",
+                )
+                valid = slot_valid_matrix(blocks.cluster_sizes)
+                model = PackedSiren(
+                    mlp_count=valid.shape[0],
+                    max_slots=valid.shape[1],
+                    slot_valid=torch.from_numpy(valid),
+                )
+                _, quantization = _train_scale(
+                    model,
+                    targets,
+                    blocks,
+                    cfg,
+                    level=level,
+                    device=device,
+                    cost=cost,
+                )
+                decoded = _decode_scale_model(
+                    model,
+                    blocks,
+                    batch_size=int(cfg["evaluation"]["batch_size"]),
+                    device=device,
+                    output_path=dirs["cache"] / f"decoded_normalized_scale_{level}.npy",
+                )
+                residual_reconstruction = reconstruct_from_normalized_blocks(
+                    blocks,
+                    decoded,
+                    output_path=dirs["cache"] / f"decoded_residual_scale_{level}.npy",
+                )
+                scale_payload = _serialize_scale(
+                    level=level,
+                    time_indices=scale.time_indices,
+                    blocks=blocks,
+                    model=model,
+                    quantization=quantization,
+                )
+            if previous_reconstruction is None:
+                previous_reconstruction = residual_reconstruction
+            else:
+                previous_reconstruction = _framewise_binary(
+                    upsampled,
+                    residual_reconstruction,
+                    dirs["cache"] / f"composite_scale_{level}.npy",
+                    operation="add",
+                )
+            previous_times = scale.time_indices
+            scale_payloads.append(scale_payload)
+            cost["elapsed_active_seconds"] = (
+                elapsed_before_resume + float(time.perf_counter() - started)
+            )
+            _checkpoint_save(
+                dirs["checkpoints"] / f"scale_{level}_complete.pth",
+                {
+                    "format": CHECKPOINT_FORMAT,
+                    "config_hash": config_hash,
+                    "completed_levels": [item["level"] for item in scale_payloads],
+                    "scale_payloads": scale_payloads,
+                    "cost": cost,
+                    "artifact_payload": None,
+                    "torch_rng_state": torch.get_rng_state(),
+                    "numpy_rng_state": np.random.get_state(),
+                    "python_rng_state": random.getstate(),
+                },
+            )
+
+        mlp_reconstruction = _clip_to_memmap(
+            previous_reconstruction,
+            dirs["cache"] / "mlp_reconstruction_clipped.npy",
+        )
+        cnn_model = BoundaryCNN(hidden_channels=int(cfg["cnn"]["hidden_channels"])).to(device)
+        cnn_started = time.perf_counter()
+        cnn_cost = train_boundary_cnn(
+            cnn_model,
+            mlp_reconstruction,
+            volume,
+            epochs=int(cfg["cnn"]["epochs"]),
+            lr=float(cfg["cnn"]["lr"]),
+            core_shape_zyx=tuple(int(value) for value in cfg["cnn"]["tile_core_shape_zyx"]),
+            halo=int(cfg["cnn"]["halo"]),
+            device=device,
+            seed=int(cfg["training"]["seed"]),
+        )
+        cnn_cost["seconds"] = float(time.perf_counter() - cnn_started)
+        cost["cnn"] = cnn_cost
+        cnn_quantization_started = time.perf_counter()
+        cnn_quantization = _quantize_cnn(
+            cnn_model,
+            bits=int(cfg["quantization"]["cnn_bits"]),
+            seed=int(cfg["training"]["seed"]) + 50_000,
+        )
+        cost["cnn"]["quantization_seconds"] = float(
+            time.perf_counter() - cnn_quantization_started
+        )
+        if torch.cuda.is_available() and device.type == "cuda":
+            cost["peak_cuda_memory_bytes"] = int(torch.cuda.max_memory_allocated(device))
+        else:
+            cost["peak_cuda_memory_bytes"] = 0
+        cost["primary_logical_samples_executed"] = int(
+            sum(item["logical_samples"] for item in cost["scales"])
+        )
+        cost["primary_actual_scalar_predictions"] = int(
+            sum(item["actual_scalar_predictions"] for item in cost["scales"])
+        )
+        cost["primary_optimizer_steps"] = int(
+            sum(item["optimizer_steps"] for item in cost["scales"])
+        )
+        cost["total_seconds"] = elapsed_before_resume + float(time.perf_counter() - started)
+        cost.pop("elapsed_active_seconds", None)
+        cost_path = dirs["metrics"] / "training_cost.json"
+        cost_path.write_text(json.dumps(cost, indent=2), encoding="utf-8")
+
+        artifact_payload = {
+            "format": ARTIFACT_FORMAT,
+            "model_name": "ecnr",
+            "target_name": cfg["data"]["target"],
+            "volume_shape": dict(cfg["data"]["volume_shape"]),
+            "block_shape_xyz": list(block_shape),
+            "config_hash": config_hash,
+            "scales": scale_payloads,
+            "cnn": cnn_quantization,
+            "cnn_config": dict(cfg["cnn"]),
+        }
+        artifact = save_artifact(
+            dirs["artifacts"] / f"{cfg['exp_id']}.ecnr",
+            artifact_payload,
+        )
+        checkpoint = _checkpoint_save(
+            dirs["checkpoints"] / f"{cfg['exp_id']}.pth",
+            {
+                "format": CHECKPOINT_FORMAT,
+                "config_hash": config_hash,
+                "artifact_payload": artifact_payload,
+                "torch_rng_state": torch.get_rng_state(),
+                "numpy_rng_state": np.random.get_state(),
+                "python_rng_state": random.getstate(),
+            },
+        )
+        raw_bytes = int(np.prod(volume.shape, dtype=np.int64) * np.dtype(volume.dtype).itemsize)
+        summary = {
+            "checkpoint_path": str(checkpoint),
+            "artifact_path": str(artifact),
+            "training_cost_path": str(cost_path),
+            "raw_target_bytes": raw_bytes,
+            "artifact_bytes": int(artifact.stat().st_size),
+            "compact_cr": float(raw_bytes / max(artifact.stat().st_size, 1)),
+        }
+        (dirs["metrics"] / "training_summary.json").write_text(
+            json.dumps(summary, indent=2),
+            encoding="utf-8",
+        )
+        if cfg["evaluation"]["run_after_training"]:
+            summary.update(run_evaluate(config_path, target=target, artifact=artifact))
+        return summary
+    finally:
+        close_file_handlers()
+
+
+def _load_inference_payload(
+    cfg: dict[str, Any],
+    *,
+    artifact: str | Path | None,
+    checkpoint: str | Path | None,
+    dirs: dict[str, Path],
+) -> tuple[dict[str, Any], Path]:
+    if artifact is None and checkpoint is None:
+        if cfg["evaluation"]["default_model"] == "artifact":
+            artifact = dirs["artifacts"] / f"{cfg['exp_id']}.ecnr"
+        else:
+            checkpoint = dirs["checkpoints"] / f"{cfg['exp_id']}.pth"
+    if artifact is not None:
+        payload = load_artifact(artifact)
+        source = Path(artifact)
+    else:
+        wrapper = _checkpoint_load(checkpoint)
+        payload = wrapper.get("artifact_payload")
+        if payload is None:
+            raise ValueError("ECNR checkpoint does not contain a completed inference payload")
+        source = Path(checkpoint)
+    if payload["target_name"] != cfg["data"]["target"] or payload["volume_shape"] != cfg["data"]["volume_shape"]:
+        raise ValueError("ECNR inference source target/shape mismatch")
+    return payload, source
+
+
+def run_predict(
+    config_path: str | Path,
+    *,
+    target: str | None = None,
+    artifact: str | Path | None = None,
+    checkpoint: str | Path | None = None,
+) -> dict[str, Any]:
+    cfg = load_config(config_path, target_override=target)
+    explicit = artifact or checkpoint
+    dirs = _run_for_path(cfg, explicit)
+    device = _device(cfg["training"]["device"])
+    payload, source = _load_inference_payload(
+        cfg,
+        artifact=artifact,
+        checkpoint=checkpoint,
+        dirs=dirs,
+    )
+    output_path = dirs["predictions"] / f"{cfg['exp_id']}.npy"
+    decode_artifact_payload(
+        payload,
+        device=device,
+        batch_size=int(cfg["evaluation"]["batch_size"]),
+        work_dir=dirs["cache"] / "decode",
+        output_path=output_path,
+    )
+    return {"prediction_path": str(output_path), "model_path": str(source)}
+
+
+def _evaluate(volume: np.ndarray, prediction: np.ndarray, model_path: Path) -> dict[str, Any]:
+    accumulator = PSNRAccumulator()
+    squared_error = absolute_error = 0.0
+    count = 0
+    per_time = []
+    for time_index in range(volume.shape[0]):
+        gt = np.asarray(volume[time_index], dtype=np.float32)
+        pred = np.asarray(prediction[time_index], dtype=np.float32)
+        accumulator.update(gt, pred)
+        difference = pred.astype(np.float64) - gt.astype(np.float64)
+        squared_error += float(np.sum(difference * difference))
+        absolute_error += float(np.sum(np.abs(difference)))
+        count += int(difference.size)
+        per_time.append(
+            {"t": time_index, "mse": mse(gt, pred), "mae": mae(gt, pred), "psnr": psnr(gt, pred)}
+        )
+    return {
+        "per_time": per_time,
+        "aggregate": {
+            "mse": squared_error / count,
+            "mae": absolute_error / count,
+            "psnr": accumulator.compute(),
+            "raw_target_bytes": int(volume.size * volume.dtype.itemsize),
+            "model_bytes": int(model_path.stat().st_size),
+            "cr": float(volume.size * volume.dtype.itemsize / max(model_path.stat().st_size, 1)),
+        },
+    }
+
+
+def run_evaluate(
+    config_path: str | Path,
+    *,
+    target: str | None = None,
+    artifact: str | Path | None = None,
+    checkpoint: str | Path | None = None,
+) -> dict[str, Any]:
+    prediction_result = run_predict(
+        config_path,
+        target=target,
+        artifact=artifact,
+        checkpoint=checkpoint,
+    )
+    cfg = load_config(config_path, target_override=target)
+    dirs = _run_for_path(cfg, artifact or checkpoint or prediction_result["model_path"])
+    volume = _load_volume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
+    prediction = np.load(prediction_result["prediction_path"], mmap_mode="r")
+    metrics = _evaluate(volume, prediction, Path(prediction_result["model_path"]))
+    metrics_path = save_metrics(dirs["metrics"] / f"{cfg['exp_id']}.json", metrics)
+    return {**prediction_result, "metrics": metrics, "metrics_path": str(metrics_path)}

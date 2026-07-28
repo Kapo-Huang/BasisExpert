@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 TIMESTAMP_RUN_PATTERN = re.compile(r"^\d{8}_\d{6}_\d{6}$")
 
 
+def _configured_method(config_path: str | Path) -> str:
+    with Path(config_path).open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    model = payload.get("model") or payload.get("MODEL") or {}
+    return str(model.get("name", "")).strip().lower().replace("-", "_")
+
+
 def _resolve_device(requested: str) -> torch.device:
     requested_norm = str(requested).strip().lower()
     if requested_norm.startswith("cuda") and not torch.cuda.is_available():
@@ -268,7 +275,13 @@ def _predict_from_artifact(
     }
 
 
-def run_train(config_path: str | Path) -> dict:
+def run_train(config_path: str | Path, *, resume_path: str | Path | None = None) -> dict:
+    if _configured_method(config_path) == "ecnr":
+        from .ecnr.runner import run_train as run_ecnr_train
+
+        return run_ecnr_train(config_path, resume=resume_path)
+    if resume_path is not None:
+        raise ValueError("--resume is currently supported by ECNR only in the unified CLI")
     apply_runtime_thread_limits()
     train_started_at = time.perf_counter()
     try:
@@ -335,6 +348,14 @@ def run_predict(
     checkpoint_path: str | Path | None = None,
     artifact_path: str | Path | None = None,
 ) -> dict:
+    if _configured_method(config_path) == "ecnr":
+        from .ecnr.runner import run_predict as run_ecnr_predict
+
+        return run_ecnr_predict(
+            config_path,
+            checkpoint=checkpoint_path,
+            artifact=artifact_path,
+        )
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(
@@ -359,6 +380,14 @@ def run_evaluate(
     checkpoint_path: str | Path | None = None,
     artifact_path: str | Path | None = None,
 ) -> dict:
+    if _configured_method(config_path) == "ecnr":
+        from .ecnr.runner import run_evaluate as run_ecnr_evaluate
+
+        return run_ecnr_evaluate(
+            config_path,
+            checkpoint=checkpoint_path,
+            artifact=artifact_path,
+        )
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(
@@ -394,25 +423,26 @@ def parse_args() -> argparse.Namespace:
 
     train_parser = subparsers.add_parser("train", help="Train a model")
     train_parser.add_argument("--config", required=True, help="Path to the experiment config")
+    train_parser.add_argument("--resume", default=None, help="Optional ECNR scale checkpoint to resume")
 
     predict_parser = subparsers.add_parser("predict", help="Generate predictions from a checkpoint")
     predict_parser.add_argument("--config", required=True, help="Path to the experiment config")
     predict_source = predict_parser.add_mutually_exclusive_group()
     predict_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
-    predict_source.add_argument("--artifact", default=None, help="Optional CompactNGP inference artifact")
+    predict_source.add_argument("--artifact", default=None, help="Optional inference artifact (.ecnr for ECNR)")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a checkpoint")
     eval_parser.add_argument("--config", required=True, help="Path to the experiment config")
     eval_source = eval_parser.add_mutually_exclusive_group()
     eval_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
-    eval_source.add_argument("--artifact", default=None, help="Optional CompactNGP inference artifact")
+    eval_source.add_argument("--artifact", default=None, help="Optional inference artifact (.ecnr for ECNR)")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     if args.command == "train":
-        result = run_train(args.config)
+        result = run_train(args.config, resume_path=args.resume)
         logger.info("Training completed. Checkpoint: %s", result["checkpoint_path"])
         return
     if args.command == "predict":
@@ -421,7 +451,10 @@ def main() -> None:
             checkpoint_path=args.checkpoint,
             artifact_path=args.artifact,
         )
-        logger.info("Predictions saved: %s", result["prediction_paths"])
+        logger.info(
+            "Predictions saved: %s",
+            result.get("prediction_paths", result.get("prediction_path")),
+        )
         return
     if args.command == "evaluate":
         result = run_evaluate(

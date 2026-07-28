@@ -15,6 +15,7 @@ python -m var_expert_inr.cli train --config configs/VarExpert/ionization.yaml
 python -m var_expert_inr.cli train --config configs/SIREN/ionization__GT.yaml
 python -m var_expert_inr.cli train --config configs/CompactNGP/ionization__GT.yaml
 python -m var_expert_inr.cli train --config configs/InstantNGP/ionization__GT.yaml
+python -m var_expert_inr.cli train --config configs/MVNet/ionization.yaml
 python -m var_expert_inr.cli train --config configs/FA-TR-INR/ionization__GT.yaml
 python -m var_expert_inr.mc_inr.cli train --config configs/MC-INR/ionization.yaml
 python -m var_expert_inr.neural_expert.cli train --config configs/NeuralExpert/ionization__GT__managerpretrain.yaml
@@ -23,16 +24,19 @@ python -m var_expert_inr.dc_inr.cli train --config configs/DC-INR/ionization__GT
 python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization__GT.yaml
 python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization__GT.yaml
 python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization__GT.yaml
+python -m var_expert_inr.cli train --config configs/ECNR/ionization__GT.yaml
 ```
 
-The checked-in experiment matrix contains 352 configs. General models cover
+The checked-in experiment matrix contains 360 configs. General models cover
 Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
 single-target model has one config per attribute, and Ionization additionally
 has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants plus a
 VarExpert DWA loss-balancing config.
-All primary training stages consume 14.4 billion samples with an effective
-batch size of 16,000. Model-size tiers use all parameters at two bytes per
-parameter (theoretical FP16 size).
+All primary training stages except MVNet consume 14.4 billion samples with an
+effective batch size of 16,000. MVNet uses its method-specific 300 epochs,
+2,048-sample batches, and 1,500 random batches per epoch (921.6 million
+samples). Model-size tiers use all parameters at two bytes per parameter
+(theoretical FP16 size).
 
 Run the complete matrix sequentially in the `compression` conda environment:
 
@@ -55,6 +59,10 @@ InstantNGP is a pure PyTorch four-dimensional multiresolution hash grid. It
 consumes the framework's existing `[-1, 1]` XYZT coordinates, accumulates 16
 physical batches per optimizer update, and applies its learning-rate milestones
 per optimizer step.
+MVNet is a shared multi-output residual SIREN that consumes the existing
+`[-1, 1]` XYZT coordinates and predicts every scalar variable in the dataset in
+one forward pass. Its output-column order is stored in each checkpoint and
+reused by unified prediction and evaluation.
 FA-TR-INR runs use the unified checkpoint path without a separate inference
 artifact. The model contracts five independent sine-MLP factors in the fixed
 `x -> y -> f -> z -> t -> x` Tensor Ring order and directly consumes the
@@ -102,6 +110,18 @@ resumable; FP32 inference artifacts contain only the shared encoder and decoder
 parameters. Prediction writes separate `_mean.npy` and `_variance.npy` volumes,
 and evaluation reports reconstruction quality, variance-error Pearson
 correlation, and sampled top-1%/top-5% hit rates.
+
+`ecnr` is an integrated three-scale reproduction for single-target temporal
+volumes. It clusters normalized spatial blocks deterministically, trains packed
+local SIREN MLPs from coarse content to fine residuals, applies block-guided
+pruning and global codebook quantization, then runs a halo-correct tiled 3D CNN.
+Its `.ecnr` artifact Huffman-encodes masks, assignments, and quantization
+labels. The three primary scale stages consume the standard 14.4-billion-sample
+experiment budget. Scale-boundary checkpoints can be resumed with
+`train --config <config> --resume <scale_checkpoint.pth>`; compact inference
+uses `predict/evaluate --config <config> --artifact <model.ecnr>`. Each run also
+writes `metrics/training_cost.json`, including logical samples, packed-MLP
+prediction counts, optimizer steps, phase timings, and peak CUDA memory.
 
 The checked-in Ionization configs describe a full 100-timestep
 `(T,Z,Y,X)=(100,248,248,600)` sequence. The sample target files currently in

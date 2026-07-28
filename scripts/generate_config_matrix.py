@@ -254,6 +254,73 @@ def generate_instant_ngp() -> int:
     return count
 
 
+def mvnet_model(num_variables: int) -> dict:
+    return {
+        "name": "mvnet",
+        "in_features": 4,
+        "out_features": int(num_variables),
+        "hidden_features": 120,
+        "num_residual_blocks": 10,
+        "omega_0": 30.0,
+        "bias": True,
+    }
+
+
+def mvnet_training() -> dict:
+    return {
+        "epochs": 300,
+        "batch_size": 2048,
+        "pred_batch_size": 16000,
+        "gradient_accumulation_steps": 1,
+        "num_workers": 0,
+        "lr": 1.0e-4,
+        "beta_1": 0.9,
+        "beta_2": 0.999,
+        "epsilon": 1.0e-8,
+        "weight_decay": 0.0,
+        "val_split": 0.0,
+        "log_every": 10,
+        "log_psnr_every": 0,
+        "psnr_sample_ratio": 0.1,
+        "save_every": 300,
+        "early_stop_patience": 0,
+        "loss_type": "mse",
+        "seed": 42,
+        "sampler": "budgeted_random",
+        "batches_per_epoch_budget": 1500,
+        "scheduler": {
+            "enabled": True,
+            "interval": "epoch",
+            "step_size": 15,
+            "gamma": 0.8,
+        },
+        "pretrain": {"enabled": False},
+    }
+
+
+def generate_mvnet() -> int:
+    count = 0
+    for dataset, meta in DATASETS.items():
+        data = unified_data(dataset, False)
+        data["targets"] = {
+            name: data["targets"][name]
+            for name in sorted(data["targets"])
+        }
+        payload = {
+            "experiment": f"{dataset}_mvnet",
+            "exp_id": f"mvnet-{dataset}",
+            "experiment_root": repo_path("runs"),
+            "data": data,
+            "model": mvnet_model(len(meta["targets"])),
+            "training": mvnet_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(CONFIGS / "MVNet" / f"{dataset}.yaml", payload)
+        count += 1
+    return count
+
+
 def fa_tr_inr_model() -> dict:
     return {
         "name": "fa_tr_inr",
@@ -688,6 +755,72 @@ def fv_payload(target: str, nested: bool, size: str | None) -> dict:
     }
 
 
+def ecnr_payload(target: str) -> dict:
+    return {
+        "experiment": f"ecnr_ionization_{target}",
+        "exp_id": f"ecnr-ionization-{target}",
+        "experiment_root": repo_path("runs/ecnr"),
+        "data": volume_data(target, False),
+        "model": {
+            "name": "ecnr", "scales": 3,
+            "block_shape_xyz": [25, 31, 31],
+            "residual_threshold": 1.0e-4,
+            "gaussian_kernel_size": 5, "gaussian_sigma": 1.0,
+            "gaussian_padding": "reflect", "latent_dim": 8,
+            "hidden_features": 24, "hidden_layers": 3, "omega_0": 30.0,
+            "target_blocks_per_mlp": [8, 16, 32],
+        },
+        "clustering": {
+            "distance": "squared_euclidean",
+            "input": "normalized_block_values",
+            "initialization": "kmeans_pp", "seed": 42,
+            "balancing_passes": 1, "centroid_dtype": "float32",
+            "tie_break": "lowest_cluster_index", "n_init": 1,
+            "max_iter": 300, "tol": 1.0e-4, "algorithm": "lloyd",
+        },
+        "training": {
+            "epochs_per_scale": 500, "batch_size": 3200,
+            "batches_per_epoch_budget": 3000,
+            "primary_sample_budget": 14_400_000_000,
+            "lr": 1.0e-3, "beta_1": 0.9, "beta_2": 0.999,
+            "weight_decay": 2.0e-5,
+            "pruning_epochs": [150, 225, 300, 375],
+            "pruning_sparsities": [0.30, 0.40, 0.45, 0.50],
+            "pruning_loss_weight": 0.1, "pruning_lr_gamma": 0.75,
+            "quantization_finetune_epochs": 75,
+            "quantization_finetune_batches_per_epoch": 0,
+            "quantization_finetune_lr": 1.0e-5,
+            "save_every": 0, "log_every": 10, "seed": 42, "device": "cuda",
+        },
+        "quantization": {
+            "mlp_weight_bits": 8, "mlp_bias_bits": 8,
+            "latent_bits": 0, "cnn_bits": 9, "entropy": "huffman",
+        },
+        "cnn": {
+            "implementation_choice": "fixed_for_underspecified_method_detail",
+            "dimensionality": "3d", "layers": 5, "hidden_channels": 32,
+            "kernel_size": 3, "stride": 1, "padding": 1, "dilation": 1,
+            "bias": True, "hidden_activation": "relu",
+            "output_activation": "none", "halo": 5,
+            "tile_core_shape_zyx": [32, 64, 64], "epochs": 100, "lr": 1.0e-5,
+        },
+        "evaluation": {
+            "batch_size": 3200, "save_predictions": False,
+            "run_after_training": False, "default_model": "artifact",
+        },
+        "log": {
+            "effective_config": True, "epoch_summary": True,
+            "startup_timing": True,
+        },
+    }
+
+
+def generate_ecnr() -> int:
+    for target in DATASETS["ionization"]["targets"]:
+        dump(CONFIGS / "ECNR" / f"ionization__{target}.yaml", ecnr_payload(target))
+    return len(DATASETS["ionization"]["targets"])
+
+
 def rm_payload(target: str, nested: bool, size: str | None) -> dict:
     resolution, channels = RM_SIZE[size] if size else (32, 16)
     tag = f"-{size.lower()}" if size else ""
@@ -747,15 +880,17 @@ def main() -> None:
         "unified_single": generate_unified_single(),
         "compact_ngp": generate_compact_ngp(),
         "instant_ngp": generate_instant_ngp(),
+        "mvnet": generate_mvnet(),
         "fa_tr_inr": generate_fa_tr_inr(),
         "var_expert": generate_var_expert(),
         "mc_inr": generate_mc(),
         "neural_expert": generate_neural(),
         "volume_only": generate_volume_only(),
+        "ecnr": generate_ecnr(),
     }
     total = sum(counts.values())
-    if total != 352:
-        raise RuntimeError(f"Expected 352 configs, generated {total}: {counts}")
+    if total != 360:
+        raise RuntimeError(f"Expected 360 configs, generated {total}: {counts}")
     print(f"Generated {total} configs: {counts}")
 
 

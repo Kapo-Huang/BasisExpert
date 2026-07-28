@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset, random_split
 
 from ..config.schema import LogConfig
@@ -16,6 +17,7 @@ from ..models.sota.instant_ngp import (
     INSTANT_NGP_DECODER_L2_WEIGHT,
     InstantNGP,
 )
+from ..models.sota.mvnet import MVNet4D
 from ..pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ..utils.checkpoint import save_checkpoint
 from ..utils.timing import TimingBreakdown, log_epoch_timing, log_step_timing_window, timing_elapsed, timing_start
@@ -24,6 +26,76 @@ from .losses import pointwise_loss, reconstruction_loss_with_breakdown
 from .samplers import build_pretrain_sampler, build_train_sampler
 
 logger = logging.getLogger(__name__)
+
+
+def validate_mvnet_training_config(cfg) -> None:
+    expected_values = {
+        "epochs": (int(cfg.epochs), 300),
+        "batch_size": (int(cfg.batch_size), 2048),
+        "gradient_accumulation_steps": (
+            int(cfg.gradient_accumulation_steps),
+            1,
+        ),
+        "batches_per_epoch_budget": (
+            int(cfg.batches_per_epoch_budget),
+            1500,
+        ),
+        "early_stop_patience": (
+            int(cfg.early_stop_patience),
+            0,
+        ),
+        "lr": (float(cfg.lr), 1.0e-4),
+        "beta_1": (float(cfg.beta_1), 0.9),
+        "beta_2": (float(cfg.beta_2), 0.999),
+        "epsilon": (float(cfg.epsilon), 1.0e-8),
+        "weight_decay": (float(cfg.weight_decay), 0.0),
+        "val_split": (float(cfg.val_split), 0.0),
+        "loss_type": (str(cfg.loss_type), "mse"),
+        "sampler": (str(cfg.sampler), "budgeted_random"),
+    }
+    mismatches = [
+        f"{name}={actual} (expected {expected})"
+        for name, (actual, expected) in expected_values.items()
+        if actual != expected
+    ]
+    scheduler = cfg.scheduler
+    if not scheduler.enabled:
+        mismatches.append("scheduler.enabled=False (expected True)")
+    if scheduler.interval != "epoch":
+        mismatches.append(
+            f"scheduler.interval={scheduler.interval} (expected epoch)"
+        )
+    if int(scheduler.step_size) != 15:
+        mismatches.append(
+            f"scheduler.step_size={scheduler.step_size} (expected 15)"
+        )
+    if float(scheduler.gamma) != 0.8:
+        mismatches.append(
+            f"scheduler.gamma={scheduler.gamma} (expected 0.8)"
+        )
+    if scheduler.milestones:
+        mismatches.append(
+            "scheduler.milestones must be empty for MVNet"
+        )
+    if cfg.pretrain.enabled:
+        mismatches.append("pretrain.enabled=True (expected False)")
+    if cfg.gradient_balancer.enabled:
+        mismatches.append(
+            "gradient_balancer.enabled=True (expected False)"
+        )
+    if cfg.multiview_ema_loss.enabled:
+        mismatches.append(
+            "multiview_ema_loss.enabled=True (expected False)"
+        )
+    if cfg.multiview_dwa_loss.enabled:
+        mismatches.append(
+            "multiview_dwa_loss.enabled=True (expected False)"
+        )
+    if mismatches:
+        raise ValueError(
+            "MVNet training uses a fixed reproduction configuration: "
+            + ", ".join(mismatches)
+        )
 
 
 def build_training_scheduler(optimizer, scheduler_cfg):
@@ -72,6 +144,56 @@ def _collate_factory(dataset, *, include_targets: bool = True, assignments=None)
 
 def _is_multitarget(targets) -> bool:
     return isinstance(targets, dict)
+
+
+def split_multitarget_prediction(
+    predictions: torch.Tensor,
+    target_names: tuple[str, ...],
+) -> dict[str, torch.Tensor]:
+    if predictions.ndim != 2:
+        raise ValueError(
+            "Multi-target tensor predictions must have shape [B, V], "
+            f"got {tuple(predictions.shape)}"
+        )
+    if predictions.shape[1] != len(target_names):
+        raise ValueError(
+            "Prediction column count does not match target order: "
+            f"columns={predictions.shape[1]} targets={len(target_names)}"
+        )
+    return {
+        name: predictions[:, index : index + 1]
+        for index, name in enumerate(target_names)
+    }
+
+
+def stack_scalar_targets(
+    targets: dict[str, torch.Tensor],
+    target_names: tuple[str, ...],
+) -> torch.Tensor:
+    columns = []
+    for name in target_names:
+        target = targets[name]
+        if target.ndim != 2 or target.shape[1] != 1:
+            raise ValueError(
+                f"MVNet target {name!r} must have shape [B, 1], "
+                f"got {tuple(target.shape)}"
+            )
+        columns.append(target)
+    return torch.cat(columns, dim=-1)
+
+
+def mvnet_joint_mse(
+    predictions: torch.Tensor,
+    targets: dict[str, torch.Tensor],
+    target_names: tuple[str, ...],
+) -> torch.Tensor:
+    target_matrix = stack_scalar_targets(targets, target_names)
+    if predictions.shape != target_matrix.shape:
+        raise ValueError(
+            "MVNet prediction and target shapes must match: "
+            f"{tuple(predictions.shape)} vs {tuple(target_matrix.shape)}"
+        )
+    return F.mse_loss(predictions, target_matrix, reduction="mean")
 
 
 def _split_dataset(dataset, val_split: float, seed: int):
@@ -136,6 +258,8 @@ def _predict_batch(model, coords: torch.Tensor, target_names: tuple[str, ...], *
         preds = model(coords)
     if isinstance(preds, dict):
         return preds
+    if len(target_names) > 1:
+        return split_multitarget_prediction(preds, target_names)
     return {target_names[0]: preds}
 
 
@@ -156,7 +280,9 @@ def _predict_batch_with_aux(model, coords: torch.Tensor, target_names: tuple[str
     else:
         preds = output
         aux = {}
-    if not isinstance(preds, dict):
+    if not isinstance(preds, dict) and len(target_names) > 1:
+        preds = split_multitarget_prediction(preds, target_names)
+    elif not isinstance(preds, dict):
         preds = {target_names[0]: preds}
     return preds, aux
 
@@ -461,6 +587,13 @@ def train_model(
     artifact_dir: str | Path | None = None,
     model_config: dict | None = None,
 ):
+    backbone = getattr(model, "backbone", model)
+    is_var_expert = type(backbone).__name__ == "VarExpert"
+    is_instant_ngp = isinstance(backbone, InstantNGP)
+    is_mvnet = isinstance(backbone, MVNet4D)
+    if is_mvnet:
+        validate_mvnet_training_config(cfg)
+
     timing_enabled = bool(log_cfg.timing.enabled)
     epoch_timing_enabled = timing_enabled and bool(log_cfg.timing.epoch_breakdown)
     step_window_enabled = timing_enabled and bool(log_cfg.timing.step_window)
@@ -531,6 +664,7 @@ def train_model(
         betas=(float(cfg.beta_1), float(cfg.beta_2)),
         eps=float(cfg.epsilon),
         weight_decay=float(cfg.weight_decay),
+        amsgrad=False,
     )
     scheduler = build_training_scheduler(optimizer, cfg.scheduler)
 
@@ -565,9 +699,6 @@ def train_model(
     router_frozen = False
     psnr_dataset = _build_psnr_dataset(dataset, sample_ratio=cfg.psnr_sample_ratio, seed=cfg.seed)
     started_at = time.time()
-    backbone = getattr(model, "backbone", model)
-    is_var_expert = type(backbone).__name__ == "VarExpert"
-    is_instant_ngp = isinstance(backbone, InstantNGP)
     global_data_step = 0
     global_optimizer_step = 0
     accumulation_count = 0
@@ -643,7 +774,27 @@ def train_model(
                 stage_started_at = timing_start(device, sync_timing)
 
             if _is_multitarget(batch.targets):
-                if is_var_expert:
+                if is_mvnet:
+                    raw_predictions = model(coords)
+                    total_loss = mvnet_joint_mse(
+                        raw_predictions,
+                        targets,
+                        dataset.target_names(),
+                    )
+                    preds = split_multitarget_prediction(
+                        raw_predictions,
+                        dataset.target_names(),
+                    )
+                    task_losses = {
+                        name: F.mse_loss(
+                            preds[name],
+                            targets[name],
+                            reduction="mean",
+                        )
+                        for name in dataset.target_names()
+                    }
+                    aux = {}
+                elif is_var_expert:
                     preds, aux = _predict_batch_with_aux(
                         model,
                         coords,
@@ -653,11 +804,12 @@ def train_model(
                 else:
                     preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
                     aux = {}
-                total_loss, _, _, task_losses = reconstruction_loss_with_breakdown(
-                    preds,
-                    targets,
-                    loss_type=cfg.loss_type,
-                )
+                if not is_mvnet:
+                    total_loss, _, _, task_losses = reconstruction_loss_with_breakdown(
+                        preds,
+                        targets,
+                        loss_type=cfg.loss_type,
+                    )
                 if ema_target_loss_sums is not None:
                     for name in dataset.target_names():
                         ema_target_loss_sums[name] += float(task_losses[name].detach().item())
@@ -805,12 +957,20 @@ def train_model(
                     coords = batch.coords.to(device, non_blocking=True)
                     if _is_multitarget(batch.targets):
                         targets = {name: tensor.to(device, non_blocking=True) for name, tensor in batch.targets.items()}
-                        preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
-                        loss, _, _, _ = reconstruction_loss_with_breakdown(
-                            preds,
-                            targets,
-                            loss_type=cfg.loss_type,
-                        )
+                        if is_mvnet:
+                            raw_predictions = model(coords)
+                            loss = mvnet_joint_mse(
+                                raw_predictions,
+                                targets,
+                                dataset.target_names(),
+                            )
+                        else:
+                            preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                            loss, _, _, _ = reconstruction_loss_with_breakdown(
+                                preds,
+                                targets,
+                                loss_type=cfg.loss_type,
+                            )
                     else:
                         targets = batch.targets.to(device, non_blocking=True)
                         preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)

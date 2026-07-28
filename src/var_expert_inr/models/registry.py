@@ -25,6 +25,14 @@ from .sota.instant_ngp import (
     build_instant_ngp_from_config,
 )
 from .sota.moe_inr import build_moe_inr_from_config
+from .sota.mvnet import (
+    MVNET_BIAS,
+    MVNET_HIDDEN_FEATURES,
+    MVNET_IN_FEATURES,
+    MVNET_OMEGA_0,
+    MVNET_RESIDUAL_BLOCKS,
+    build_mvnet_from_config,
+)
 from .sota.siren import build_siren_from_config
 
 
@@ -138,6 +146,10 @@ def _build_fa_tr_inr(cfg: dict, meta: DatasetMeta):
 
 def _build_instant_ngp(cfg: dict, meta: DatasetMeta):
     return build_instant_ngp_from_config(cfg)
+
+
+def _build_mvnet(cfg: dict, meta: DatasetMeta):
+    return build_mvnet_from_config(cfg)
 
 
 def _build_var_expert(cfg: dict, meta: DatasetMeta):
@@ -345,6 +357,85 @@ def _materialize_instant_ngp(
     }
 
 
+def _materialize_mvnet(
+    cfg: dict[str, Any],
+    meta: DatasetMeta,
+) -> dict[str, Any]:
+    allowed = {
+        "in_features",
+        "out_features",
+        "hidden_features",
+        "num_residual_blocks",
+        "omega_0",
+        "bias",
+    }
+    _reject_unknown_model_keys(cfg, allowed, "mvnet")
+    in_features = _resolve_in_features(cfg, meta, "mvnet")
+    if in_features != MVNET_IN_FEATURES:
+        raise ValueError(
+            f"mvnet requires in_features={MVNET_IN_FEATURES}, "
+            f"got {in_features}"
+        )
+    if len(meta.target_names) < 2:
+        raise ValueError("mvnet requires at least two target variables")
+    nonscalar = {
+        name: int(meta.target_dims[name])
+        for name in meta.target_names
+        if int(meta.target_dims[name]) != 1
+    }
+    if nonscalar:
+        raise ValueError(
+            "mvnet requires scalar target variables, got "
+            + ", ".join(
+                f"{name}={dimension}"
+                for name, dimension in nonscalar.items()
+            )
+        )
+
+    expected_out_features = len(meta.target_names)
+    out_features = int(
+        cfg.get("out_features", expected_out_features)
+    )
+    if out_features != expected_out_features:
+        raise ValueError(
+            f"mvnet out_features={out_features} does not match "
+            f"target variable count={expected_out_features}"
+        )
+    fixed_values = {
+        "hidden_features": MVNET_HIDDEN_FEATURES,
+        "num_residual_blocks": MVNET_RESIDUAL_BLOCKS,
+        "omega_0": MVNET_OMEGA_0,
+        "bias": MVNET_BIAS,
+    }
+    actual_values = {
+        "hidden_features": int(
+            cfg.get("hidden_features", MVNET_HIDDEN_FEATURES)
+        ),
+        "num_residual_blocks": int(
+            cfg.get(
+                "num_residual_blocks",
+                MVNET_RESIDUAL_BLOCKS,
+            )
+        ),
+        "omega_0": float(cfg.get("omega_0", MVNET_OMEGA_0)),
+        "bias": _coerce_bool(
+            cfg.get("bias", MVNET_BIAS),
+            key="mvnet.bias",
+        ),
+    }
+    for key, expected in fixed_values.items():
+        if actual_values[key] != expected:
+            raise ValueError(
+                f"mvnet requires {key}={expected}, "
+                f"got {actual_values[key]}"
+            )
+    return {
+        "in_features": in_features,
+        "out_features": out_features,
+        **fixed_values,
+    }
+
+
 def _materialize_var_expert(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
     _reject_unknown_model_keys(cfg, VAR_EXPERT_ALLOWED_KEYS, "var_expert")
     base_dim = cfg.get("base_dim")
@@ -485,6 +576,7 @@ MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "compact_ngp": _build_compact_ngp,
     "fa_tr_inr": _build_fa_tr_inr,
     "instant_ngp": _build_instant_ngp,
+    "mvnet": _build_mvnet,
     "var_expert": _build_var_expert,
     "shared_enc_inr": _build_shared_enc_inr,
 }
@@ -496,6 +588,7 @@ MODEL_CONFIG_MATERIALIZERS: dict[str, ModelConfigMaterializer] = {
     "compact_ngp": _materialize_compact_ngp,
     "fa_tr_inr": _materialize_fa_tr_inr,
     "instant_ngp": _materialize_instant_ngp,
+    "mvnet": _materialize_mvnet,
     "var_expert": _materialize_var_expert,
     "shared_enc_inr": _materialize_shared_enc_inr,
 }

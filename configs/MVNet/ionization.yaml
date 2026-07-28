@@ -1,0 +1,64 @@
+experiment: ionization_mvnet
+exp_id: mvnet-ionization
+experiment_root: ${REPO_ROOT}/runs
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
+  targets:
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+model:
+  name: mvnet
+  in_features: 4
+  out_features: 5
+  hidden_features: 120
+  num_residual_blocks: 10
+  omega_0: 30.0
+  bias: true
+training:
+  epochs: 300
+  batch_size: 2048
+  pred_batch_size: 16000
+  gradient_accumulation_steps: 1
+  num_workers: 0
+  lr: 0.0001
+  beta_1: 0.9
+  beta_2: 0.999
+  epsilon: 1.0e-08
+  weight_decay: 0.0
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 0
+  psnr_sample_ratio: 0.1
+  save_every: 300
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    interval: epoch
+    step_size: 15
+    gamma: 0.8
+  pretrain:
+    enabled: false
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

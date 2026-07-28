@@ -99,6 +99,7 @@ append_volume_attribute_groups() {
 }
 
 append_serial_family "VarExpert"
+append_serial_family "MVNet"
 append_attribute_groups "SIREN" "all"
 append_attribute_groups "CoordNet" "all"
 append_attribute_groups "MoE-INR" "all"
@@ -112,6 +113,7 @@ append_volume_attribute_groups "APMGSRN"
 append_volume_attribute_groups "DC-INR"
 append_volume_attribute_groups "fV-SRN"
 append_volume_attribute_groups "RMDSRN"
+append_volume_attribute_groups "ECNR"
 
 module_for_config() {
     case "$1" in
@@ -179,8 +181,8 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne 352 ]]; then
-    printf 'Expected 352 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
+if [[ "${total}" -ne 360 ]]; then
+    printf 'Expected 360 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
     exit 2
 fi
 
