@@ -27,6 +27,64 @@ python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization__GT
 python -m var_expert_inr.cli train --config configs/ECNR/ionization__GT.yaml
 ```
 
+## Evaluation
+
+The run-based evaluator supports selected targets and inclusive timestep ranges
+without materializing an entire temporal prediction:
+
+```powershell
+python -m var_expert_inr.cli evaluate `
+  --run runs/siren-ionization-size082-GT/20260721_115139_637467 `
+  --metrics psnr,ssim,lpips,decode_time,memory `
+  --timesteps 0,10:30,40:99:10 `
+  --targets GT
+```
+
+Available metrics are `psnr`, `ssim`, `lpips`, `decode_time`, and `memory`.
+The default is `psnr`; the default target and timestep selections are `all`.
+SSIM and LPIPS automatically render matching ground-truth and prediction
+images. `--render` without `--metrics` renders predictions and does not require ground
+truth. PSNR, SSIM, and LPIPS always require readable, shape-compatible ground
+truth and fail before decoding when it is missing. Performance-only evaluation
+(`decode_time` and/or `memory`) also works without ground truth.
+
+Each new evaluation writes a self-contained report beneath
+`<run>/evaluations/<timestamp>/`, including `manifest.json`, `metrics.json`,
+`metrics.csv`, logs, and any requested PNGs. Decode timing excludes rendering,
+metric calculation, and prediction-file writes. Memory reports process RSS and,
+when applicable, CUDA allocated/reserved peaks.
+
+Quality and render results are reused when their source, selection, render
+profile, and GT fingerprints match; `--overwrite` forces a new evaluation.
+Performance metrics always perform a fresh decode. The evaluator also resolves
+legacy saved paths against the adjacent `INR/Datasets/<dataset_name>/` tree
+before the repository's small sample-data tree, so existing runs can use the
+full external Ionization arrays without editing their saved configs.
+
+Volume rendering uses the adjacent VolumeVis project. Install the optional
+evaluation dependencies and VolumeVis from the repository root:
+
+```powershell
+pip install -e ".[evaluation]"
+pip install -e "..\Vis[lpips]"
+```
+
+Built-in dataset render profiles ship with `var_expert_inr.evaluation`; use
+`--eval-config` for a custom profile. Ionization uses the packaged VolumeVis
+presets. Katrina uses its `fort.14` mesh. Node rendering
+requires a real VTU/VTK, ADCIRC `fort.14`, or explicit cell mesh; there is no
+point-cloud fallback. A prediction-only node render must define a fixed `clim`
+in its profile. Profiles may provide a VTU/VTK/`fort.14` path, or explicit
+`vertices_path` and `cells_path` NumPy arrays (including timestep templates).
+
+Standalone model entrypoints forward run-based evaluation to the same pipeline,
+for example:
+
+```powershell
+python -m var_expert_inr.apmgsrn.cli evaluate --run runs/<run> --timesteps 0:10
+python -m var_expert_inr.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
+```
+
 The checked-in experiment matrix contains 360 configs. General models cover
 Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
 single-target model has one config per attribute, and Ionization additionally

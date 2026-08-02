@@ -311,6 +311,10 @@ class ConfigMatrixTestCase(unittest.TestCase):
         self.assertTrue(payload["training"]["multiview_dwa_loss"]["enabled"])
         self.assertEqual(payload["training"]["multiview_dwa_loss"]["temperature"], 2.0)
         self.assertEqual(payload["training"]["multiview_dwa_loss"]["eps"], 1.0e-12)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["window_size"], 5)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["warmup_epochs"], 20)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["eta_max"], 1.0)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["eta_min"], 0.1)
 
     def test_primary_training_budget_is_exact(self):
         expected = 16_000 * 1_500 * 600

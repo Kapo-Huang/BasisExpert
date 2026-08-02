@@ -194,6 +194,10 @@ class ConfigLoadingTestCase(unittest.TestCase):
                     "enabled": True,
                     "temperature": 3.0,
                     "eps": 1.0e-10,
+                    "window_size": 7,
+                    "warmup_epochs": 24,
+                    "eta_max": 0.8,
+                    "eta_min": 0.2,
                 },
             },
         }
@@ -204,6 +208,38 @@ class ConfigLoadingTestCase(unittest.TestCase):
             self.assertTrue(loaded.training.multiview_dwa_loss.enabled)
             self.assertEqual(loaded.training.multiview_dwa_loss.temperature, 3.0)
             self.assertEqual(loaded.training.multiview_dwa_loss.eps, 1.0e-10)
+            self.assertEqual(loaded.training.multiview_dwa_loss.window_size, 7)
+            self.assertEqual(loaded.training.multiview_dwa_loss.warmup_epochs, 24)
+            self.assertEqual(loaded.training.multiview_dwa_loss.eta_max, 0.8)
+            self.assertEqual(loaded.training.multiview_dwa_loss.eta_min, 0.2)
+
+    def test_load_config_rejects_invalid_multiview_dwa_loss_settings(self):
+        base_config = {
+            "exp_id": "bad-dwa",
+            "experiment_root": "runs",
+            "data": {"kind": "volume", "target_path": "./target.npy"},
+            "model": {"name": "siren"},
+            "training": {"device": "cpu"},
+        }
+        invalid_sections = (
+            {"window_size": 4},
+            {"window_size": 11},
+            {"warmup_epochs": -1},
+            {"eta_max": 1.1},
+            {"eta_max": 0.2, "eta_min": 0.3},
+            {"eta_min": 0.0},
+        )
+        for section in invalid_sections:
+            with self.subTest(section=section), tempfile.TemporaryDirectory() as tmpdir:
+                config = dict(base_config)
+                config["training"] = {
+                    "device": "cpu",
+                    "multiview_dwa_loss": section,
+                }
+                config_path = Path(tmpdir) / "config.yaml"
+                config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    load_experiment_config(config_path)
 
     def test_load_config_rejects_unknown_log_key(self):
         config = {

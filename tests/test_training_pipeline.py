@@ -865,7 +865,7 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "head_num_layers": 2,
             },
             "training": {
-                "epochs": 3,
+                "epochs": 7,
                 "batch_size": 3,
                 "pred_batch_size": 3,
                 "num_workers": 0,
@@ -879,6 +879,8 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "multiview_dwa_loss": {
                     "enabled": True,
                     "temperature": 2.0,
+                    "window_size": 5,
+                    "warmup_epochs": 0,
                 },
             },
             "log": {
@@ -903,9 +905,11 @@ class TrainingPipelineTestCase(unittest.TestCase):
         run_train(config_path)
 
         log_text = self._read_log_text("var-expert-dwa-logs")
-        self.assertIn("DWA balance state: completed_epochs=3", log_text)
+        self.assertIn("DWA balance state: completed_epochs=7", log_text)
         self.assertIn("next_epoch_weights={", log_text)
         self.assertIn("DWA per-target loss (epoch avg):", log_text)
+        self.assertIn("DWA moving averages: previous=", log_text)
+        self.assertIn("eta=1.0", log_text)
         self.assertIn("a=", log_text)
         self.assertIn("b=", log_text)
 

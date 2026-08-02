@@ -15,8 +15,21 @@ dependencies = [
   "scikit-learn",
 ]
 
+[project.optional-dependencies]
+evaluation = [
+  "Pillow>=9",
+  "scikit-image>=0.20",
+  "lpips>=0.1.4",
+  "psutil>=5.9",
+  "pyvista>=0.43",
+  "vtk>=9",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"var_expert_inr.evaluation" = ["profiles/*.yaml"]

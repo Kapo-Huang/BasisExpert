@@ -161,6 +161,8 @@ def _resolve_existing_run_dirs(
 def _build_effective_config_payload(config, dataset_meta) -> dict:
     payload = config.to_dict()
     payload["model"] = effective_model_config(config.model, dataset_meta)
+    if dataset_meta.volume_shape is not None:
+        payload["data"]["volume_shape"] = dataset_meta.volume_shape.to_dict()
     return payload
 
 
@@ -431,11 +433,22 @@ def parse_args() -> argparse.Namespace:
     predict_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
     predict_source.add_argument("--artifact", default=None, help="Optional inference artifact (.ecnr for ECNR)")
 
-    eval_parser = subparsers.add_parser("evaluate", help="Evaluate a checkpoint")
-    eval_parser.add_argument("--config", required=True, help="Path to the experiment config")
+    eval_parser = subparsers.add_parser("evaluate", help="Evaluate a run or checkpoint")
+    eval_identity = eval_parser.add_mutually_exclusive_group(required=True)
+    eval_identity.add_argument("--config", help="Path to the experiment config")
+    eval_identity.add_argument("--run", help="Path to an existing run directory")
     eval_source = eval_parser.add_mutually_exclusive_group()
     eval_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
     eval_source.add_argument("--artifact", default=None, help="Optional inference artifact (.ecnr for ECNR)")
+    eval_source.add_argument("--prediction", default=None, help="Optional prediction file or directory")
+    eval_parser.add_argument("--source", choices=("auto", "checkpoint", "artifact", "prediction"), default=None)
+    eval_parser.add_argument("--metrics", default=None, help="Comma-separated: psnr,ssim,lpips,decode_time,memory")
+    eval_parser.add_argument("--timesteps", default=None, help="all, N, start:end[:step], or comma combinations")
+    eval_parser.add_argument("--targets", default=None, help="all or comma-separated target names")
+    eval_parser.add_argument("--render", action="store_true", help="Render selected prediction frames")
+    eval_parser.add_argument("--eval-config", default=None, help="Optional render-profile YAML")
+    eval_parser.add_argument("--overwrite", action="store_true", help="Bypass compatible cached evaluations")
+    eval_parser.add_argument("--device", default=None, help="Optional evaluation device override")
     return parser.parse_args()
 
 
@@ -457,12 +470,33 @@ def main() -> None:
         )
         return
     if args.command == "evaluate":
-        result = run_evaluate(
-            args.config,
-            checkpoint_path=args.checkpoint,
-            artifact_path=args.artifact,
+        from .evaluation.service import evaluate_run
+
+        if args.run:
+            run_dir = Path(args.run)
+        else:
+            loaded = load_experiment_config(args.config)
+            source_path = args.checkpoint or args.artifact
+            if source_path:
+                candidate = Path(source_path).resolve()
+                run_dir = candidate.parent.parent if candidate.parent.name in {"checkpoints", "artifacts"} else candidate.parent
+            else:
+                run_dir = _resolve_latest_run_dir(loaded)
+        result = evaluate_run(
+            run_dir,
+            metrics=args.metrics,
+            timesteps=args.timesteps,
+            targets=args.targets,
+            source=args.source,
+            checkpoint=args.checkpoint,
+            artifact=args.artifact,
+            prediction=args.prediction,
+            render=args.render,
+            render_profile=args.eval_config,
+            overwrite=args.overwrite,
+            device=args.device,
         )
-        logger.info("Metrics saved: %s", result["metrics_path"])
+        logger.info("Evaluation report saved: %s", result["metrics_path"])
         return
     raise ValueError(f"Unknown command: {args.command}")
 

@@ -78,6 +78,21 @@ class MultiAttrDWALossConfig:
     enabled: bool = False
     temperature: float = 2.0
     eps: float = 1e-12
+    window_size: int = 5
+    warmup_epochs: int = 20
+    eta_max: float = 1.0
+    eta_min: float = 0.1
+
+    def __post_init__(self) -> None:
+        if not 5 <= int(self.window_size) <= 10:
+            raise ValueError("multiview_dwa_loss.window_size must be between 5 and 10")
+        if int(self.warmup_epochs) < 0:
+            raise ValueError("multiview_dwa_loss.warmup_epochs must be non-negative")
+        if not 0.0 < float(self.eta_min) <= float(self.eta_max) <= 1.0:
+            raise ValueError(
+                "multiview_dwa_loss eta values must satisfy "
+                "0 < eta_min <= eta_max <= 1"
+            )
 
 
 @dataclass(frozen=True)
@@ -123,6 +138,26 @@ class PretrainConfig:
 class EvaluationConfig:
     batch_size: int = 16384
     save_predictions: bool = True
+    metrics: tuple[str, ...] = ("psnr",)
+    timesteps: str = "all"
+    targets: tuple[str, ...] | str = "all"
+    render_profile: str = "auto"
+    source: str = "auto"
+
+    def __post_init__(self) -> None:
+        from ..evaluation.selection import parse_metric_selection
+
+        object.__setattr__(self, "metrics", parse_metric_selection(self.metrics))
+        if isinstance(self.targets, list):
+            object.__setattr__(self, "targets", tuple(str(item) for item in self.targets))
+        normalized_source = str(self.source).strip().lower()
+        if normalized_source not in {"auto", "checkpoint", "artifact", "prediction"}:
+            raise ValueError(
+                "evaluation.source must be auto, checkpoint, artifact, or prediction"
+            )
+        object.__setattr__(self, "source", normalized_source)
+        if int(self.batch_size) <= 0:
+            raise ValueError("evaluation.batch_size must be positive")
 
 
 @dataclass(frozen=True)
@@ -262,6 +297,7 @@ class ExperimentConfig:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload.pop("source_config_path", None)
         payload["data"]["volume_shape"] = (
             self.data.volume_shape.to_dict() if self.data.volume_shape is not None else None
         )

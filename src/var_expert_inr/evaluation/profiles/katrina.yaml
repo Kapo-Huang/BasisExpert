@@ -1,0 +1,10 @@
+kind: node
+mesh_path: data/Mesh/Katrina/fort.14
+association: point
+cmap: yellow_biased_viridis
+background: white
+window_size: [1800, 1400]
+zoom: 1.8
+clim: [-1.0, 1.0]
+target_clims:
+  v: [0.0, 1.7320508075688772]

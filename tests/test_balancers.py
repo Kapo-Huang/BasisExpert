@@ -7,32 +7,110 @@ from var_expert_inr.training.balancers import MultiAttrDWALoss
 
 
 class MultiAttrDWALossTestCase(unittest.TestCase):
-    def test_original_dwa_epoch_schedule(self):
-        balancer = MultiAttrDWALoss(["a", "b"], temperature=2.0)
+    @staticmethod
+    def _submit_epoch(balancer, a_loss, b_loss):
+        balancer({"a": torch.tensor(float(a_loss)), "b": torch.tensor(float(b_loss))})
+        return balancer.end_epoch(return_details=True)
 
-        total = balancer({"a": torch.tensor(2.0), "b": torch.tensor(4.0)})
-        self.assertAlmostEqual(float(total.item()), 6.0)
-        first = balancer.end_epoch(return_details=True)
-        self.assertEqual(first["completed_epochs"], 1)
-        self.assertEqual(first["next_weights"], {"a": 1.0, "b": 1.0})
+    def test_overlapping_window_warmup_and_eta_schedule(self):
+        balancer = MultiAttrDWALoss(
+            ["a", "b"],
+            temperature=2.0,
+            total_epochs=30,
+            window_size=5,
+            warmup_epochs=20,
+            eta_max=1.0,
+            eta_min=0.1,
+        )
 
-        total = balancer({"a": torch.tensor(1.0), "b": torch.tensor(8.0)})
-        self.assertAlmostEqual(float(total.item()), 9.0)
-        second = balancer.end_epoch(return_details=True)
+        for epoch in range(1, 7):
+            details = self._submit_epoch(balancer, epoch, epoch**2)
 
-        ratios = torch.tensor([1.0 / 2.0, 8.0 / 4.0])
-        expected_weights = 2.0 * torch.softmax(ratios / 2.0, dim=0)
-        self.assertEqual(second["completed_epochs"], 2)
-        self.assertAlmostEqual(sum(second["next_weights"].values()), 2.0, places=6)
-        self.assertAlmostEqual(second["next_weights"]["a"], float(expected_weights[0].item()), places=6)
-        self.assertAlmostEqual(second["next_weights"]["b"], float(expected_weights[1].item()), places=6)
+        self.assertTrue(details["window_ready"])
+        self.assertFalse(details["warmup_complete"])
+        self.assertFalse(details["dynamic_update_applied"])
+        self.assertIsNone(details["eta"])
+        self.assertEqual(details["next_weights"], {"a": 1.0, "b": 1.0})
+        self.assertAlmostEqual(details["previous_window_loss"]["a"], 3.0)
+        self.assertAlmostEqual(details["current_window_loss"]["a"], 4.0)
+        self.assertAlmostEqual(details["previous_window_loss"]["b"], 11.0)
+        self.assertAlmostEqual(details["current_window_loss"]["b"], 18.0)
 
-        total = balancer({"a": torch.tensor(3.0), "b": torch.tensor(5.0)})
-        expected_total = expected_weights[0] * 3.0 + expected_weights[1] * 5.0
-        self.assertAlmostEqual(float(total.item()), float(expected_total.item()), places=6)
+        for epoch in range(7, 20):
+            details = self._submit_epoch(balancer, epoch, epoch**2)
+            self.assertEqual(details["next_weights"], {"a": 1.0, "b": 1.0})
+
+        first_update = self._submit_epoch(balancer, 20, 20**2)
+        previous_mean = torch.tensor([
+            sum(range(15, 20)) / 5.0,
+            sum(epoch**2 for epoch in range(15, 20)) / 5.0,
+        ])
+        current_mean = torch.tensor([
+            sum(range(16, 21)) / 5.0,
+            sum(epoch**2 for epoch in range(16, 21)) / 5.0,
+        ])
+        first_proposed = 2.0 * torch.softmax((current_mean / previous_mean) / 2.0, dim=0)
+        self.assertTrue(first_update["warmup_complete"])
+        self.assertTrue(first_update["dynamic_update_applied"])
+        self.assertEqual(first_update["eta"], 1.0)
+        torch.testing.assert_close(
+            balancer.current_weights,
+            first_proposed,
+        )
+
+        second_update = self._submit_epoch(balancer, 21, 21**2)
+        previous_mean = current_mean
+        current_mean = torch.tensor([
+            sum(range(17, 22)) / 5.0,
+            sum(epoch**2 for epoch in range(17, 22)) / 5.0,
+        ])
+        second_proposed = 2.0 * torch.softmax((current_mean / previous_mean) / 2.0, dim=0)
+        expected_eta = 0.1 ** (1.0 / 10.0)
+        expected_weights = (1.0 - expected_eta) * first_proposed + expected_eta * second_proposed
+        self.assertAlmostEqual(second_update["eta"], expected_eta)
+        torch.testing.assert_close(balancer.current_weights, expected_weights)
+
+        for epoch in range(22, 31):
+            details = self._submit_epoch(balancer, epoch, epoch**2)
+        self.assertAlmostEqual(details["eta"], 0.1)
+        self.assertAlmostEqual(sum(details["next_weights"].values()), 2.0, places=6)
+        torch.testing.assert_close(
+            balancer.epoch_loss_history,
+            torch.tensor([[float(e), float(e**2)] for e in range(25, 31)]),
+        )
+        self.assertEqual(int(balancer.epoch_loss_history_count.item()), 6)
+
+    def test_total_epochs_not_beyond_warmup_stays_uniform(self):
+        balancer = MultiAttrDWALoss(
+            ["a", "b"],
+            total_epochs=6,
+            window_size=5,
+            warmup_epochs=20,
+        )
+        for epoch in range(1, 7):
+            details = self._submit_epoch(balancer, epoch, epoch**2)
+        self.assertTrue(details["window_ready"])
+        self.assertFalse(details["dynamic_update_applied"])
+        self.assertEqual(details["next_weights"], {"a": 1.0, "b": 1.0})
+
+    def test_zero_previous_window_loss_uses_eps(self):
+        balancer = MultiAttrDWALoss(
+            ["a", "b"],
+            total_epochs=10,
+            window_size=5,
+            warmup_epochs=0,
+            eps=1.0e-12,
+        )
+        for _ in range(5):
+            self._submit_epoch(balancer, 0.0, 1.0)
+        details = self._submit_epoch(balancer, 1.0, 1.0)
+        self.assertTrue(details["dynamic_update_applied"])
+        self.assertTrue(math.isfinite(details["loss_ratio"]["a"]))
+        self.assertTrue(all(math.isfinite(value) for value in details["next_weights"].values()))
+        self.assertAlmostEqual(sum(details["next_weights"].values()), 2.0, places=6)
 
     def test_forward_details_and_update_stats_false(self):
-        balancer = MultiAttrDWALoss(["a", "b"])
+        balancer = MultiAttrDWALoss(["a", "b"], total_epochs=30)
         total, losses_t, weights, details = balancer(
             {"a": torch.tensor(1.5), "b": torch.tensor(2.5), "extra": torch.tensor(9.0)},
             return_details=True,
@@ -49,7 +127,7 @@ class MultiAttrDWALossTestCase(unittest.TestCase):
         self.assertEqual(int(balancer.epoch_batch_count.item()), 0)
 
     def test_state_dict_contains_all_dwa_buffers(self):
-        balancer = MultiAttrDWALoss(["a", "b"])
+        balancer = MultiAttrDWALoss(["a", "b"], total_epochs=30)
 
         self.assertEqual(list(balancer.parameters()), [])
         self.assertEqual(
@@ -57,8 +135,8 @@ class MultiAttrDWALossTestCase(unittest.TestCase):
             {
                 "current_weights",
                 "epoch_loss_sum",
-                "last_epoch_loss",
-                "second_last_epoch_loss",
+                "epoch_loss_history",
+                "epoch_loss_history_count",
                 "epoch_batch_count",
                 "completed_epochs",
             },
@@ -66,15 +144,29 @@ class MultiAttrDWALossTestCase(unittest.TestCase):
 
     def test_validates_inputs(self):
         with self.assertRaises(ValueError):
-            MultiAttrDWALoss([])
+            MultiAttrDWALoss([], total_epochs=30)
         with self.assertRaises(ValueError):
-            MultiAttrDWALoss(["a", "a"])
+            MultiAttrDWALoss(["a", "a"], total_epochs=30)
         with self.assertRaises(ValueError):
-            MultiAttrDWALoss(["a"], temperature=0.0)
+            MultiAttrDWALoss(["a"], temperature=0.0, total_epochs=30)
         with self.assertRaises(ValueError):
-            MultiAttrDWALoss(["a"], eps=0.0)
+            MultiAttrDWALoss(["a"], eps=0.0, total_epochs=30)
+        with self.assertRaises(ValueError):
+            MultiAttrDWALoss(["a"], total_epochs=0)
+        with self.assertRaises(ValueError):
+            MultiAttrDWALoss(["a"], total_epochs=30, window_size=4)
+        with self.assertRaises(ValueError):
+            MultiAttrDWALoss(["a"], total_epochs=30, window_size=11)
+        with self.assertRaises(ValueError):
+            MultiAttrDWALoss(["a"], total_epochs=30, warmup_epochs=-1)
+        with self.assertRaises(ValueError):
+            MultiAttrDWALoss(["a"], total_epochs=30, eta_min=0.0)
+        with self.assertRaises(ValueError):
+            MultiAttrDWALoss(["a"], total_epochs=30, eta_min=0.6, eta_max=0.5)
+        with self.assertRaises(ValueError):
+            MultiAttrDWALoss(["a"], total_epochs=30, eta_max=1.1)
 
-        balancer = MultiAttrDWALoss(["a", "b"])
+        balancer = MultiAttrDWALoss(["a", "b"], total_epochs=30)
         with self.assertRaises(KeyError):
             balancer({"a": torch.tensor(1.0)})
         with self.assertRaises(ValueError):

@@ -31,6 +31,9 @@ TOP_LEVEL_CONFIG_KEYS = {
     "training",
     "evaluation",
     "log",
+    # Effective run snapshots include this provenance field. It is accepted on
+    # reload but the snapshot path itself remains the active source.
+    "source_config_path",
 }
 TARGET_PLACEHOLDER = "{target}"
 

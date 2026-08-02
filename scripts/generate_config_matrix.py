@@ -471,6 +471,10 @@ def generate_var_expert() -> int:
                 "enabled": True,
                 "temperature": 2.0,
                 "eps": 1.0e-12,
+                "window_size": 5,
+                "warmup_epochs": 20,
+                "eta_max": 1.0,
+                "eta_min": 0.1,
             }
             dump(CONFIGS / "VarExpert" / "ionization_dwa.yaml", dwa_payload)
             count += 1

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from ..evaluation.cli import add_run_evaluation_arguments, execute_run_evaluation
 from .runner import run_evaluate, run_predict, run_train
 
 
@@ -16,11 +17,13 @@ def parse_args() -> argparse.Namespace:
 
     for name in ("predict", "evaluate"):
         command = commands.add_parser(name, help=f"{name.title()} an RMDSRN model")
-        command.add_argument("--config", required=True)
+        command.add_argument("--config", required=name != "evaluate")
         command.add_argument("--target", default=None)
         source = command.add_mutually_exclusive_group()
         source.add_argument("--artifact", default=None)
         source.add_argument("--checkpoint", default=None)
+        if name == "evaluate":
+            add_run_evaluation_arguments(command, run_required=False, include_source_paths=False)
     return parser.parse_args()
 
 
@@ -36,6 +39,11 @@ def main() -> None:
             checkpoint=args.checkpoint,
         )
     else:
+        if args.run:
+            execute_run_evaluation(args)
+            return
+        if not args.config:
+            raise ValueError("--config is required unless evaluate uses --run")
         run_evaluate(
             args.config,
             target=args.target,

@@ -1,0 +1,9 @@
+kind: volume
+preset_namespace: ionization
+layout: zyx
+target_presets:
+  H_plus: H+
+options:
+  width: 2048
+  height: 2048
+  gpu_mode: auto

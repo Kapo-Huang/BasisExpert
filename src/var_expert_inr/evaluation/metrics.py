@@ -40,6 +40,58 @@ class PSNRAccumulator:
         return 10.0 * math.log10((data_range ** 2) / (mse_val + EPS))
 
 
+class QualityAccumulator(PSNRAccumulator):
+    """Streaming numeric quality accumulator used by selected evaluations."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.total_absolute_error = 0.0
+
+    def update(self, gt: np.ndarray, pred: np.ndarray) -> None:
+        gt_f = np.asarray(gt, dtype=np.float64)
+        pred_f = np.asarray(pred, dtype=np.float64)
+        if gt_f.shape != pred_f.shape:
+            raise ValueError(f"QualityAccumulator shape mismatch: {gt_f.shape} vs {pred_f.shape}")
+        self.total_absolute_error += float(np.sum(np.abs(gt_f - pred_f)))
+        super().update(gt_f, pred_f)
+
+    def as_dict(self) -> dict[str, float | int]:
+        if self.total_count <= 0:
+            return {"count": 0, "mse": float("nan"), "mae": float("nan"), "psnr": float("nan")}
+        return {
+            "count": int(self.total_count),
+            "mse": float(self.total_squared_error / self.total_count),
+            "mae": float(self.total_absolute_error / self.total_count),
+            "psnr": float(self.compute()),
+        }
+
+
+def summarize_selected_quality(
+    rows: list[dict[str, Any]],
+    accumulators: dict[str, QualityAccumulator],
+    targets: tuple[str, ...],
+    metrics: tuple[str, ...],
+) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
+    per_target: dict[str, dict[str, Any]] = {}
+    for target in targets:
+        summary: dict[str, Any] = {}
+        if "psnr" in metrics:
+            summary.update(accumulators[target].as_dict())
+        target_rows = [row for row in rows if row.get("target") == target]
+        for metric in ("ssim", "lpips"):
+            values = [float(row[metric]) for row in target_rows if row.get(metric) is not None]
+            if metric in metrics and values:
+                summary[metric] = float(np.mean(values))
+        if summary:
+            per_target[target] = summary
+    aggregate: dict[str, float] = {}
+    for metric in ("mse", "mae", "psnr", "ssim", "lpips"):
+        values = [float(summary[metric]) for summary in per_target.values() if metric in summary]
+        if values:
+            aggregate[metric] = float(np.mean(values))
+    return per_target, aggregate
+
+
 def mse(gt: np.ndarray, pred: np.ndarray) -> float:
     return float(np.mean((np.asarray(gt) - np.asarray(pred)) ** 2))
 

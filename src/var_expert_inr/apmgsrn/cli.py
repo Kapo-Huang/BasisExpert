@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..evaluation.cli import add_run_evaluation_arguments, execute_run_evaluation
 from .runner import run_train
 
 
@@ -14,6 +15,8 @@ def parse_args() -> argparse.Namespace:
     train_parser.add_argument("--config", required=True, help="Path to APMGSRN config YAML")
     train_parser.add_argument("--target", default=None, help="Optional target override when DATA.targets is used")
     train_parser.add_argument("--identifier", default=None, help="Optional exp_id override")
+    evaluate_parser = subparsers.add_parser("evaluate", help="Evaluate a saved APMGSRN run")
+    add_run_evaluation_arguments(evaluate_parser)
     return parser.parse_args()
 
 
@@ -21,6 +24,9 @@ def main() -> None:
     args = parse_args()
     if args.command == "train":
         run_train(Path(args.config), target=args.target, identifier=args.identifier)
+        return
+    if args.command == "evaluate":
+        execute_run_evaluation(args)
         return
     raise ValueError(f"Unsupported command: {args.command}")
 

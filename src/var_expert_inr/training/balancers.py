@@ -132,14 +132,14 @@ class MultiAttrEMALoss(nn.Module):
 
 
 class MultiAttrDWALoss(nn.Module):
-    """Original Dynamic Weight Average loss balancer.
+    """Dynamic Weight Average loss balancer with smoothed epoch losses.
 
     Buffer semantics:
     current_weights is the weight vector used by the current epoch.
     epoch_loss_sum accumulates detached per-attribute batch losses in the current epoch.
     epoch_batch_count counts training batches accumulated in the current epoch.
-    last_epoch_loss stores the most recent completed epoch mean loss.
-    second_last_epoch_loss stores the completed epoch mean loss before last_epoch_loss.
+    epoch_loss_history stores the most recent window_size + 1 completed epoch means.
+    epoch_loss_history_count counts valid rows in epoch_loss_history.
     completed_epochs counts epochs submitted through end_epoch().
     """
 
@@ -148,6 +148,12 @@ class MultiAttrDWALoss(nn.Module):
         attr_names,
         temperature: float = 2.0,
         eps: float = 1e-12,
+        *,
+        total_epochs: int,
+        window_size: int = 5,
+        warmup_epochs: int = 20,
+        eta_max: float = 1.0,
+        eta_min: float = 0.1,
     ):
         super().__init__()
         attr_names = list(attr_names)
@@ -159,16 +165,55 @@ class MultiAttrDWALoss(nn.Module):
             raise ValueError("temperature must be > 0")
         if float(eps) <= 0.0:
             raise ValueError("eps must be > 0")
+        if int(total_epochs) <= 0:
+            raise ValueError("total_epochs must be > 0")
+        if not 5 <= int(window_size) <= 10:
+            raise ValueError("window_size must be between 5 and 10")
+        if int(warmup_epochs) < 0:
+            raise ValueError("warmup_epochs must be non-negative")
+        if not 0.0 < float(eta_min) <= float(eta_max) <= 1.0:
+            raise ValueError("eta values must satisfy 0 < eta_min <= eta_max <= 1")
         self.attr_names = attr_names
         self.temperature = float(temperature)
         self.eps = float(eps)
+        self.total_epochs = int(total_epochs)
+        self.window_size = int(window_size)
+        self.warmup_epochs = int(warmup_epochs)
+        self.eta_max = float(eta_max)
+        self.eta_min = float(eta_min)
+        self.first_update_epoch = max(self.warmup_epochs, self.window_size + 1)
         n_attrs = len(self.attr_names)
         self.register_buffer("current_weights", torch.ones(n_attrs))
         self.register_buffer("epoch_loss_sum", torch.zeros(n_attrs))
-        self.register_buffer("last_epoch_loss", torch.zeros(n_attrs))
-        self.register_buffer("second_last_epoch_loss", torch.zeros(n_attrs))
+        self.register_buffer(
+            "epoch_loss_history",
+            torch.zeros(self.window_size + 1, n_attrs),
+        )
+        self.register_buffer("epoch_loss_history_count", torch.zeros((), dtype=torch.long))
         self.register_buffer("epoch_batch_count", torch.zeros((), dtype=torch.long))
         self.register_buffer("completed_epochs", torch.zeros((), dtype=torch.long))
+
+    @torch.no_grad()
+    def _append_epoch_loss(self, epoch_loss: torch.Tensor) -> None:
+        history_count = int(self.epoch_loss_history_count.detach().item())
+        history_capacity = int(self.epoch_loss_history.shape[0])
+        if history_count < history_capacity:
+            self.epoch_loss_history[history_count].copy_(epoch_loss)
+            self.epoch_loss_history_count.add_(1)
+            return
+        shifted = torch.roll(self.epoch_loss_history, shifts=-1, dims=0)
+        self.epoch_loss_history.copy_(shifted)
+        self.epoch_loss_history[-1].copy_(epoch_loss)
+
+    def _eta_for_epoch(self, epoch: int) -> float:
+        schedule_span = self.total_epochs - self.first_update_epoch
+        if schedule_span <= 0:
+            return self.eta_max
+        progress = min(
+            max((float(epoch) - float(self.first_update_epoch)) / float(schedule_span), 0.0),
+            1.0,
+        )
+        return self.eta_max * (self.eta_min / self.eta_max) ** progress
 
     def _to_ordered_tensor(self, per_attr_losses: Dict[str, torch.Tensor]) -> torch.Tensor:
         for name in self.attr_names:
@@ -216,6 +261,9 @@ class MultiAttrDWALoss(nn.Module):
                 "weights": {n: float(weights[i].detach().item()) for i, n in enumerate(self.attr_names)},
                 "total": float(total.detach().item()),
                 "temperature": float(self.temperature),
+                "window_size": int(self.window_size),
+                "warmup_epochs": int(self.warmup_epochs),
+                "first_update_epoch": int(self.first_update_epoch),
                 "completed_epochs": int(self.completed_epochs.detach().item()),
                 "current_epoch_batch_count": int(self.epoch_batch_count.detach().item()),
             }
@@ -239,24 +287,38 @@ class MultiAttrDWALoss(nn.Module):
             dtype=self.epoch_loss_sum.dtype,
         )
         epoch_loss = self.epoch_loss_sum / batch_count_t
-        self.second_last_epoch_loss.copy_(self.last_epoch_loss)
-        self.last_epoch_loss.copy_(epoch_loss)
+        self._append_epoch_loss(epoch_loss)
         self.completed_epochs.add_(1)
+        completed_epochs = int(self.completed_epochs.detach().item())
 
         loss_ratio = None
-        if int(self.completed_epochs.detach().item()) >= 2:
-            loss_ratio = self.last_epoch_loss / self.second_last_epoch_loss.clamp_min(self.eps)
-            next_weights = float(len(self.attr_names)) * torch.softmax(
+        previous_window_loss = None
+        current_window_loss = None
+        proposed_weights = None
+        eta = None
+        history_count = int(self.epoch_loss_history_count.detach().item())
+        window_ready = history_count >= self.window_size + 1
+        if window_ready:
+            previous_window_loss = self.epoch_loss_history[:-1].mean(dim=0)
+            current_window_loss = self.epoch_loss_history[1:].mean(dim=0)
+            loss_ratio = current_window_loss / previous_window_loss.clamp_min(self.eps)
+            proposed_weights = float(len(self.attr_names)) * torch.softmax(
                 loss_ratio / float(self.temperature),
                 dim=0,
             )
-            self.current_weights.copy_(
-                next_weights.to(
-                    device=self.current_weights.device,
-                    dtype=self.current_weights.dtype,
-                )
+        dynamic_update_applied = (
+            proposed_weights is not None
+            and completed_epochs >= self.first_update_epoch
+            and self.total_epochs > self.first_update_epoch
+        )
+        if dynamic_update_applied:
+            eta = self._eta_for_epoch(completed_epochs)
+            proposed_weights_for_update = proposed_weights.to(
+                device=self.current_weights.device,
+                dtype=self.current_weights.dtype,
             )
-        else:
+            self.current_weights.mul_(1.0 - eta).add_(proposed_weights_for_update, alpha=eta)
+        elif completed_epochs < self.first_update_epoch:
             self.current_weights.fill_(1.0)
 
         details = None
@@ -268,9 +330,27 @@ class MultiAttrDWALoss(nn.Module):
                     n: float(self.current_weights[i].detach().item()) for i, n in enumerate(self.attr_names)
                 },
                 "temperature": float(self.temperature),
-                "completed_epochs": int(self.completed_epochs.detach().item()),
+                "window_size": int(self.window_size),
+                "warmup_epochs": int(self.warmup_epochs),
+                "first_update_epoch": int(self.first_update_epoch),
+                "window_ready": bool(window_ready),
+                "warmup_complete": bool(completed_epochs >= self.warmup_epochs),
+                "dynamic_update_applied": bool(dynamic_update_applied),
+                "eta": eta,
+                "completed_epochs": completed_epochs,
                 "epoch_batch_count": epoch_batches,
             }
+            if previous_window_loss is not None and current_window_loss is not None:
+                details["previous_window_loss"] = {
+                    n: float(previous_window_loss[i].detach().item()) for i, n in enumerate(self.attr_names)
+                }
+                details["current_window_loss"] = {
+                    n: float(current_window_loss[i].detach().item()) for i, n in enumerate(self.attr_names)
+                }
+            if proposed_weights is not None:
+                details["proposed_weights"] = {
+                    n: float(proposed_weights[i].detach().item()) for i, n in enumerate(self.attr_names)
+                }
             if loss_ratio is not None:
                 details["loss_ratio"] = {
                     n: float(loss_ratio[i].detach().item()) for i, n in enumerate(self.attr_names)
