@@ -24,6 +24,8 @@ ENV/
 
 # Training and experiment outputs
 /runs/
+/log/
+/batch_logs/
 *.pth
 *.pt
 *.ckpt
