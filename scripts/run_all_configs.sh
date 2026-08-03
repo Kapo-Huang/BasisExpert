@@ -8,14 +8,15 @@ RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/${RUN_TOKEN}}"
 STATUS_FILE="${LOG_ROOT}/status.tsv"
 FAILURE_FILE="${LOG_ROOT}/failed.txt"
+CONFIG_LIST_FILE="${CONFIG_LIST_FILE:-${SCRIPT_DIR}/run_all_configs.list}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-0}"
 GROUP_DELIM=$'\034'
 source "${SCRIPT_DIR}/lib/batch_runner.sh"
-batch_init_status
 
 declare -a GROUP_LABELS=()
 declare -a GROUP_CONFIGS=()
+declare -A SELECTED_CONFIGS=()
 
 join_configs() {
     local IFS="${GROUP_DELIM}"
@@ -118,6 +119,79 @@ append_volume_size_groups() {
     done
 }
 
+group_config_count() {
+    local count=0 group
+    local -a configs=()
+    for group in "${GROUP_CONFIGS[@]}"; do
+        IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
+        count=$((count + ${#configs[@]}))
+    done
+    printf '%d\n' "${count}"
+}
+
+load_config_selection() {
+    local raw line line_number=0
+    if [[ ! -f "${CONFIG_LIST_FILE}" ]]; then
+        printf 'Config list not found: %s\n' "${CONFIG_LIST_FILE}" >&2
+        return 2
+    fi
+    while IFS= read -r raw || [[ -n "${raw}" ]]; do
+        line_number=$((line_number + 1))
+        line="${raw%$'\r'}"
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -n "${line}" ]] || continue
+        line="${line#./}"
+        if [[ "${line}" != configs/*.yaml ]]; then
+            printf 'Invalid config list entry at %s:%d: %s\n' "${CONFIG_LIST_FILE}" "${line_number}" "${line}" >&2
+            return 2
+        fi
+        if [[ -n "${SELECTED_CONFIGS[${line}]+x}" ]]; then
+            printf 'Duplicate config list entry at %s:%d: %s\n' "${CONFIG_LIST_FILE}" "${line_number}" "${line}" >&2
+            return 2
+        fi
+        if [[ ! -f "${REPO_ROOT}/${line}" ]]; then
+            printf 'Selected config does not exist at %s:%d: %s\n' "${CONFIG_LIST_FILE}" "${line_number}" "${line}" >&2
+            return 2
+        fi
+        SELECTED_CONFIGS["${line}"]="${line_number}"
+    done < "${CONFIG_LIST_FILE}"
+    if [[ "${#SELECTED_CONFIGS[@]}" -eq 0 ]]; then
+        printf 'Config list contains no active entries: %s\n' "${CONFIG_LIST_FILE}" >&2
+        return 2
+    fi
+}
+
+apply_config_selection() {
+    local group_index config relative selected_path
+    local -a configs=() selected=() filtered_labels=() filtered_groups=()
+    local -A matched=()
+    for group_index in "${!GROUP_CONFIGS[@]}"; do
+        IFS="${GROUP_DELIM}" read -r -a configs <<< "${GROUP_CONFIGS[${group_index}]}"
+        selected=()
+        for config in "${configs[@]}"; do
+            relative="${config#${REPO_ROOT}/}"
+            if [[ -n "${SELECTED_CONFIGS[${relative}]+x}" ]]; then
+                selected+=("${config}")
+                matched["${relative}"]=1
+            fi
+        done
+        if [[ "${#selected[@]}" -gt 0 ]]; then
+            filtered_labels+=("${GROUP_LABELS[${group_index}]}")
+            filtered_groups+=("$(join_configs "${selected[@]}")")
+        fi
+    done
+    for selected_path in "${!SELECTED_CONFIGS[@]}"; do
+        if [[ -z "${matched[${selected_path}]+x}" ]]; then
+            printf 'Selected config is not part of the formal matrix: %s\n' "${selected_path}" >&2
+            return 2
+        fi
+    done
+    GROUP_LABELS=("${filtered_labels[@]}")
+    GROUP_CONFIGS=("${filtered_groups[@]}")
+}
+
 # Phase 1: finish every model's main experiments on all datasets before Size runs.
 append_serial_main_family "VarExpert"
 append_serial_main_family "MVNet"
@@ -165,15 +239,16 @@ wait_for_all_pids() {
     done
 }
 
-total=0
-for group in "${GROUP_CONFIGS[@]}"; do
-    IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
-    total=$((total + ${#configs[@]}))
-done
-if [[ "${total}" -ne 356 ]]; then
-    printf 'Expected 356 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
+matrix_total="$(group_config_count)"
+if [[ "${matrix_total}" -ne 356 ]]; then
+    printf 'Expected 356 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
     exit 2
 fi
+load_config_selection || exit $?
+apply_config_selection || exit $?
+total="$(group_config_count)"
+batch_init_status || exit $?
+printf 'Selected %d of %d configs from %s\n' "${total}" "${matrix_total}" "${CONFIG_LIST_FILE}"
 
 cd "${REPO_ROOT}"
 

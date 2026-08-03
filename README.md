@@ -100,10 +100,21 @@ while VarExpert and MC-INR receive the full tier. APMGSRN counts all 100
 timestep models toward that one-variable share; DC-INR receives the already
 divided target through `compression.target_size_mib`.
 
-Run the complete matrix sequentially in the `compression` conda environment:
+The default selection file, `scripts/run_all_configs.list`, contains the full
+formal matrix. Comment out or delete paths in that file to select a subset; no
+config-selection arguments are required. The remaining entries still follow the
+model grouping and main-before-Size order defined by the runner.
+
+Run the selected configs in the `compression` conda environment:
 
 ```bash
 bash scripts/run_all_configs.sh
+```
+
+An alternate list can be supplied without modifying the default file:
+
+```bash
+CONFIG_LIST_FILE=scripts/my_configs.list bash scripts/run_all_configs.sh
 ```
 
 The script continues after individual failures and writes per-config logs plus

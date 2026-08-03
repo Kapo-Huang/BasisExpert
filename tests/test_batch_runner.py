@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 HELPER = Path(__file__).resolve().parents[1] / "scripts" / "lib" / "batch_runner.sh"
+RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_all_configs.sh"
 
 
 class BatchRunnerTestCase(unittest.TestCase):
@@ -96,6 +97,50 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             self.assertIn("failed=configs/a.yaml,", output)
             self.assertIn("after_append=ok,3,", output)
             self.assertEqual(status.read_text(encoding="utf-8").count("\n"), 8)
+
+    def test_formal_runner_uses_config_list_subset_in_matrix_order(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            selection = root / "selected.list"
+            selection.write_text(
+                "# Only these two configs should run.\n"
+                "configs/SIREN/Size082/ionization__GT.yaml\n"
+                "configs/VarExpert/combustion_40NH3_1.yaml\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "MAX_PARALLEL_JOBS": "1",
+                    "CONFIG_LIST_FILE": selection.as_posix(),
+                    "BATCH_LOG_ROOT": (root / "batch").as_posix(),
+                }
+            )
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+            completed = subprocess.run(
+                [bash, RUNNER.as_posix()],
+                cwd=RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            output = completed.stdout
+
+            self.assertIn("Selected 2 of 356 configs", output)
+            main_position = output.index("configs/VarExpert/combustion_40NH3_1.yaml")
+            size_position = output.index("configs/SIREN/Size082/ionization__GT.yaml")
+            self.assertLess(main_position, size_position)
+            self.assertIn("Completed 2 configs; failures=0", output)
 
 
 if __name__ == "__main__":

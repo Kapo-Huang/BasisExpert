@@ -62,6 +62,18 @@ class ConfigMatrixTestCase(unittest.TestCase):
         self.assertEqual(len(generated_paths), 356)
         self.assertEqual(generated_payload, committed_payload)
 
+    def test_default_run_list_contains_the_complete_formal_matrix(self):
+        list_path = self.repo_root / "scripts" / "run_all_configs.list"
+        selected = [
+            line.split("#", 1)[0].strip()
+            for line in list_path.read_text(encoding="utf-8").splitlines()
+        ]
+        selected = [line for line in selected if line]
+        expected = {path.relative_to(self.repo_root).as_posix() for path in self.paths}
+
+        self.assertEqual(len(selected), 356)
+        self.assertEqual(set(selected), expected)
+
     def test_single_target_default_and_size_coverage(self):
         for family in ("SIREN", "CoordNet", "MoE-INR", "NeuralExpert"):
             for dataset, targets in DATASET_TARGETS.items():
