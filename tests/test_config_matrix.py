@@ -40,6 +40,14 @@ class ConfigMatrixTestCase(unittest.TestCase):
         cls.config_root = cls.repo_root / "configs"
         cls.paths = sorted(cls.config_root.rglob("*.yaml"))
 
+    def read_run_list(self, name: str) -> list[str]:
+        list_path = self.repo_root / "scripts" / name
+        selected = [
+            line.split("#", 1)[0].strip()
+            for line in list_path.read_text(encoding="utf-8").splitlines()
+        ]
+        return [line for line in selected if line]
+
     def test_matrix_contains_exactly_356_configs_and_no_removed_datasets(self):
         self.assertEqual(len(self.paths), 356)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
@@ -63,16 +71,24 @@ class ConfigMatrixTestCase(unittest.TestCase):
         self.assertEqual(generated_payload, committed_payload)
 
     def test_default_run_list_contains_the_complete_formal_matrix(self):
-        list_path = self.repo_root / "scripts" / "run_all_configs.list"
-        selected = [
-            line.split("#", 1)[0].strip()
-            for line in list_path.read_text(encoding="utf-8").splitlines()
-        ]
-        selected = [line for line in selected if line]
+        selected = self.read_run_list("run_all_configs.list")
         expected = {path.relative_to(self.repo_root).as_posix() for path in self.paths}
 
         self.assertEqual(len(selected), 356)
         self.assertEqual(set(selected), expected)
+
+    def test_main_and_rd_curve_lists_partition_the_complete_matrix(self):
+        all_configs = set(self.read_run_list("run_all_configs.list"))
+        main_configs = self.read_run_list("run_main_configs.list")
+        rd_curve_configs = self.read_run_list("run_rd_curve_configs.list")
+        size_marker = "/Size"
+
+        self.assertEqual(len(main_configs), 121)
+        self.assertEqual(len(rd_curve_configs), 235)
+        self.assertTrue(all(size_marker not in path for path in main_configs))
+        self.assertTrue(all(size_marker in path for path in rd_curve_configs))
+        self.assertTrue(set(main_configs).isdisjoint(rd_curve_configs))
+        self.assertEqual(set(main_configs) | set(rd_curve_configs), all_configs)
 
     def test_single_target_default_and_size_coverage(self):
         for family in ("SIREN", "CoordNet", "MoE-INR", "NeuralExpert"):

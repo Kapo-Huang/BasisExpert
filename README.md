@@ -117,6 +117,16 @@ An alternate list can be supplied without modifying the default file:
 CONFIG_LIST_FILE=scripts/my_configs.list bash scripts/run_all_configs.sh
 ```
 
+Two ready-made subsets are also provided:
+
+```bash
+# Main experiments only: 121 configs without Size tiers
+CONFIG_LIST_FILE=scripts/run_main_configs.list bash scripts/run_all_configs.sh
+
+# RD-Curve experiments only: 235 Size-tier configs
+CONFIG_LIST_FILE=scripts/run_rd_curve_configs.list bash scripts/run_all_configs.sh
+```
+
 The script continues after individual failures and writes per-config logs plus
 `status.tsv` and `failed.txt` under `batch_logs/<timestamp>/`. Reuse a batch by
 passing its directory as `BATCH_LOG_ROOT`:
