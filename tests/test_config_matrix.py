@@ -36,8 +36,8 @@ class ConfigMatrixTestCase(unittest.TestCase):
         cls.config_root = cls.repo_root / "configs"
         cls.paths = sorted(cls.config_root.rglob("*.yaml"))
 
-    def test_matrix_contains_exactly_355_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 355)
+    def test_matrix_contains_exactly_356_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 356)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 

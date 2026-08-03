@@ -85,7 +85,7 @@ python -m var_expert_inr.apmgsrn.cli evaluate --run runs/<run> --timesteps 0:10
 python -m var_expert_inr.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
 ```
 
-The checked-in formal experiment matrix contains 355 configs. General models cover
+The checked-in formal experiment matrix contains 356 configs. General models cover
 Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
 single-target model has one config per attribute, and Ionization additionally
 has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants plus a
@@ -159,6 +159,49 @@ artifact. The model contracts five independent sine-MLP factors in the fixed
 `x -> y -> f -> z -> t -> x` Tensor Ring order and directly consumes the
 framework's existing `[-1, 1]` coordinates and targets.
 The resolved effective config is saved as `runs/<exp_id>/<timestamp>/configs/config.yaml`.
+
+## RealPDEBench combustion tools
+
+Run the standalone script with the `compression` conda environment. Inspect
+real or numerical trajectories and optionally compute exact value statistics:
+
+```powershell
+D:\Anaconda3\envs\compression\python.exe scripts\combustion.py inspect `
+  --dataset-dir "E:\Research\Project\Scientific Compression\INR\Datasets\RealPDEBench\combustion\hf_dataset\real" `
+  --scan-values
+```
+
+Render a full-resolution trajectory as a fixed-scale PNG sequence and MP4:
+
+```powershell
+D:\Anaconda3\envs\compression\python.exe scripts\combustion.py render `
+  --dataset-dir "E:\Research\Project\Scientific Compression\INR\Datasets\RealPDEBench\combustion\hf_dataset\real" `
+  --sim-id 0NH3_1.h5 `
+  --frames all `
+  --scale global-minmax `
+  --sampling-fps 4000 `
+  --video-fps 30
+```
+
+Export all 15 numerical channels from `40NH3_1.h5` as 13 normalized structured-
+volume targets (the three velocity components become one vector target):
+
+```powershell
+D:\Anaconda3\envs\compression\python.exe scripts\combustion.py export-volume `
+  --dataset-dir "E:\Research\Project\Scientific Compression\INR\Datasets\RealPDEBench\combustion\hf_dataset\numerical" `
+  --sim-id 40NH3_1.h5 `
+  --output "data\Volume\Combustion"
+```
+
+The real dataset contains OH* chemiluminescence intensity rather than a
+temperature field. Its Arrow rows store raw float32 `(T,H,W)` byte payloads;
+the renderer preserves the native 128x128 camera orientation and derives the
+displayed time from the configured sampling rate because real rows do not
+contain coordinate or time arrays. Render outputs are written below
+`runs/visualizations/combustion/` by default. Numerical targets are flattened
+in C order from `(T,Y,X,C)`, so x changes fastest, followed by y and t. Their
+normalization parameters and physical coordinate ranges are stored in the
+generated `data/Volume/Combustion/manifest.json`.
 When `predict` or `evaluate` runs without an explicit checkpoint, it reuses the
 latest timestamped run under the matching `exp_id`.
 For `var_expert`, architecture fields that remain at default values are omitted

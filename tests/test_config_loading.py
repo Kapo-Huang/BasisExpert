@@ -43,6 +43,15 @@ class ConfigLoadingTestCase(unittest.TestCase):
             self.assertIn("SALT", loaded.data.targets)
             self.assertIn("-bathymetry-SALT", loaded.exp_id)
 
+    def test_combustion_config_uses_xyt_coordinates(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        loaded = load_experiment_config(
+            repo_root / "configs" / "VarExpert" / "combustion_40NH3_1.yaml"
+        )
+        self.assertEqual(loaded.data.coordinate_axes, ("x", "y", "t"))
+        self.assertEqual(loaded.model.params["in_features"], 3)
+        self.assertEqual(len(loaded.data.targets), 13)
+
     def test_repo_standard_configs_load_recursively(self):
         repo_root = Path(__file__).resolve().parents[1]
         configs_root = repo_root / "configs"

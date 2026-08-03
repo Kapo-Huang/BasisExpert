@@ -44,4 +44,5 @@ def build_dataset(data_cfg: DataConfig, *, model_name: str | None = None):
         target_path=target_path,
         targets=selected_targets,
         volume_shape=data_cfg.volume_shape,
+        coordinate_axes=data_cfg.coordinate_axes,
     )

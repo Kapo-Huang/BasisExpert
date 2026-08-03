@@ -41,18 +41,28 @@ collect_files() {
     find "${dir}" -maxdepth 1 -type f -name "${pattern}" -print | LC_ALL=C sort
 }
 
-append_serial_family() {
+append_serial_main_family() {
     local family="$1"
     local config
     while IFS= read -r config; do
-        add_group "${family}:${config#${REPO_ROOT}/configs/${family}/}" "${config}"
-    done < <(find "${REPO_ROOT}/configs/${family}" -type f -name '*.yaml' -print | LC_ALL=C sort)
+        add_group "main:${family}:${config#${REPO_ROOT}/configs/${family}/}" "${config}"
+    done < <(collect_files "${REPO_ROOT}/configs/${family}" '*.yaml')
 }
 
-append_attribute_groups() {
+append_serial_size_family() {
+    local family="$1"
+    local size config
+    for size in Size082 Size163 Size326 Size652 Size1304; do
+        while IFS= read -r config; do
+            add_group "size:${family}:${size}:${config##*/}" "${config}"
+        done < <(collect_files "${REPO_ROOT}/configs/${family}/${size}" '*.yaml')
+    done
+}
+
+append_attribute_main_groups() {
     local family="$1"
     local mode="${2:-all}"
-    local dataset size config
+    local dataset config
     local -a configs=()
     for dataset in bathymetry katrina ionization; do
         configs=()
@@ -63,8 +73,15 @@ append_attribute_groups() {
             esac
             configs+=("${config}")
         done < <(collect_files "${REPO_ROOT}/configs/${family}" "${dataset}__*.yaml")
-        add_group "${family}:${dataset}:${mode}" "${configs[@]}"
+        add_group "main:${family}:${dataset}:${mode}" "${configs[@]}"
     done
+}
+
+append_attribute_size_groups() {
+    local family="$1"
+    local mode="${2:-all}"
+    local size config
+    local -a configs=()
     for size in Size082 Size163 Size326 Size652 Size1304; do
         configs=()
         while IFS= read -r config; do
@@ -74,44 +91,63 @@ append_attribute_groups() {
             esac
             configs+=("${config}")
         done < <(collect_files "${REPO_ROOT}/configs/${family}/${size}" 'ionization__*.yaml')
-        add_group "${family}:${size}:ionization:${mode}" "${configs[@]}"
+        add_group "size:${family}:${size}:ionization:${mode}" "${configs[@]}"
     done
 }
 
-append_volume_attribute_groups() {
+append_volume_main_group() {
     local family="$1"
-    local size config
+    local config
     local -a configs=()
-    configs=()
     while IFS= read -r config; do
         configs+=("${config}")
     done < <(collect_files "${REPO_ROOT}/configs/${family}" 'ionization__*.yaml')
-    add_group "${family}:ionization" "${configs[@]}"
+    add_group "main:${family}:ionization" "${configs[@]}"
+}
+
+append_volume_size_groups() {
+    local family="$1"
+    local size config
+    local -a configs=()
     for size in Size082 Size163 Size326 Size652 Size1304; do
         configs=()
         while IFS= read -r config; do
             configs+=("${config}")
         done < <(collect_files "${REPO_ROOT}/configs/${family}/${size}" 'ionization__*.yaml')
-        add_group "${family}:${size}:ionization" "${configs[@]}"
+        add_group "size:${family}:${size}:ionization" "${configs[@]}"
     done
 }
 
-append_serial_family "VarExpert"
-append_serial_family "MVNet"
-append_attribute_groups "SIREN" "all"
-append_attribute_groups "CoordNet" "all"
-append_attribute_groups "MoE-INR" "all"
-append_volume_attribute_groups "CompactNGP"
-append_volume_attribute_groups "InstantNGP"
-append_volume_attribute_groups "FA-TR-INR"
-append_serial_family "MC-INR"
-append_attribute_groups "NeuralExpert" "manager"
-append_attribute_groups "NeuralExpert" "main"
-append_volume_attribute_groups "APMGSRN"
-append_volume_attribute_groups "DC-INR"
-append_volume_attribute_groups "fV-SRN"
-append_volume_attribute_groups "RMDSRN"
-append_volume_attribute_groups "ECNR"
+# Phase 1: finish every model's main experiments on all datasets before Size runs.
+append_serial_main_family "VarExpert"
+append_serial_main_family "MVNet"
+append_attribute_main_groups "SIREN" "all"
+append_attribute_main_groups "CoordNet" "all"
+append_attribute_main_groups "MoE-INR" "all"
+append_volume_main_group "CompactNGP"
+append_volume_main_group "InstantNGP"
+append_volume_main_group "FA-TR-INR"
+append_serial_main_family "MC-INR"
+append_attribute_main_groups "NeuralExpert" "manager"
+append_attribute_main_groups "NeuralExpert" "main"
+append_volume_main_group "APMGSRN"
+append_volume_main_group "DC-INR"
+append_volume_main_group "fV-SRN"
+append_volume_main_group "RMDSRN"
+append_volume_main_group "ECNR"
+
+# Phase 2: run the complete Size matrix only after all main experiments finish.
+append_serial_size_family "VarExpert"
+append_attribute_size_groups "SIREN" "all"
+append_attribute_size_groups "CoordNet" "all"
+append_attribute_size_groups "MoE-INR" "all"
+append_serial_size_family "MC-INR"
+append_attribute_size_groups "NeuralExpert" "manager"
+append_attribute_size_groups "NeuralExpert" "main"
+append_volume_size_groups "APMGSRN"
+append_volume_size_groups "DC-INR"
+append_volume_size_groups "fV-SRN"
+append_volume_size_groups "RMDSRN"
 
 wait_for_pid_at() {
     local index="$1"
@@ -134,8 +170,8 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne 355 ]]; then
-    printf 'Expected 355 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
+if [[ "${total}" -ne 356 ]]; then
+    printf 'Expected 356 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
     exit 2
 fi
 

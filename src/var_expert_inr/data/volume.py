@@ -37,6 +37,7 @@ class VolumeFieldDataset(FieldDataset):
         target_path: str | None = None,
         targets: dict[str, str] | None = None,
         volume_shape: VolumeShape | None = None,
+        coordinate_axes: tuple[str, ...] | None = None,
     ) -> None:
         if target_path is None and not targets:
             raise ValueError("VolumeFieldDataset requires target_path or targets")
@@ -53,6 +54,30 @@ class VolumeFieldDataset(FieldDataset):
 
         first = self._targets_np[self._target_names[0]]
         self.volume_shape = infer_volume_shape(first, volume_shape)
+        self.coordinate_axes = tuple(coordinate_axes or ("x", "y", "z", "t"))
+        axis_sizes = {
+            "x": int(self.volume_shape.X),
+            "y": int(self.volume_shape.Y),
+            "z": int(self.volume_shape.Z),
+            "t": int(self.volume_shape.T),
+        }
+        invalid = [axis for axis in self.coordinate_axes if axis not in axis_sizes]
+        if invalid:
+            raise ValueError(f"Unknown volume coordinate axes: {', '.join(invalid)}")
+        if len(set(self.coordinate_axes)) != len(self.coordinate_axes):
+            raise ValueError("Volume coordinate axes must not contain duplicates")
+        canonical = tuple(axis for axis in ("x", "y", "z", "t") if axis in self.coordinate_axes)
+        if self.coordinate_axes != canonical:
+            raise ValueError("Volume coordinate axes must preserve canonical x, y, z, t order")
+        omitted_non_singleton = [
+            axis for axis, size in axis_sizes.items()
+            if axis not in self.coordinate_axes and size != 1
+        ]
+        if omitted_non_singleton:
+            raise ValueError(
+                "Volume coordinate axes may omit only singleton dimensions; "
+                "non-singleton axes omitted: " + ", ".join(omitted_non_singleton)
+            )
         for name, arr in self._targets_np.items():
             shape = infer_volume_shape(arr, self.volume_shape)
             if shape != self.volume_shape:
@@ -61,7 +86,7 @@ class VolumeFieldDataset(FieldDataset):
         self.meta = DatasetMeta(
             kind="volume",
             n_samples=int(self.volume_shape.N),
-            input_dim=4,
+            input_dim=len(self.coordinate_axes),
             target_names=self._target_names,
             target_dims={name: target_dim_from_array(arr) for name, arr in self._targets_np.items()},
             volume_shape=self.volume_shape,
@@ -79,14 +104,14 @@ class VolumeFieldDataset(FieldDataset):
         z = rows % self.volume_shape.Z
         rows = rows // self.volume_shape.Z
         t = rows
+        normalized = {
+            "x": normalize_index_coordinates(x, self.volume_shape.X),
+            "y": normalize_index_coordinates(y, self.volume_shape.Y),
+            "z": normalize_index_coordinates(z, self.volume_shape.Z),
+            "t": normalize_index_coordinates(t, self.volume_shape.T),
+        }
         return np.stack(
-            [
-                normalize_index_coordinates(x, self.volume_shape.X),
-                normalize_index_coordinates(y, self.volume_shape.Y),
-                normalize_index_coordinates(z, self.volume_shape.Z),
-                normalize_index_coordinates(t, self.volume_shape.T),
-            ],
-            axis=1,
+            [normalized[axis] for axis in self.coordinate_axes], axis=1
         ).astype(np.float32)
 
     def fetch_batch(

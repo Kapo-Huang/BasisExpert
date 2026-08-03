@@ -87,6 +87,40 @@ class DataLoadingTestCase(unittest.TestCase):
         self.assertEqual(tuple(batch.targets["a"].shape), (3, 1))
         self.assertEqual(tuple(batch.targets["b"].shape), (3, 2))
 
+    def test_volume_can_omit_singleton_z_from_coordinates(self):
+        volume = np.linspace(-1.0, 1.0, 16, dtype=np.float32).reshape(2, 1, 2, 4)
+        volume_path = self.root / "volume_xyt.npy"
+        np.save(volume_path, volume)
+
+        dataset = VolumeFieldDataset(
+            target_path=str(volume_path),
+            coordinate_axes=("x", "y", "t"),
+        )
+        self.assertEqual(dataset.meta.input_dim, 3)
+        batch = dataset.fetch_batch([0, 3, 4, 15])
+        np.testing.assert_allclose(
+            batch.coords.numpy(),
+            np.array(
+                [
+                    [-1.0, -1.0, -1.0],
+                    [1.0, -1.0, -1.0],
+                    [-1.0, 1.0, -1.0],
+                    [1.0, 1.0, 1.0],
+                ],
+                dtype=np.float32,
+            ),
+        )
+
+    def test_volume_rejects_omitting_non_singleton_axis(self):
+        volume = np.zeros((2, 2, 2, 2), dtype=np.float32)
+        volume_path = self.root / "volume_xyz.npy"
+        np.save(volume_path, volume)
+        with self.assertRaisesRegex(ValueError, "non-singleton axes omitted: z"):
+            VolumeFieldDataset(
+                target_path=str(volume_path),
+                coordinate_axes=("x", "y", "t"),
+            )
+
     def test_build_dataset_selects_named_target_for_single_target_node_model(self):
         coords = np.array(
             [

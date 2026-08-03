@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 
 
+VOLUME_COORDINATE_AXES = ("x", "y", "z", "t")
+
+
 def _normalize_loss_type(loss_type: str) -> str:
     normalized = str(loss_type).strip().lower()
     if normalized not in {"mse", "l1"}:
@@ -215,9 +218,27 @@ class DataConfig:
     targets: dict[str, str] | None = None
     target: str | None = None
     volume_shape: VolumeShape | None = None
+    coordinate_axes: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", _normalize_data_kind(self.kind))
+        if self.coordinate_axes is not None:
+            axes = tuple(str(axis).strip().lower() for axis in self.coordinate_axes)
+            if not axes:
+                raise ValueError("data.coordinate_axes must not be empty")
+            if len(set(axes)) != len(axes):
+                raise ValueError("data.coordinate_axes must not contain duplicates")
+            unknown = [axis for axis in axes if axis not in VOLUME_COORDINATE_AXES]
+            if unknown:
+                raise ValueError(
+                    "data.coordinate_axes contains unknown axes: " + ", ".join(unknown)
+                )
+            canonical = tuple(axis for axis in VOLUME_COORDINATE_AXES if axis in axes)
+            if axes != canonical:
+                raise ValueError(
+                    "data.coordinate_axes must preserve canonical x, y, z, t order"
+                )
+            object.__setattr__(self, "coordinate_axes", axes)
         if self.target is not None:
             object.__setattr__(self, "target", str(self.target))
             if self.targets is None:
@@ -231,6 +252,8 @@ class DataConfig:
                 raise ValueError("node datasets require target_path or targets")
             if self.volume_shape is not None:
                 raise ValueError("node datasets must not define volume_shape")
+            if self.coordinate_axes is not None:
+                raise ValueError("node datasets must not define coordinate_axes")
         else:
             if self.target_path is None and not self.targets:
                 raise ValueError("volume datasets require target_path or targets")
@@ -321,5 +344,8 @@ class ExperimentConfig:
         payload.pop("source_config_path", None)
         payload["data"]["volume_shape"] = (
             self.data.volume_shape.to_dict() if self.data.volume_shape is not None else None
+        )
+        payload["data"]["coordinate_axes"] = (
+            list(self.data.coordinate_axes) if self.data.coordinate_axes is not None else None
         )
         return payload

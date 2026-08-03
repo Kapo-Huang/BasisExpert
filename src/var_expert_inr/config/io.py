@@ -145,6 +145,11 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         targets=data_payload.get("targets"),
         target=data_payload.get("target"),
         volume_shape=_parse_volume_shape(data_payload.get("volume_shape")),
+        coordinate_axes=(
+            tuple(data_payload["coordinate_axes"])
+            if data_payload.get("coordinate_axes") is not None
+            else None
+        ),
     )
     model_cfg = ModelConfig(name=str(model_payload.pop("name")), params=model_payload)
     training_cfg = TrainingConfig(
