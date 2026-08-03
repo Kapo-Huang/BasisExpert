@@ -41,6 +41,26 @@ DATASETS = {
         "targets": ["GT", "H_plus", "H2", "He", "PD"],
     },
 }
+COMBUSTION_DATASET = {
+    "name": "combustion_40NH3_1",
+    "volume_shape": {"X": 128, "Y": 128, "Z": 1, "T": 2001},
+    "coordinate_axes": ["x", "y", "t"],
+    "targets": [
+        "Absolute_Pressure",
+        "Chemistry_Heat_Release_Rate",
+        "Mole_Fraction_of_CH4",
+        "Mole_Fraction_of_CO",
+        "Mole_Fraction_of_CO2",
+        "Mole_Fraction_of_H2O",
+        "Mole_Fraction_of_NH2",
+        "Mole_Fraction_of_NH3",
+        "Mole_Fraction_of_OH",
+        "Pressure",
+        "Temperature",
+        "Velocity",
+        "Velocity_Magnitude",
+    ],
+}
 TARGET_FILES = {"H_plus": "H+"}
 UNIFIED_SIZE_MODELS = {
     "SIREN": {
@@ -133,6 +153,21 @@ def unified_data(dataset: str, nested: bool, target: str | None = None) -> dict:
     if target is not None:
         payload["target"] = target
     return payload
+
+
+def combustion_data() -> dict:
+    dataset_name = COMBUSTION_DATASET["name"]
+    return {
+        "kind": "volume",
+        "dataset_name": dataset_name,
+        "split": "train",
+        "volume_shape": deepcopy(COMBUSTION_DATASET["volume_shape"]),
+        "coordinate_axes": list(COMBUSTION_DATASET["coordinate_axes"]),
+        "targets": {
+            target: repo_path(f"data/Volume/Combustion/target_{target}.npy")
+            for target in COMBUSTION_DATASET["targets"]
+        },
+    }
 
 
 def common_training() -> dict:
@@ -434,6 +469,7 @@ def generate_unified_single() -> int:
 
 
 def var_training(dataset: str, nested: bool, experts: int = 6) -> dict:
+    pretrain_enabled = dataset in {"ionization", COMBUSTION_DATASET["name"]}
     payload = common_training()
     payload["multiview_ema_loss"] = {
         "enabled": True, "beta": 0.95, "eps": 1.0e-8,
@@ -441,14 +477,14 @@ def var_training(dataset: str, nested: bool, experts: int = 6) -> dict:
         "alpha": 5.0,
     }
     payload["pretrain"] = {
-        "enabled": dataset == "ionization",
-        "epochs": 5 if dataset == "ionization" else 0,
+        "enabled": pretrain_enabled,
+        "epochs": 5 if pretrain_enabled else 0,
         "lr": 5.0e-5,
     }
-    if dataset == "ionization":
+    if pretrain_enabled:
         payload["pretrain"]["cluster_seed"] = 42
         payload["pretrain"]["assignments_cache_path"] = (
-            f"{rel_prefix(nested)}data/cache/ionization_voxel_assignments_{experts}.npy"
+            f"{rel_prefix(nested)}data/cache/{dataset}_voxel_assignments_{experts}.npy"
         )
     return payload
 
@@ -485,6 +521,25 @@ def generate_var_expert() -> int:
             }
             dump(CONFIGS / "VarExpert" / "ionization_dwa.yaml", dwa_payload)
             count += 1
+    combustion_name = COMBUSTION_DATASET["name"]
+    combustion_payload = {
+        "experiment": f"{combustion_name}_var_expert",
+        "exp_id": "var-expert-combustion-40NH3-1",
+        "experiment_root": repo_path("runs"),
+        "data": combustion_data(),
+        "model": {
+            "name": "var_expert",
+            "in_features": 3,
+            "num_experts": 6,
+            "base_dim": 24,
+            "top_k": 3,
+        },
+        "training": var_training(combustion_name, False),
+        "evaluation": evaluation(),
+        "log": log_config(),
+    }
+    dump(CONFIGS / "VarExpert" / f"{combustion_name}.yaml", combustion_payload)
+    count += 1
     for size, dim in VAR_SIZE_DIMS.items():
         payload = {
             "experiment": f"ionization_var_expert_{size.lower()}",
@@ -893,8 +948,8 @@ def main() -> None:
         "ecnr": generate_ecnr(),
     }
     total = sum(counts.values())
-    if total != 355:
-        raise RuntimeError(f"Expected 355 configs, generated {total}: {counts}")
+    if total != 356:
+        raise RuntimeError(f"Expected 356 configs, generated {total}: {counts}")
     print(f"Generated {total} configs: {counts}")
 
 

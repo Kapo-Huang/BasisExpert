@@ -1,8 +1,12 @@
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import yaml
+
+from scripts import generate_config_matrix
 
 from var_expert_inr.apmgsrn.model import APMGSRN
 from var_expert_inr.config.schema import ModelConfig
@@ -40,6 +44,23 @@ class ConfigMatrixTestCase(unittest.TestCase):
         self.assertEqual(len(self.paths), 356)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
+
+    def test_generator_preserves_combustion_and_generates_356_configs(self):
+        committed_path = self.config_root / "VarExpert" / "combustion_40NH3_1.yaml"
+        committed_payload = yaml.safe_load(committed_path.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            generated_root = Path(tmpdir) / "configs"
+            with mock.patch.object(generate_config_matrix, "CONFIGS", generated_root):
+                generate_config_matrix.main()
+            generated_paths = sorted(generated_root.rglob("*.yaml"))
+            generated_payload = yaml.safe_load(
+                (generated_root / "VarExpert" / "combustion_40NH3_1.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(len(generated_paths), 356)
+        self.assertEqual(generated_payload, committed_payload)
 
     def test_single_target_default_and_size_coverage(self):
         for family in ("SIREN", "CoordNet", "MoE-INR", "NeuralExpert"):
