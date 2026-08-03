@@ -20,8 +20,8 @@ data:
 model:
   name: siren
   in_features: 4
-  hidden_features: 1508
-  hidden_layers: 3
+  hidden_features: 522
+  hidden_layers: 5
   first_omega_0: 30.0
   hidden_omega_0: 30.0
   outermost_linear: true

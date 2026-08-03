@@ -20,8 +20,8 @@ data:
 model:
   name: coordnet
   in_features: 4
-  init_features: 65
-  num_res: 5
+  init_features: 22
+  num_res: 10
 training:
   epochs: 600
   batch_size: 16000

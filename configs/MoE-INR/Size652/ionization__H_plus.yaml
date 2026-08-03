@@ -21,7 +21,7 @@ model:
   name: moe_inr
   in_features: 4
   num_experts: 7
-  base_dim: 210
+  base_dim: 93
   policy_num_layers: 3
 training:
   epochs: 600

@@ -15,6 +15,7 @@ TOP_LEVEL_KEYS = {
     "training",
     "evaluation",
     "log",
+    "exploration_probe",
 }
 DATA_KEYS = {
     "kind",
@@ -281,6 +282,7 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
         "training": training,
         "evaluation": evaluation,
         "log": {key: bool(value) for key, value in log.items()},
+        "exploration_probe": deepcopy(raw.get("exploration_probe") or {}),
         "CONFIG_PATH": str(config_path),
     }
 

@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from ..config.schema import EvaluationConfig, LogConfig, PSNRLogConfig, TimingLogConfig, VolumeShape
+from ..config.schema import EvaluationConfig, ExplorationProbeConfig, LogConfig, PSNRLogConfig, TimingLogConfig, VolumeShape
 from ..utils.io import dump_yaml, load_yaml, resolve_mapping_paths, resolve_path
 from .data import BlockShape
 
@@ -20,6 +20,7 @@ TOP_LEVEL_CONFIG_KEYS = {
     "training",
     "evaluation",
     "log",
+    "exploration_probe",
 }
 
 
@@ -219,6 +220,7 @@ class DCExperimentConfig:
     training: DCTrainingConfig
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     log: LogConfig = field(default_factory=LogConfig)
+    exploration_probe: ExplorationProbeConfig = field(default_factory=ExplorationProbeConfig)
     source_config_path: str | None = None
 
     @property
@@ -289,6 +291,7 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> DCEx
     training_section = _ensure_mapping(payload.get("training"), label="training")
     evaluation_section = _ensure_mapping(payload.get("evaluation"), label="evaluation")
     log_section = _ensure_mapping(payload.get("log"), label="log")
+    exploration_probe_section = _ensure_mapping(payload.get("exploration_probe"), label="exploration_probe")
 
     _reject_unknown_keys(
         data_section,
@@ -305,6 +308,7 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> DCEx
     _reject_unknown_keys(training_section, _field_names(DCTrainingConfig), label="training")
     _reject_unknown_keys(evaluation_section, _field_names(EvaluationConfig), label="evaluation")
     _reject_unknown_keys(log_section, _field_names(LogConfig), label="log")
+    _reject_unknown_keys(exploration_probe_section, _field_names(ExplorationProbeConfig), label="exploration_probe")
 
     psnr_section = _ensure_mapping(log_section.get("psnr"), label="log.psnr")
     timing_section = _ensure_mapping(log_section.get("timing"), label="log.timing")
@@ -385,6 +389,7 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> DCEx
         training=training_cfg,
         evaluation=evaluation_cfg,
         log=log_cfg,
+        exploration_probe=ExplorationProbeConfig(**exploration_probe_section),
         source_config_path=str(config_path),
     )
 

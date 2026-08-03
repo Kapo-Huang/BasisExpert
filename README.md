@@ -85,7 +85,7 @@ python -m var_expert_inr.apmgsrn.cli evaluate --run runs/<run> --timesteps 0:10
 python -m var_expert_inr.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
 ```
 
-The checked-in experiment matrix contains 360 configs. General models cover
+The checked-in formal experiment matrix contains 355 configs. General models cover
 Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
 single-target model has one config per attribute, and Ionization additionally
 has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants plus a
@@ -94,7 +94,11 @@ All primary training stages except MVNet consume 14.4 billion samples with an
 effective batch size of 16,000. MVNet uses its method-specific 300 epochs,
 2,048-sample batches, and 1,500 random batches per epoch (921.6 million
 samples). Model-size tiers use all parameters at two bytes per parameter
-(theoretical FP16 size).
+(theoretical FP16 size). The Ionization tier is a total five-variable budget:
+single-target models receive one fifth of `0.82/1.63/3.26/6.52/13.04 MiB`,
+while VarExpert and MC-INR receive the full tier. APMGSRN counts all 100
+timestep models toward that one-variable share; DC-INR receives the already
+divided target through `compression.target_size_mib`.
 
 Run the complete matrix sequentially in the `compression` conda environment:
 
@@ -103,7 +107,36 @@ bash scripts/run_all_configs.sh
 ```
 
 The script continues after individual failures and writes per-config logs plus
-`status.tsv` and `failed.txt` under `batch_logs/<timestamp>/`.
+`status.tsv` and `failed.txt` under `batch_logs/<timestamp>/`. Reuse a batch by
+passing its directory as `BATCH_LOG_ROOT`:
+
+```bash
+BATCH_LOG_ROOT=batch_logs/20260803_120000 bash scripts/run_all_configs.sh
+```
+
+The final status recorded for each config path is authoritative. `ok` paths are
+skipped; `running`, `failed`, missing, or invalid states are retrained from the
+beginning without a checkpoint. Every retry gets an `attempt-N.log`, and a
+`DRY_RUN=1` never writes status rows. Resume comparison is deliberately based
+only on the config path: an old `ok` row still skips that path even if the YAML
+contents have since changed.
+
+Size-structure exploration is generated and run independently of the formal
+matrix:
+
+```bash
+python scripts/generate_size_exploration_configs.py
+bash scripts/run_size_exploration.sh
+```
+
+This creates 141 Size163 configs under `configs_exploration/`. Their 50
+epoch-equivalent budgets and fixed 1% PSNR probes are isolated under
+`runs/exploration/<exp_id>/<timestamp>/`; batch logs go to
+`batch_logs/exploration/<timestamp>/`. Each run writes
+`metrics/exploration_psnr.tsv` at progress `5/50` through `50/50`. The batch
+also writes `exploration_summary.tsv`, including the averaged trajectory,
+final PSNR, NaN/Inf flag, scope count, and final training status. Resume works
+the same way by setting `BATCH_LOG_ROOT` to an existing exploration batch.
 
 When running without installation, this repository ships a small package shim so
 `python -m var_expert_inr.cli` works directly from the repo root.

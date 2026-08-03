@@ -327,6 +327,7 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
             predict_after_training=bool(config.evaluation.save_predictions),
             artifact_dir=dirs["artifact_dir"],
             model_config=effective_payload["model"],
+            exploration_probe=config.exploration_probe,
         )
         if "artifact_path" in result:
             result.update(

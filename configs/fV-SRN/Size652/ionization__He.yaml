@@ -19,8 +19,8 @@ data:
     T: 100
 model:
   name: fv_srn
-  grid_resolution: 17
-  grid_channels: 58
+  grid_resolution: 8
+  grid_channels: 110
   grid_init_std: 0.01
   keyframe_indices:
   - 0

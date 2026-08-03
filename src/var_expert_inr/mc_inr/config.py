@@ -7,6 +7,7 @@ from typing import Any
 from ..config.schema import (
     DataConfig,
     EvaluationConfig,
+    ExplorationProbeConfig,
     LogConfig,
     PSNRLogConfig,
     SchedulerConfig,
@@ -24,6 +25,7 @@ TOP_LEVEL_CONFIG_KEYS = {
     "training",
     "evaluation",
     "log",
+    "exploration_probe",
 }
 
 
@@ -171,6 +173,7 @@ class MCExperimentConfig:
     training: MCTrainingConfig
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     log: LogConfig = field(default_factory=LogConfig)
+    exploration_probe: ExplorationProbeConfig = field(default_factory=ExplorationProbeConfig)
     source_config_path: str | None = None
 
     @property
@@ -195,6 +198,7 @@ def load_config(path: str | Path) -> MCExperimentConfig:
     training_section = _ensure_mapping(payload.get("training"), label="training")
     evaluation_section = _ensure_mapping(payload.get("evaluation"), label="evaluation")
     log_section = _ensure_mapping(payload.get("log"), label="log")
+    exploration_probe_section = _ensure_mapping(payload.get("exploration_probe"), label="exploration_probe")
 
     _reject_unknown_keys(data_section, _field_names(DataConfig), label="data")
     _reject_unknown_keys(
@@ -205,6 +209,7 @@ def load_config(path: str | Path) -> MCExperimentConfig:
     _reject_unknown_keys(training_section, _field_names(MCTrainingConfig), label="training")
     _reject_unknown_keys(evaluation_section, _field_names(EvaluationConfig), label="evaluation")
     _reject_unknown_keys(log_section, _field_names(LogConfig), label="log")
+    _reject_unknown_keys(exploration_probe_section, _field_names(ExplorationProbeConfig), label="exploration_probe")
 
     scheduler_section = _ensure_mapping(training_section.get("scheduler"), label="training.scheduler")
     _reject_unknown_keys(scheduler_section, _field_names(SchedulerConfig), label="training.scheduler")
@@ -302,6 +307,7 @@ def load_config(path: str | Path) -> MCExperimentConfig:
         training=training_cfg,
         evaluation=evaluation_cfg,
         log=log_cfg,
+        exploration_probe=ExplorationProbeConfig(**exploration_probe_section),
         source_config_path=str(config_path),
     )
 

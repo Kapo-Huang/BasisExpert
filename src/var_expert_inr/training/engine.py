@@ -293,20 +293,27 @@ def _batch_target_dict(batch_targets, target_names: tuple[str, ...]):
     return {target_names[0]: batch_targets}
 
 
-def select_psnr_indices(total_size: int, sample_ratio: float, seed: int) -> np.ndarray | None:
+def select_psnr_indices(
+    total_size: int,
+    sample_ratio: float,
+    seed: int,
+    max_samples: int | None = None,
+) -> np.ndarray | None:
     total_size = int(total_size)
     ratio = float(sample_ratio)
     if total_size <= 0 or ratio <= 0.0 or ratio >= 1.0:
         return None
     sample_size = max(1, int(round(total_size * ratio)))
+    if max_samples is not None:
+        sample_size = min(sample_size, max(1, int(max_samples)))
     if sample_size >= total_size:
         return None
     rng = np.random.default_rng(int(seed))
     return np.sort(rng.choice(total_size, size=sample_size, replace=False).astype(np.int64))
 
 
-def _build_psnr_dataset(dataset, *, sample_ratio: float, seed: int):
-    selected = select_psnr_indices(len(dataset), sample_ratio, seed)
+def _build_psnr_dataset(dataset, *, sample_ratio: float, seed: int, max_samples: int | None = None):
+    selected = select_psnr_indices(len(dataset), sample_ratio, seed, max_samples=max_samples)
     if selected is None:
         return dataset
     return Subset(dataset, selected.tolist())
@@ -586,6 +593,7 @@ def train_model(
     predict_after_training: bool = True,
     artifact_dir: str | Path | None = None,
     model_config: dict | None = None,
+    exploration_probe=None,
 ):
     backbone = getattr(model, "backbone", model)
     is_var_expert = type(backbone).__name__ == "VarExpert"
@@ -702,7 +710,20 @@ def train_model(
     best_val = float("inf")
     no_improve = 0
     router_frozen = False
-    psnr_dataset = _build_psnr_dataset(dataset, sample_ratio=cfg.psnr_sample_ratio, seed=cfg.seed)
+    from ..utils.exploration_probe import ExplorationProbeRecorder, normalize_probe, probe_progress
+
+    probe_cfg = normalize_probe(exploration_probe)
+    psnr_dataset = _build_psnr_dataset(
+        dataset,
+        sample_ratio=probe_cfg.sample_ratio if probe_cfg.enabled else cfg.psnr_sample_ratio,
+        seed=probe_cfg.seed if probe_cfg.enabled else cfg.seed,
+        max_samples=probe_cfg.max_samples if probe_cfg.enabled else None,
+    )
+    probe_recorder = (
+        ExplorationProbeRecorder(Path(checkpoint_dir).parent / "metrics", probe_cfg)
+        if probe_cfg.enabled
+        else None
+    )
     started_at = time.time()
     global_data_step = 0
     global_optimizer_step = 0
@@ -1073,6 +1094,7 @@ def train_model(
                 epoch_timing.others += time.perf_counter() - log_started_at
 
         if log_cfg.psnr.enabled and cfg.log_psnr_every > 0 and epoch % cfg.log_psnr_every == 0:
+            probe_wall_started = time.perf_counter()
             psnr_started_at = timing_start(device, sync_timing) if timing_enabled else 0.0
             aggregate_psnr, per_target_psnr = _compute_streaming_psnr(
                 model=model,
@@ -1105,6 +1127,15 @@ def train_model(
                 )
             if timing_enabled:
                 epoch_timing.psnr += timing_elapsed(psnr_started_at, device, sync_timing)
+            if probe_recorder is not None:
+                probe_recorder.record(
+                    progress=probe_progress(epoch, cfg.epochs, probe_cfg),
+                    scope="aggregate",
+                    aggregate_psnr=aggregate_psnr,
+                    sample_count=len(psnr_dataset),
+                    elapsed_seconds=time.perf_counter() - probe_wall_started,
+                    details=per_target_psnr,
+                )
 
         if cfg.save_every > 0 and epoch % cfg.save_every == 0:
             if accumulation_count != 0:

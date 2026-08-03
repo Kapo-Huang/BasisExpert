@@ -7,6 +7,7 @@ from typing import Any
 from .schema import (
     DataConfig,
     EvaluationConfig,
+    ExplorationProbeConfig,
     ExperimentConfig,
     GradientBalancerConfig,
     LogConfig,
@@ -31,6 +32,7 @@ TOP_LEVEL_CONFIG_KEYS = {
     "training",
     "evaluation",
     "log",
+    "exploration_probe",
     # Effective run snapshots include this provenance field. It is accepted on
     # reload but the snapshot path itself remains the active source.
     "source_config_path",
@@ -96,11 +98,13 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     training_payload = _ensure_mapping(payload.get("training"), label="training")
     evaluation_payload = _ensure_mapping(payload.get("evaluation"), label="evaluation")
     log_payload = _ensure_mapping(payload.get("log"), label="log")
+    exploration_probe_payload = _ensure_mapping(payload.get("exploration_probe"), label="exploration_probe")
 
     _reject_unknown_keys(data_section, _field_names(DataConfig), label="data")
     _reject_unknown_keys(training_payload, _field_names(TrainingConfig), label="training")
     _reject_unknown_keys(evaluation_payload, _field_names(EvaluationConfig), label="evaluation")
     _reject_unknown_keys(log_payload, _field_names(LogConfig), label="log")
+    _reject_unknown_keys(exploration_probe_payload, _field_names(ExplorationProbeConfig), label="exploration_probe")
     data_payload = _resolve_data_paths(data_section, base_dir=config_path.parent)
 
     if "name" not in model_payload:
@@ -196,6 +200,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         training=training_cfg,
         evaluation=evaluation_cfg,
         log=log_cfg,
+        exploration_probe=ExplorationProbeConfig(**exploration_probe_payload),
         source_config_path=str(config_path),
     )
 

@@ -6,13 +6,13 @@ MODEL:
   n_dims: 3
   n_outputs: 1
   feature_grid_shape:
-  - 8
-  - 8
-  - 8
-  n_features: 4
-  n_grids: 32
-  nodes_per_layer: 16
-  n_layers: 2
+  - 4
+  - 4
+  - 4
+  n_features: 5
+  n_grids: 20
+  nodes_per_layer: 32
+  n_layers: 4
   use_bias: false
   use_tcnn_if_available: true
   grid_initialization: default

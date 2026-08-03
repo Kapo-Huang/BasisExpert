@@ -268,6 +268,16 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
                 rng=rng,
             )
         logger.info("fV-SRN model statistics: %s", collect_model_statistics(model))
+        from ..utils.exploration_probe import (
+            ExplorationProbeRecorder,
+            normalize_probe,
+            probe_due,
+            probe_progress,
+            probe_temporal_volume_model,
+        )
+
+        probe_cfg = normalize_probe(cfg.get("exploration_probe"))
+        probe_recorder = ExplorationProbeRecorder(dirs["metrics"], probe_cfg) if probe_cfg.enabled else None
         for epoch in range(start_epoch, int(cfg["training"]["epochs"])):
             if cfg["training"]["rebuild_every"] and (epoch + 1) % int(cfg["training"]["rebuild_every"]) == 0:
                 errors = _error_grids(model, volume, cfg["training"], device=device, rng=rng)
@@ -308,6 +318,23 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
                     cfg=cfg, config_hash=config_hash, sample_pool=pool,
                     sampler_rng_state=rng.bit_generator.state,
                 )
+            if probe_recorder is not None and probe_due(epoch + 1, int(cfg["training"]["epochs"]), probe_cfg):
+                probe_started = time.perf_counter()
+                probe_psnr, probe_count = probe_temporal_volume_model(
+                    model=model,
+                    volume=volume,
+                    device=device,
+                    batch_size=int(cfg["training"]["prediction_batch_size"]),
+                    probe=probe_cfg,
+                )
+                probe_recorder.record(
+                    progress=probe_progress(epoch + 1, int(cfg["training"]["epochs"]), probe_cfg),
+                    scope=str(cfg["data"]["target"]),
+                    aggregate_psnr=probe_psnr,
+                    sample_count=probe_count,
+                    elapsed_seconds=time.perf_counter() - probe_started,
+                )
+                model.train()
         checkpoint = save_checkpoint(
             dirs["checkpoints"] / f"{cfg['exp_id']}.pth",
             model=model, optimizer=optimizer, scheduler=scheduler, epoch=int(cfg["training"]["epochs"]),

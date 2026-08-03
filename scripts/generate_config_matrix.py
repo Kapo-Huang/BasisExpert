@@ -17,6 +17,10 @@ SIZES = {
     "Size652": 6.52,
     "Size1304": 13.04,
 }
+IONIZATION_VARIABLE_COUNT = 5
+SINGLE_TARGET_SIZES = {
+    name: size_mib / IONIZATION_VARIABLE_COUNT for name, size_mib in SIZES.items()
+}
 ION_SHAPE = {"X": 600, "Y": 248, "Z": 248, "T": 100}
 DATASETS = {
     "bathymetry": {
@@ -40,25 +44,25 @@ DATASETS = {
 TARGET_FILES = {"H_plus": "H+"}
 UNIFIED_SIZE_MODELS = {
     "SIREN": {
-        "Size082": {"name": "siren", "in_features": 4, "hidden_features": 377, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
-        "Size163": {"name": "siren", "in_features": 4, "hidden_features": 532, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
-        "Size326": {"name": "siren", "in_features": 4, "hidden_features": 753, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
-        "Size652": {"name": "siren", "in_features": 4, "hidden_features": 1066, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
-        "Size1304": {"name": "siren", "in_features": 4, "hidden_features": 1508, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size082": {"name": "siren", "in_features": 4, "hidden_features": 168, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size163": {"name": "siren", "in_features": 4, "hidden_features": 237, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size326": {"name": "siren", "in_features": 4, "hidden_features": 336, "hidden_layers": 3, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size652": {"name": "siren", "in_features": 4, "hidden_features": 412, "hidden_layers": 4, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
+        "Size1304": {"name": "siren", "in_features": 4, "hidden_features": 522, "hidden_layers": 5, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
     },
     "CoordNet": {
-        "Size082": {"name": "coordnet", "in_features": 4, "init_features": 36, "num_res": 9},
-        "Size163": {"name": "coordnet", "in_features": 4, "init_features": 65, "num_res": 5},
-        "Size326": {"name": "coordnet", "in_features": 4, "init_features": 61, "num_res": 13},
-        "Size652": {"name": "coordnet", "in_features": 4, "init_features": 142, "num_res": 4},
-        "Size1304": {"name": "coordnet", "in_features": 4, "init_features": 144, "num_res": 9},
+        "Size082": {"name": "coordnet", "in_features": 4, "init_features": 15, "num_res": 10},
+        "Size163": {"name": "coordnet", "in_features": 4, "init_features": 22, "num_res": 10},
+        "Size326": {"name": "coordnet", "in_features": 4, "init_features": 31, "num_res": 10},
+        "Size652": {"name": "coordnet", "in_features": 4, "init_features": 43, "num_res": 10},
+        "Size1304": {"name": "coordnet", "in_features": 4, "init_features": 61, "num_res": 10},
     },
     "MoE-INR": {
-        "Size082": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 74, "policy_num_layers": 3},
-        "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 104, "policy_num_layers": 3},
-        "Size326": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 148, "policy_num_layers": 3},
-        "Size652": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 210, "policy_num_layers": 3},
-        "Size1304": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 297, "policy_num_layers": 3},
+        "Size082": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 32, "policy_num_layers": 3},
+        "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 46, "policy_num_layers": 3},
+        "Size326": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 66, "policy_num_layers": 3},
+        "Size652": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 93, "policy_num_layers": 3},
+        "Size1304": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 132, "policy_num_layers": 3},
     },
 }
 DEFAULT_MODELS = {
@@ -76,19 +80,22 @@ DEFAULT_MODELS = {
     },
 }
 VAR_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 49, "Size1304": 70}
-NEURAL_SIZE_DIMS = {"Size082": 37, "Size163": 52, "Size326": 74, "Size652": 104, "Size1304": 148}
+NEURAL_SIZE_DIMS = {"Size082": 16, "Size163": 23, "Size326": 33, "Size652": 47, "Size1304": 66}
 MC_SIZE_DIMS = {"Size082": 23, "Size163": 33, "Size326": 48, "Size652": 68, "Size1304": 97}
 APMG_SIZE = {
-    "Size082": (7, 1, 16), "Size163": (15, 1, 16), "Size326": (7, 3, 64),
-    "Size652": (8, 8, 16), "Size1304": (32, 4, 16),
+    "Size082": {"feature_grid_shape": [7, 7, 7], "n_grids": 1, "n_features": 1, "nodes_per_layer": 16, "n_layers": 2},
+    "Size163": {"feature_grid_shape": [5, 5, 5], "n_grids": 6, "n_features": 1, "nodes_per_layer": 16, "n_layers": 3},
+    "Size326": {"feature_grid_shape": [5, 5, 5], "n_grids": 12, "n_features": 1, "nodes_per_layer": 32, "n_layers": 2},
+    "Size652": {"feature_grid_shape": [4, 4, 4], "n_grids": 44, "n_features": 1, "nodes_per_layer": 32, "n_layers": 3},
+    "Size1304": {"feature_grid_shape": [4, 4, 4], "n_grids": 20, "n_features": 5, "nodes_per_layer": 32, "n_layers": 4},
 }
 FV_SIZE = {
-    "Size082": (14, 13), "Size163": (12, 41), "Size326": (15, 42),
-    "Size652": (17, 58), "Size1304": (28, 26),
+    "Size082": (5, 54), "Size163": (6, 64), "Size326": (8, 55),
+    "Size652": (8, 110), "Size1304": (11, 85),
 }
 RM_SIZE = {
-    "Size082": (14, 12), "Size163": (12, 39), "Size326": (36, 3),
-    "Size652": (19, 41), "Size1304": (30, 21),
+    "Size082": (5, 30), "Size163": (6, 48), "Size326": (7, 70),
+    "Size652": (17, 11), "Size1304": (11, 82),
 }
 
 
@@ -491,19 +498,6 @@ def generate_var_expert() -> int:
         }
         dump(CONFIGS / "VarExpert" / size / "ionization.yaml", payload)
         count += 1
-    for experts in range(4, 9):
-        payload = {
-            "experiment": f"ionization_var_expert_e{experts}_k3",
-            "exp_id": f"var-expert-ionization-e{experts}-k3",
-            "experiment_root": repo_path("runs"),
-            "data": unified_data("ionization", False),
-            "model": {"name": "var_expert", "in_features": 4, "num_experts": experts, "base_dim": 27, "top_k": 3},
-            "training": var_training("ionization", False, experts),
-            "evaluation": evaluation(),
-            "log": log_config(),
-        }
-        dump(CONFIGS / "VarExpert" / f"ionization_e{experts}_k3.yaml", payload)
-        count += 1
     return count
 
 
@@ -664,7 +658,10 @@ def volume_data(target: str, nested: bool, upper: bool = False) -> dict:
 
 
 def apmg_payload(target: str, nested: bool, size: str | None) -> dict:
-    grids, features, nodes = APMG_SIZE[size] if size else (64, 2, 64)
+    sizing = APMG_SIZE[size] if size else {
+        "feature_grid_shape": [8, 8, 8], "n_grids": 64, "n_features": 2,
+        "nodes_per_layer": 64, "n_layers": 2,
+    }
     tag = f"-{size.lower()}" if size else ""
     return {
         "experiment": f"apmgsrn_ionization{tag}_{target}",
@@ -672,8 +669,11 @@ def apmg_payload(target: str, nested: bool, size: str | None) -> dict:
         "experiment_root": f"{rel_prefix(nested)}runs",
         "MODEL": {
             "model_name": "apmgsrn", "n_dims": 3, "n_outputs": 1,
-            "feature_grid_shape": [8, 8, 8], "n_features": features,
-            "n_grids": grids, "nodes_per_layer": nodes, "n_layers": 2,
+            "feature_grid_shape": deepcopy(sizing["feature_grid_shape"]),
+            "n_features": sizing["n_features"],
+            "n_grids": sizing["n_grids"],
+            "nodes_per_layer": sizing["nodes_per_layer"],
+            "n_layers": sizing["n_layers"],
             "use_bias": False, "use_tcnn_if_available": True,
             "grid_initialization": "default",
             "requires_padded_feats": True if size else None,
@@ -698,7 +698,7 @@ def dc_payload(target: str, nested: bool, size: str | None) -> dict:
     tag = f"-{size.lower()}" if size else ""
     compression = {"max_initial_neurons": 2048, "min_initial_neurons": 4}
     if size:
-        compression["target_size_mib"] = SIZES[size]
+        compression["target_size_mib"] = SINGLE_TARGET_SIZES[size]
     else:
         compression["target_cr"] = 20.0
     return {
@@ -893,8 +893,8 @@ def main() -> None:
         "ecnr": generate_ecnr(),
     }
     total = sum(counts.values())
-    if total != 360:
-        raise RuntimeError(f"Expected 360 configs, generated {total}: {counts}")
+    if total != 355:
+        raise RuntimeError(f"Expected 355 configs, generated {total}: {counts}")
     print(f"Generated {total} configs: {counts}")
 
 

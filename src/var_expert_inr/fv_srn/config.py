@@ -8,7 +8,7 @@ from ..utils.io import dump_yaml, load_yaml, resolve_path
 
 TOP_LEVEL = {
     "experiment", "exp_id", "experiment_root", "data", "model",
-    "training", "evaluation", "log",
+    "training", "evaluation", "log", "exploration_probe",
 }
 
 DEFAULT_MODEL = {

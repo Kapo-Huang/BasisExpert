@@ -11,10 +11,8 @@ FAILURE_FILE="${LOG_ROOT}/failed.txt"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-0}"
 GROUP_DELIM=$'\034'
-
-mkdir -p "${LOG_ROOT}/logs"
-printf 'config\tstatus\texit_code\tlog\n' > "${STATUS_FILE}"
-: > "${FAILURE_FILE}"
+source "${SCRIPT_DIR}/lib/batch_runner.sh"
+batch_init_status
 
 declare -a GROUP_LABELS=()
 declare -a GROUP_CONFIGS=()
@@ -115,51 +113,6 @@ append_volume_attribute_groups "fV-SRN"
 append_volume_attribute_groups "RMDSRN"
 append_volume_attribute_groups "ECNR"
 
-module_for_config() {
-    case "$1" in
-        */MC-INR/*) echo "var_expert_inr.mc_inr.cli" ;;
-        */NeuralExpert/*) echo "var_expert_inr.neural_expert.cli" ;;
-        */APMGSRN/*) echo "var_expert_inr.apmgsrn.cli" ;;
-        */DC-INR/*) echo "var_expert_inr.dc_inr.cli" ;;
-        */fV-SRN/*) echo "var_expert_inr.fv_srn.cli" ;;
-        */RMDSRN/*) echo "var_expert_inr.rmdsrn.cli" ;;
-        *) echo "var_expert_inr.cli" ;;
-    esac
-}
-
-run_one_config() {
-    local config="$1"
-    local index="$2"
-    local total="$3"
-    local relative safe_name log_path module exit_code
-    relative="${config#${REPO_ROOT}/}"
-    safe_name="${relative//\//__}"
-    safe_name="${safe_name%.yaml}"
-    log_path="${LOG_ROOT}/logs/${safe_name}.log"
-    module="$(module_for_config "${config}")"
-    local -a command=(conda run --no-capture-output -n "${CONDA_ENV}" python -m "${module}" train --config "${config}")
-
-    printf '[%d/%d] %s\n' "${index}" "${total}" "${relative}"
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        printf 'DRY_RUN:'
-        printf ' %q' "${command[@]}"
-        printf '\n'
-        printf '%s\tok\t0\t%s\n' "${relative}" "${log_path}" >> "${STATUS_FILE}"
-        return 0
-    fi
-
-    "${command[@]}" 2>&1 | tee "${log_path}"
-    exit_code="${PIPESTATUS[0]}"
-    if [[ "${exit_code}" -eq 0 ]]; then
-        printf '%s\tok\t0\t%s\n' "${relative}" "${log_path}" >> "${STATUS_FILE}"
-    else
-        printf '%s\tfailed\t%d\t%s\n' "${relative}" "${exit_code}" "${log_path}" >> "${STATUS_FILE}"
-        printf '%s\n' "${relative}" >> "${FAILURE_FILE}"
-        printf 'FAILED (%d): %s\n' "${exit_code}" "${relative}" >&2
-    fi
-    return "${exit_code}"
-}
-
 wait_for_pid_at() {
     local index="$1"
     local pid="${pids[${index}]}"
@@ -181,8 +134,8 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne 360 ]]; then
-    printf 'Expected 360 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
+if [[ "${total}" -ne 355 ]]; then
+    printf 'Expected 355 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${total}" >&2
     exit 2
 fi
 
@@ -196,7 +149,7 @@ for group_index in "${!GROUP_CONFIGS[@]}"; do
     printf '== %s (%d config%s) ==\n' "${label}" "${#configs[@]}" "$([[ "${#configs[@]}" -eq 1 ]] && printf '' || printf 's')"
     if [[ "${#configs[@]}" -eq 1 ]]; then
         completed=$((completed + 1))
-        if ! run_one_config "${configs[0]}" "${completed}" "${total}"; then
+        if ! batch_run_one_config "${configs[0]}" "${completed}" "${total}"; then
             failures=$((failures + 1))
         fi
         continue
@@ -209,11 +162,13 @@ for group_index in "${!GROUP_CONFIGS[@]}"; do
                 wait_for_pid_at 0
             done
         fi
-        run_one_config "${config}" "${completed}" "${total}" &
+        batch_run_one_config "${config}" "${completed}" "${total}" &
         pids+=("$!")
     done
     wait_for_all_pids
 done
+
+batch_rebuild_failures
 
 printf 'Completed %d configs; failures=%d; status=%s\n' "${total}" "${failures}" "${STATUS_FILE}"
 if [[ "${failures}" -ne 0 ]]; then

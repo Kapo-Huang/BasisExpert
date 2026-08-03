@@ -57,7 +57,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
             ]
         )
         self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization__GT.yaml" for path in config_paths))
-        self.assertTrue((configs_root / "VarExpert" / "ionization_e4_k3.yaml").exists())
+        self.assertFalse((configs_root / "VarExpert" / "ionization_e4_k3.yaml").exists())
         self.assertFalse(any(configs_root.joinpath("VarExpert").glob("exp_data_ionization_var_expert_*.yaml")))
 
         for path in config_paths:

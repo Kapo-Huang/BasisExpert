@@ -12,6 +12,14 @@ from ..common import dump_config, estimate_model_size_fp16, format_size_bytes, l
 from ..config import run_dir_from_config
 from ..train_utils import count_parameters, log_losses_wandb, log_string
 from ..wandb_stub import get_wandb
+from ...utils.exploration_probe import (
+    ExplorationProbeRecorder,
+    fixed_sample_indices,
+    normalize_probe,
+    probe_due,
+    probe_progress,
+    psnr_from_arrays,
+)
 from .datasets import build_dataloader
 from .model_registry import build_model
 from .stage_handler import TrainingStageHandler
@@ -137,6 +145,14 @@ def _export_validate_artifacts(cfg, run_dir: Path, dataset, model):
 
 def run_train(cfg: dict, *, gpu: int = 0) -> dict:
     run_dir = run_dir_from_config(cfg)
+    if normalize_probe(cfg.get("exploration_probe")).enabled:
+        experiment_dir = run_dir
+        run_token = time.strftime("%Y%m%d_%H%M%S")
+        run_dir = experiment_dir / run_token
+        collision = 1
+        while run_dir.exists():
+            run_dir = experiment_dir / f"{run_token}_{collision:02d}"
+            collision += 1
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "wandb").mkdir(parents=True, exist_ok=True)
     (run_dir / "trained_models").mkdir(parents=True, exist_ok=True)
@@ -213,6 +229,21 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
         model.to(device)
         model_outdir = run_dir / "trained_models"
         save_interval = int(cfg["TRAINING"].get("save_every", 100) or 100)
+        probe_cfg = normalize_probe(cfg.get("exploration_probe"))
+        probe_recorder = None
+        probe_points = None
+        probe_values = None
+        if probe_cfg.enabled and not cfg["TRAINING"].get("segmentation_mode", False):
+            probe_indices = fixed_sample_indices(train_set.total_size, probe_cfg)
+            probe_coords, _ = train_set._flat_to_coords(probe_indices)
+            if train_set.normalize_inputs:
+                probe_coords = (probe_coords - train_set.x_mean.numpy()) / train_set.x_std.numpy()
+            probe_target = np.asarray(train_set.target[probe_indices], dtype=np.float32).reshape(-1, 1)
+            if train_set.normalize_targets:
+                probe_target = (probe_target - train_set.y_mean.numpy()) / train_set.y_std.numpy()
+            probe_points = torch.from_numpy(np.asarray(probe_coords, dtype=np.float32))
+            probe_values = np.asarray(probe_target, dtype=np.float32).reshape(-1)
+            probe_recorder = ExplorationProbeRecorder(run_dir / "metrics", probe_cfg)
 
         for step, data in enumerate(train_dataloader):
             if step >= max_epochs:
@@ -240,6 +271,40 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             loss_dict["loss"].backward()
             optimizer.step()
             scheduler.step()
+
+            current_step = step + 1
+            if (
+                probe_recorder is not None
+                and probe_points is not None
+                and probe_values is not None
+                and probe_due(current_step, max_epochs, probe_cfg)
+            ):
+                probe_started = time.perf_counter()
+                predictions = []
+                model.eval()
+                with torch.no_grad():
+                    for offset in range(0, probe_points.shape[0], int(cfg["TRAINING"].get("batch_size", 16_000))):
+                        points = probe_points[offset : offset + int(cfg["TRAINING"].get("batch_size", 16_000))].unsqueeze(0).to(device)
+                        predictions.append(
+                            model(points)["selected_nonmanifold_pnts_pred"].detach().cpu().numpy().reshape(-1)
+                        )
+                aggregate_psnr = psnr_from_arrays(probe_values, np.concatenate(predictions))
+                progress = probe_progress(current_step, max_epochs, probe_cfg)
+                elapsed = time.perf_counter() - probe_started
+                probe_recorder.record(
+                    progress=progress,
+                    scope=f"variable:{cfg['DATA']['attr_name']}",
+                    aggregate_psnr=aggregate_psnr,
+                    sample_count=probe_values.size,
+                    elapsed_seconds=elapsed,
+                    details={"training_step": current_step},
+                )
+                log_string(
+                    f"[exploration] progress={progress}/{probe_cfg.total_epoch_equivalents} "
+                    f"aggregate_psnr={aggregate_psnr:.6f} variable={cfg['DATA']['attr_name']} "
+                    f"samples={probe_values.size} elapsed={elapsed:.3f}s",
+                    log_file,
+                )
 
             if step > training_stage_handler.get_end_iteration():
                 log_string("Moved to the next training stage...", log_file)

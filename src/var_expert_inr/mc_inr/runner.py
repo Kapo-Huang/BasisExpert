@@ -818,6 +818,7 @@ def _run_stage(
     checkpoint_dir: Path,
     split_round: int,
     resume_payload: dict[str, Any] | None = None,
+    metrics_dir: Path | None = None,
 ) -> dict[str, Any]:
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -871,6 +872,22 @@ def _run_stage(
     final_epoch = start_epoch - 1
     sample_counts: list[int] = []
     batch_cluster_unique_counts: list[int] = []
+    from ..utils.exploration_probe import (
+        ExplorationProbeRecorder,
+        fixed_sample_indices,
+        normalize_probe,
+        probe_due,
+        probe_progress,
+        psnr_from_arrays,
+    )
+
+    probe_cfg = normalize_probe(config.exploration_probe)
+    probe_rows = fixed_sample_indices(len(dataset), probe_cfg) if probe_cfg.enabled and stage_name == "finetune" else None
+    probe_recorder = (
+        ExplorationProbeRecorder(metrics_dir, probe_cfg)
+        if probe_rows is not None and metrics_dir is not None
+        else None
+    )
     for epoch in range(start_epoch, int(epochs) + 1):
         final_epoch = epoch
         rng = np.random.default_rng(int(config.training.seed) + epoch + 10_000 + int(split_round) * 100_000)
@@ -952,6 +969,39 @@ def _run_stage(
                 epochs_no_improve=epochs_no_improve,
                 extra_payload={"split_round": int(split_round)},
             )
+
+        if probe_recorder is not None and probe_due(epoch, int(epochs), probe_cfg):
+            probe_started = time.perf_counter()
+            target_parts = {entry.name: [] for entry in layout}
+            prediction_parts = {entry.name: [] for entry in layout}
+            model.eval()
+            with torch.no_grad():
+                for offset in range(0, int(probe_rows.size), int(config.training.pred_batch_size)):
+                    rows = probe_rows[offset : offset + int(config.training.pred_batch_size)]
+                    batch = fetch_mc_batch(dataset, rows, layout, assignments)
+                    coords = batch.coords.to(device, non_blocking=True)
+                    cluster_ids = batch.cluster_ids.to(device, non_blocking=True)
+                    predictions = model(coords, cluster_ids, return_concat=True).detach().cpu().numpy()
+                    targets = batch.targets_concat.numpy()
+                    for entry in layout:
+                        target_parts[entry.name].append(targets[:, entry.start : entry.stop])
+                        prediction_parts[entry.name].append(predictions[:, entry.start : entry.stop])
+            per_target = {
+                entry.name: psnr_from_arrays(
+                    np.concatenate(target_parts[entry.name], axis=0),
+                    np.concatenate(prediction_parts[entry.name], axis=0),
+                )
+                for entry in layout
+            }
+            probe_recorder.record(
+                progress=probe_progress(epoch, int(epochs), probe_cfg),
+                scope="aggregate",
+                aggregate_psnr=float(np.mean(list(per_target.values()))),
+                sample_count=int(probe_rows.size),
+                elapsed_seconds=time.perf_counter() - probe_started,
+                details=per_target,
+            )
+            model.train()
 
         if int(config.training.convergence_patience) > 0 and epochs_no_improve >= int(config.training.convergence_patience):
             logger.info(
@@ -1412,6 +1462,7 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
             checkpoint_dir=Path(dirs["checkpoint_dir"]),
             split_round=int(current_split_round),
             resume_payload=finetune_resume_payload,
+            metrics_dir=Path(dirs["metrics_dir"]),
         )
         stage_checkpoints["finetune"] = (
             str(finetune_result["stage_checkpoint_path"]) if finetune_result["stage_checkpoint_path"] is not None else None

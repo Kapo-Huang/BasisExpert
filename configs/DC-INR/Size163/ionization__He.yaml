@@ -40,7 +40,7 @@ partition:
 compression:
   max_initial_neurons: 2048
   min_initial_neurons: 4
-  target_size_mib: 1.63
+  target_size_mib: 0.32599999999999996
 training:
   epochs: 300
   total_steps: 900000

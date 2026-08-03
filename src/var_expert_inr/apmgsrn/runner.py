@@ -237,6 +237,23 @@ def _train_single_timestep(
     grid_losses = torch.zeros((iterations,), dtype=torch.float32, device=train_device)
     grid_convergence_streak = 0
     started_at = time.time()
+    from ..utils.exploration_probe import (
+        ExplorationProbeRecorder,
+        fixed_sample_indices,
+        normalize_probe,
+        probe_due,
+        probe_progress,
+        psnr_from_arrays,
+    )
+
+    probe_cfg = normalize_probe(cfg.get("exploration_probe"))
+    probe_indices = fixed_sample_indices(dataset.n_voxels, probe_cfg, salt=time_index) if probe_cfg.enabled else None
+    probe_coords = dataset.full_coords_cpu[probe_indices].to(train_device) if probe_indices is not None else None
+    probe_targets = (
+        dataset.sample_points(probe_coords.to(data_device)).detach().cpu().numpy()
+        if probe_coords is not None else None
+    )
+    probe_recorder = ExplorationProbeRecorder(run_dir / "metrics", probe_cfg) if probe_cfg.enabled else None
 
     logger.info(
         "APMGSRN timestep %s start: iterations=%d points_per_iteration=%d device=%s data_device=%s",
@@ -334,6 +351,25 @@ def _train_single_timestep(
                     stats=stats,
                 ),
             )
+
+        if probe_recorder is not None and probe_due(iteration + 1, iterations, probe_cfg):
+            probe_started = time.perf_counter()
+            predictions: list[np.ndarray] = []
+            model.eval()
+            with torch.no_grad():
+                for start in range(0, int(probe_coords.shape[0]), prediction_batch_size):
+                    predictions.append(
+                        model(probe_coords[start : start + prediction_batch_size]).detach().cpu().numpy()
+                    )
+            probe_recorder.record(
+                progress=probe_progress(iteration + 1, iterations, probe_cfg),
+                scope=f"timestep:{int(time_index)}",
+                aggregate_psnr=psnr_from_arrays(probe_targets, np.concatenate(predictions, axis=0)),
+                sample_count=int(probe_coords.shape[0]),
+                elapsed_seconds=time.perf_counter() - probe_started,
+                details={"timestep": int(time_index)},
+            )
+            model.train()
 
     checkpoint_path = _save_checkpoint(
         timestep_dir / "checkpoint.pth",

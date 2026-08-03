@@ -19,6 +19,7 @@ TOP_LEVEL_KEYS = {
     "DATA",
     "TRAINING",
     "EVALUATION",
+    "exploration_probe",
 }
 MODEL_KEYS = {
     "model_name",
@@ -300,6 +301,7 @@ def load_config(config_path: str | Path, *, target_override: str | None = None, 
         "DATA": normalized_data,
         "TRAINING": normalized_training,
         "EVALUATION": normalized_evaluation,
+        "exploration_probe": deepcopy(cfg.get("exploration_probe") or {}),
         "CONFIG_PATH": str(path),
     }
 

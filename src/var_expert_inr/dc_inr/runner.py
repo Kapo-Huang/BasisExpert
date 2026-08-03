@@ -151,6 +151,7 @@ def _train_representative_models(
     selection: CandidateSummary,
     config: DCExperimentConfig,
     device: torch.device,
+    metrics_dir: Path,
 ) -> tuple[list[dict[str, torch.Tensor]], list[dict[str, float]]]:
     blocks = volume.block_view(selection.block_shape)
     widths = np.asarray(selection.widths, dtype=np.int32)
@@ -166,6 +167,27 @@ def _train_representative_models(
         )
         rng = np.random.default_rng(int(config.training.seed) + int(model_index))
         block_values = np.asarray(blocks[int(block_id)], dtype=np.float32)
+        from ..utils.exploration_probe import (
+            ExplorationProbeRecorder,
+            normalize_probe,
+            probe_due,
+            probe_progress,
+            psnr_from_arrays,
+        )
+
+        probe_cfg = normalize_probe(config.exploration_probe)
+        if probe_cfg.enabled:
+            probe_rng = np.random.default_rng(int(probe_cfg.seed) + int(model_index))
+            probe_count = min(int(probe_cfg.max_samples), max(1, int(round(block_values.size * float(probe_cfg.sample_ratio)))))
+            probe_coords_np, probe_targets_np = sample_balanced_block_training_batch(
+                block_values=block_values,
+                block_shape=selection.block_shape,
+                batch_size=probe_count,
+                rng=probe_rng,
+            )
+            probe_recorder = ExplorationProbeRecorder(metrics_dir, probe_cfg)
+        else:
+            probe_coords_np = probe_targets_np = probe_recorder = None
         final_loss = float("nan")
         started_at = time.perf_counter()
         if int(config.training.total_steps) > 0:
@@ -239,6 +261,22 @@ def _train_representative_models(
                     final_loss,
                     float(optimizer.param_groups[0]["lr"]),
                 )
+            if probe_recorder is not None and probe_due(epoch, model_steps, probe_cfg):
+                probe_started = time.perf_counter()
+                model.eval()
+                with torch.no_grad():
+                    probe_predictions = model(
+                        torch.from_numpy(probe_coords_np).to(device, non_blocking=True)
+                    ).detach().cpu().numpy()
+                probe_recorder.record(
+                    progress=probe_progress(epoch, model_steps, probe_cfg),
+                    scope=f"representative:{model_index}:block:{int(block_id)}",
+                    aggregate_psnr=psnr_from_arrays(probe_targets_np, probe_predictions),
+                    sample_count=int(probe_targets_np.shape[0]),
+                    elapsed_seconds=time.perf_counter() - probe_started,
+                    details={"representative_index": int(model_index), "block_id": int(block_id)},
+                )
+                model.train()
         cpu_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
         model_states.append(cpu_state)
         summaries.append(
@@ -487,6 +525,7 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict[str
             selection=selection,
             config=config,
             device=device,
+            metrics_dir=Path(dirs["metrics_dir"]),
         )
         model_stats = _sum_model_stats(np.asarray(selection.widths, dtype=np.int32))
         if config.log.model_stats:

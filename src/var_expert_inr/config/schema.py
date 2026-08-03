@@ -167,6 +167,26 @@ class PSNRLogConfig:
 
 
 @dataclass(frozen=True)
+class ExplorationProbeConfig:
+    enabled: bool = False
+    total_epoch_equivalents: int = 50
+    every_epoch_equivalents: int = 5
+    sample_ratio: float = 0.01
+    max_samples: int = 100_000
+    seed: int = 42
+
+    def __post_init__(self) -> None:
+        if int(self.total_epoch_equivalents) <= 0:
+            raise ValueError("exploration_probe.total_epoch_equivalents must be positive")
+        if int(self.every_epoch_equivalents) <= 0:
+            raise ValueError("exploration_probe.every_epoch_equivalents must be positive")
+        if not 0.0 < float(self.sample_ratio) <= 1.0:
+            raise ValueError("exploration_probe.sample_ratio must be in (0, 1]")
+        if int(self.max_samples) <= 0:
+            raise ValueError("exploration_probe.max_samples must be positive")
+
+
+@dataclass(frozen=True)
 class TimingLogConfig:
     enabled: bool = True
     epoch_breakdown: bool = True
@@ -289,6 +309,7 @@ class ExperimentConfig:
     training: TrainingConfig
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     log: LogConfig = field(default_factory=LogConfig)
+    exploration_probe: ExplorationProbeConfig = field(default_factory=ExplorationProbeConfig)
     source_config_path: str | None = None
 
     @property

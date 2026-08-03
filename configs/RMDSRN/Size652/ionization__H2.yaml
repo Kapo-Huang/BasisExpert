@@ -20,8 +20,8 @@ data:
 model:
   name: rmdsrn
   base_encoder: temporal_fv_srn
-  grid_resolution: 19
-  grid_channels: 41
+  grid_resolution: 17
+  grid_channels: 11
   grid_init_std: 0.01
   keyframe_indices:
   - 0

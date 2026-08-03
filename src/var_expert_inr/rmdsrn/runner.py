@@ -380,6 +380,16 @@ def run_train(
             logger.info("RMDSRN model statistics: %s", collect_model_statistics(model))
 
         final_losses = {"total": float("nan"), "member": float("nan"), "variance": float("nan")}
+        from ..utils.exploration_probe import (
+            ExplorationProbeRecorder,
+            normalize_probe,
+            probe_due,
+            probe_progress,
+            probe_temporal_volume_model,
+        )
+
+        probe_cfg = normalize_probe(cfg.get("exploration_probe"))
+        probe_recorder = ExplorationProbeRecorder(dirs["metrics"], probe_cfg) if probe_cfg.enabled else None
         started_at = time.perf_counter()
         for step in range(start_step + 1, int(cfg["training"]["steps"]) + 1):
             timestep = frame_sampler.next()
@@ -439,6 +449,23 @@ def run_train(
                     config_hash=config_hash,
                     frame_sampler=frame_sampler,
                 )
+            if probe_recorder is not None and probe_due(step, int(cfg["training"]["steps"]), probe_cfg):
+                probe_started = time.perf_counter()
+                probe_psnr, probe_count = probe_temporal_volume_model(
+                    model=model,
+                    volume=volume,
+                    device=device,
+                    batch_size=int(cfg["evaluation"]["batch_size"]),
+                    probe=probe_cfg,
+                )
+                probe_recorder.record(
+                    progress=probe_progress(step, int(cfg["training"]["steps"]), probe_cfg),
+                    scope=str(cfg["data"]["target"]),
+                    aggregate_psnr=probe_psnr,
+                    sample_count=probe_count,
+                    elapsed_seconds=time.perf_counter() - probe_started,
+                )
+                model.train()
 
         checkpoint_path = save_checkpoint(
             dirs["checkpoints"] / f"{cfg['exp_id']}.pth",

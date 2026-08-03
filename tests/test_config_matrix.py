@@ -36,8 +36,8 @@ class ConfigMatrixTestCase(unittest.TestCase):
         cls.config_root = cls.repo_root / "configs"
         cls.paths = sorted(cls.config_root.rglob("*.yaml"))
 
-    def test_matrix_contains_exactly_360_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 360)
+    def test_matrix_contains_exactly_355_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 355)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
@@ -394,14 +394,15 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     ),
                     meta,
                 )
-                self._assert_size(model, target_mib, family, size)
+                expected_mib = target_mib if family == "VarExpert" else target_mib / 5
+                self._assert_size(model, expected_mib, family, size)
 
         for size, target_mib in SIZES.items():
             payload = yaml.safe_load(
                 (self.config_root / "NeuralExpert" / size / "ionization__GT.yaml").read_text(encoding="utf-8")
             )
             model, _ = build_neural_model(payload, payload["LOSS"])
-            self._assert_size(model, target_mib, "NeuralExpert", size)
+            self._assert_size(model, target_mib / 5, "NeuralExpert", size)
 
             payload = yaml.safe_load(
                 (self.config_root / "MC-INR" / size / "ionization.yaml").read_text(encoding="utf-8")
@@ -424,17 +425,48 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 (self.config_root / "APMGSRN" / size / "ionization__GT.yaml").read_text(encoding="utf-8")
             )
             model = APMGSRN(payload["MODEL"], data_min=-1.0, data_max=1.0, use_tcnn=False)
-            self._assert_size(model, target_mib, "APMGSRN", size, multiplier=100)
+            self._assert_size(model, target_mib / 5, "APMGSRN", size, multiplier=100)
 
             payload = yaml.safe_load(
                 (self.config_root / "fV-SRN" / size / "ionization__GT.yaml").read_text(encoding="utf-8")
             )
-            self._assert_size(TemporalFVSRN(payload["model"]), target_mib, "fV-SRN", size)
+            self._assert_size(TemporalFVSRN(payload["model"]), target_mib / 5, "fV-SRN", size)
 
             payload = yaml.safe_load(
                 (self.config_root / "RMDSRN" / size / "ionization__GT.yaml").read_text(encoding="utf-8")
             )
-            self._assert_size(RMDSRN(payload["model"]), target_mib, "RMDSRN", size)
+            self._assert_size(RMDSRN(payload["model"]), target_mib / 5, "RMDSRN", size)
+
+            dc_payload = yaml.safe_load(
+                (self.config_root / "DC-INR" / size / "ionization__GT.yaml").read_text(encoding="utf-8")
+            )
+            self.assertAlmostEqual(dc_payload["compression"]["target_size_mib"], target_mib / 5, places=9)
+
+    def test_siren_and_coordnet_formal_size_axes(self):
+        siren_expected = {
+            "Size082": (3, 168),
+            "Size163": (3, 237),
+            "Size326": (3, 336),
+            "Size652": (4, 412),
+            "Size1304": (5, 522),
+        }
+        coord_expected = {
+            "Size082": 15,
+            "Size163": 22,
+            "Size326": 31,
+            "Size652": 43,
+            "Size1304": 61,
+        }
+        for size in SIZES:
+            siren = yaml.safe_load(
+                (self.config_root / "SIREN" / size / "ionization__GT.yaml").read_text(encoding="utf-8")
+            )["model"]
+            self.assertEqual((siren["hidden_layers"], siren["hidden_features"]), siren_expected[size])
+            coordnet = yaml.safe_load(
+                (self.config_root / "CoordNet" / size / "ionization__GT.yaml").read_text(encoding="utf-8")
+            )["model"]
+            self.assertEqual(coordnet["num_res"], 10)
+            self.assertEqual(coordnet["init_features"], coord_expected[size])
 
     def _assert_size(self, model, target_mib, family, size, multiplier=1):
         actual_mib = sum(parameter.numel() for parameter in model.parameters()) * 2 * multiplier / (1024**2)
