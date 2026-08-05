@@ -698,10 +698,10 @@ def train_model(
             temperature=float(cfg.multiview_dwa_loss.temperature),
             eps=float(cfg.multiview_dwa_loss.eps),
             total_epochs=int(cfg.epochs),
-            window_size=int(cfg.multiview_dwa_loss.window_size),
             warmup_epochs=int(cfg.multiview_dwa_loss.warmup_epochs),
-            eta_max=float(cfg.multiview_dwa_loss.eta_max),
-            eta_min=float(cfg.multiview_dwa_loss.eta_min),
+            max_factor_max=float(cfg.multiview_dwa_loss.max_factor_max),
+            max_factor_min=float(cfg.multiview_dwa_loss.max_factor_min),
+            update_schedule=str(cfg.multiview_dwa_loss.update_schedule),
         ).to(device)
     if dataset.meta.is_multitarget and cfg.gradient_balancer.enabled and cfg.gradient_balancer.method == "gradnorm":
         gradnorm_balancer = GradNormBalancer(dataset.target_names(), cfg.gradient_balancer, device)
@@ -1062,12 +1062,12 @@ def train_model(
                     logger.info("EMA per-target loss (epoch avg): %s", ema_target_loss_text)
             if dwa_epoch_state is not None:
                 logger.info(
-                    "DWA balance state: completed_epochs=%d window_size=%d "
-                    "warmup_complete=%s eta=%s next_epoch_weights=%s",
+                    "DWA balance state: completed_epochs=%d warmup_complete=%s "
+                    "max_factor=%s max_log_change=%s next_epoch_weights=%s",
                     int(dwa_epoch_state.get("completed_epochs", 0)),
-                    int(dwa_epoch_state.get("window_size", 0)),
                     bool(dwa_epoch_state.get("warmup_complete", False)),
-                    dwa_epoch_state.get("eta"),
+                    dwa_epoch_state.get("max_factor"),
+                    dwa_epoch_state.get("max_log_change"),
                     dwa_epoch_state.get("next_weights", {}),
                 )
                 dwa_target_loss_text = " ".join(
@@ -1075,12 +1075,15 @@ def train_model(
                     for name in dataset.target_names()
                 )
                 logger.info("DWA per-target loss (epoch avg): %s", dwa_target_loss_text)
-                if "current_window_loss" in dwa_epoch_state:
+                if "previous_epoch_loss" in dwa_epoch_state:
                     logger.info(
-                        "DWA moving averages: previous=%s current=%s proposed_weights=%s",
-                        dwa_epoch_state.get("previous_window_loss", {}),
-                        dwa_epoch_state.get("current_window_loss", {}),
+                        "DWA adjacent-epoch update: previous=%s current=%s "
+                        "loss_ratio=%s proposed_weights=%s applied_log_change=%s",
+                        dwa_epoch_state.get("previous_epoch_loss", {}),
+                        dwa_epoch_state.get("epoch_loss", {}),
+                        dwa_epoch_state.get("loss_ratio", {}),
                         dwa_epoch_state.get("proposed_weights", {}),
+                        dwa_epoch_state.get("applied_log_change", {}),
                     )
             if expert_select_counts is not None:
                 sum_count = float(expert_select_counts.sum().item())

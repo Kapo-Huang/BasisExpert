@@ -358,12 +358,12 @@ class ConfigMatrixTestCase(unittest.TestCase):
         payload = yaml.safe_load((self.config_root / "VarExpert" / "ionization_dwa.yaml").read_text(encoding="utf-8"))
         self.assertFalse(payload["training"]["multiview_ema_loss"]["enabled"])
         self.assertTrue(payload["training"]["multiview_dwa_loss"]["enabled"])
-        self.assertEqual(payload["training"]["multiview_dwa_loss"]["temperature"], 2.0)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["temperature"], 0.2)
         self.assertEqual(payload["training"]["multiview_dwa_loss"]["eps"], 1.0e-12)
-        self.assertEqual(payload["training"]["multiview_dwa_loss"]["window_size"], 5)
-        self.assertEqual(payload["training"]["multiview_dwa_loss"]["warmup_epochs"], 20)
-        self.assertEqual(payload["training"]["multiview_dwa_loss"]["eta_max"], 1.0)
-        self.assertEqual(payload["training"]["multiview_dwa_loss"]["eta_min"], 0.1)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["warmup_epochs"], 2)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["max_factor_max"], 1.25)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["max_factor_min"], 1.05)
+        self.assertEqual(payload["training"]["multiview_dwa_loss"]["update_schedule"], "cosine")
 
     def test_primary_training_budget_is_exact(self):
         expected = 16_000 * 1_500 * 600

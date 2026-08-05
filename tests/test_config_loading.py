@@ -201,12 +201,12 @@ class ConfigLoadingTestCase(unittest.TestCase):
                 "device": "cpu",
                 "multiview_dwa_loss": {
                     "enabled": True,
-                    "temperature": 3.0,
+                    "temperature": 0.3,
                     "eps": 1.0e-10,
-                    "window_size": 7,
-                    "warmup_epochs": 24,
-                    "eta_max": 0.8,
-                    "eta_min": 0.2,
+                    "warmup_epochs": 4,
+                    "max_factor_max": 1.3,
+                    "max_factor_min": 1.02,
+                    "update_schedule": " COSINE ",
                 },
             },
         }
@@ -215,12 +215,12 @@ class ConfigLoadingTestCase(unittest.TestCase):
             config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
             loaded = load_experiment_config(config_path)
             self.assertTrue(loaded.training.multiview_dwa_loss.enabled)
-            self.assertEqual(loaded.training.multiview_dwa_loss.temperature, 3.0)
+            self.assertEqual(loaded.training.multiview_dwa_loss.temperature, 0.3)
             self.assertEqual(loaded.training.multiview_dwa_loss.eps, 1.0e-10)
-            self.assertEqual(loaded.training.multiview_dwa_loss.window_size, 7)
-            self.assertEqual(loaded.training.multiview_dwa_loss.warmup_epochs, 24)
-            self.assertEqual(loaded.training.multiview_dwa_loss.eta_max, 0.8)
-            self.assertEqual(loaded.training.multiview_dwa_loss.eta_min, 0.2)
+            self.assertEqual(loaded.training.multiview_dwa_loss.warmup_epochs, 4)
+            self.assertEqual(loaded.training.multiview_dwa_loss.max_factor_max, 1.3)
+            self.assertEqual(loaded.training.multiview_dwa_loss.max_factor_min, 1.02)
+            self.assertEqual(loaded.training.multiview_dwa_loss.update_schedule, "cosine")
 
     def test_load_config_rejects_invalid_multiview_dwa_loss_settings(self):
         base_config = {
@@ -231,12 +231,13 @@ class ConfigLoadingTestCase(unittest.TestCase):
             "training": {"device": "cpu"},
         }
         invalid_sections = (
-            {"window_size": 4},
-            {"window_size": 11},
+            {"temperature": 0.0},
+            {"eps": 0.0},
             {"warmup_epochs": -1},
-            {"eta_max": 1.1},
-            {"eta_max": 0.2, "eta_min": 0.3},
-            {"eta_min": 0.0},
+            {"max_factor_min": 0.99},
+            {"max_factor_max": 1.1, "max_factor_min": 1.2},
+            {"update_schedule": "linear"},
+            {"window_size": 5},
         )
         for section in invalid_sections:
             with self.subTest(section=section), tempfile.TemporaryDirectory() as tmpdir:

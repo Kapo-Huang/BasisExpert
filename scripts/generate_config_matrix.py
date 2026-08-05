@@ -512,12 +512,12 @@ def generate_var_expert() -> int:
             dwa_payload["training"]["multiview_ema_loss"]["enabled"] = False
             dwa_payload["training"]["multiview_dwa_loss"] = {
                 "enabled": True,
-                "temperature": 2.0,
+                "temperature": 0.2,
                 "eps": 1.0e-12,
-                "window_size": 5,
-                "warmup_epochs": 20,
-                "eta_max": 1.0,
-                "eta_min": 0.1,
+                "warmup_epochs": 2,
+                "max_factor_max": 1.25,
+                "max_factor_min": 1.05,
+                "update_schedule": "cosine",
             }
             dump(CONFIGS / "VarExpert" / "ionization_dwa.yaml", dwa_payload)
             count += 1

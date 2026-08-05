@@ -878,9 +878,11 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "sampler": "uniform_random",
                 "multiview_dwa_loss": {
                     "enabled": True,
-                    "temperature": 2.0,
-                    "window_size": 5,
+                    "temperature": 0.2,
                     "warmup_epochs": 0,
+                    "max_factor_max": 1.25,
+                    "max_factor_min": 1.05,
+                    "update_schedule": "cosine",
                 },
             },
             "log": {
@@ -908,8 +910,10 @@ class TrainingPipelineTestCase(unittest.TestCase):
         self.assertIn("DWA balance state: completed_epochs=7", log_text)
         self.assertIn("next_epoch_weights={", log_text)
         self.assertIn("DWA per-target loss (epoch avg):", log_text)
-        self.assertIn("DWA moving averages: previous=", log_text)
-        self.assertIn("eta=1.0", log_text)
+        self.assertIn("DWA adjacent-epoch update: previous=", log_text)
+        self.assertIn("loss_ratio=", log_text)
+        self.assertIn("applied_log_change=", log_text)
+        self.assertIn("max_factor=1.05", log_text)
         self.assertIn("a=", log_text)
         self.assertIn("b=", log_text)
 

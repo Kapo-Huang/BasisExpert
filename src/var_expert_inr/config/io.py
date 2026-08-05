@@ -133,6 +133,11 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         _field_names(SchedulerConfig),
         label="training.scheduler",
     )
+    _reject_unknown_keys(
+        multiview_dwa_payload,
+        _field_names(MultiAttrDWALossConfig),
+        label="training.multiview_dwa_loss",
+    )
     _reject_unknown_keys(psnr_log_payload, _field_names(PSNRLogConfig), label="log.psnr")
     _reject_unknown_keys(timing_log_payload, _field_names(TimingLogConfig), label="log.timing")
 

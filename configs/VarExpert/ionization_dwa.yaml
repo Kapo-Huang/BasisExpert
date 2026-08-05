@@ -58,12 +58,12 @@ training:
     assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_6.npy
   multiview_dwa_loss:
     enabled: true
-    temperature: 2.0
+    temperature: 0.2
     eps: 1.0e-12
-    window_size: 5
-    warmup_epochs: 20
-    eta_max: 1.0
-    eta_min: 0.1
+    warmup_epochs: 2
+    max_factor_max: 1.25
+    max_factor_min: 1.05
+    update_schedule: cosine
 evaluation:
   batch_size: 16000
   save_predictions: false

@@ -79,23 +79,29 @@ class MultiAttrEMALossConfig:
 @dataclass(frozen=True)
 class MultiAttrDWALossConfig:
     enabled: bool = False
-    temperature: float = 2.0
+    temperature: float = 0.2
     eps: float = 1e-12
-    window_size: int = 5
-    warmup_epochs: int = 20
-    eta_max: float = 1.0
-    eta_min: float = 0.1
+    warmup_epochs: int = 2
+    max_factor_max: float = 1.25
+    max_factor_min: float = 1.05
+    update_schedule: str = "cosine"
 
     def __post_init__(self) -> None:
-        if not 5 <= int(self.window_size) <= 10:
-            raise ValueError("multiview_dwa_loss.window_size must be between 5 and 10")
+        if float(self.temperature) <= 0.0:
+            raise ValueError("multiview_dwa_loss.temperature must be > 0")
+        if float(self.eps) <= 0.0:
+            raise ValueError("multiview_dwa_loss.eps must be > 0")
         if int(self.warmup_epochs) < 0:
             raise ValueError("multiview_dwa_loss.warmup_epochs must be non-negative")
-        if not 0.0 < float(self.eta_min) <= float(self.eta_max) <= 1.0:
+        if not 1.0 <= float(self.max_factor_min) <= float(self.max_factor_max):
             raise ValueError(
-                "multiview_dwa_loss eta values must satisfy "
-                "0 < eta_min <= eta_max <= 1"
+                "multiview_dwa_loss max factors must satisfy "
+                "1 <= max_factor_min <= max_factor_max"
             )
+        schedule = str(self.update_schedule).strip().lower()
+        if schedule != "cosine":
+            raise ValueError("multiview_dwa_loss.update_schedule must be 'cosine'")
+        object.__setattr__(self, "update_schedule", schedule)
 
 
 @dataclass(frozen=True)
