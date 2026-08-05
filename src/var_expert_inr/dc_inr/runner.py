@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import time
 from datetime import datetime
@@ -25,6 +26,8 @@ from .data import (
     block_id_to_grid_indices,
     block_shape_from_payload,
     full_block_query_coords,
+    local_spatial_coords,
+    normalized_time_values,
     sample_block_training_batch,
     sample_balanced_block_training_batch,
 )
@@ -145,6 +148,50 @@ def _sum_model_stats(widths: np.ndarray) -> dict[str, int | float]:
     }
 
 
+def _allocate_probe_counts(cluster_block_counts: np.ndarray, total_count: int) -> np.ndarray:
+    counts = np.asarray(cluster_block_counts, dtype=np.int64)
+    requested = max(0, int(total_count))
+    if counts.ndim != 1 or np.any(counts < 0):
+        raise ValueError("cluster_block_counts must be a one-dimensional non-negative array")
+    if counts.size == 0 or requested == 0 or int(counts.sum()) == 0:
+        return np.zeros_like(counts)
+    exact = counts.astype(np.float64) * (float(requested) / float(counts.sum()))
+    allocated = np.floor(exact).astype(np.int64)
+    remainder = requested - int(allocated.sum())
+    if remainder > 0:
+        order = np.argsort(-(exact - allocated), kind="stable")
+        allocated[order[:remainder]] += 1
+    return allocated
+
+
+def _sample_cluster_probe_batch(
+    *,
+    blocks: np.ndarray,
+    block_ids: np.ndarray,
+    block_shape,
+    batch_size: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    selected = np.asarray(block_ids, dtype=np.int64)
+    count = int(batch_size)
+    if selected.ndim != 1 or selected.size == 0:
+        raise ValueError("block_ids must contain at least one block")
+    if count <= 0:
+        return np.empty((0, 4), dtype=np.float32), np.empty((0, 1), dtype=np.float32)
+    block_array = np.asarray(blocks)
+    time_count = int(block_array.shape[1])
+    voxel_count = int(block_shape.voxel_count)
+    flat = block_array.reshape(int(block_array.shape[0]), time_count, voxel_count)
+    picked_blocks = selected[rng.integers(0, selected.size, size=count)]
+    picked_times = rng.integers(0, time_count, size=count)
+    picked_voxels = rng.integers(0, voxel_count, size=count)
+    spatial = local_spatial_coords(block_shape)[picked_voxels]
+    times = normalized_time_values(time_count)[picked_times, None]
+    coords = np.concatenate([spatial, times], axis=1).astype(np.float32, copy=False)
+    targets = flat[picked_blocks, picked_times, picked_voxels].reshape(count, 1)
+    return coords, np.asarray(targets, dtype=np.float32)
+
+
 def _train_representative_models(
     *,
     volume: DCTargetVolume,
@@ -157,6 +204,26 @@ def _train_representative_models(
     widths = np.asarray(selection.widths, dtype=np.int32)
     model_states: list[dict[str, torch.Tensor]] = []
     summaries: list[dict[str, float]] = []
+    from ..utils.exploration_probe import (
+        ExplorationProbeRecorder,
+        normalize_probe,
+        probe_due,
+        probe_progress,
+    )
+
+    probe_cfg = normalize_probe(config.exploration_probe)
+    probe_recorder = ExplorationProbeRecorder(metrics_dir, probe_cfg) if probe_cfg.enabled else None
+    probe_totals: dict[int, dict[str, float]] = {}
+    assignments = np.asarray(selection.block_to_representative, dtype=np.int32)
+    cluster_block_counts = np.bincount(assignments, minlength=int(widths.size))
+    requested_probe_count = 0
+    per_model_probe_counts = np.zeros((int(widths.size),), dtype=np.int64)
+    if probe_cfg.enabled:
+        requested_probe_count = min(
+            int(probe_cfg.max_samples),
+            max(1, int(round(int(volume.volume_shape.N) * float(probe_cfg.sample_ratio)))),
+        )
+        per_model_probe_counts = _allocate_probe_counts(cluster_block_counts, requested_probe_count)
     for model_index, block_id in enumerate(np.asarray(selection.representative_block_ids, dtype=np.int32).tolist()):
         width = int(widths[model_index])
         model = DCINRTiny(width).to(device)
@@ -167,27 +234,18 @@ def _train_representative_models(
         )
         rng = np.random.default_rng(int(config.training.seed) + int(model_index))
         block_values = np.asarray(blocks[int(block_id)], dtype=np.float32)
-        from ..utils.exploration_probe import (
-            ExplorationProbeRecorder,
-            normalize_probe,
-            probe_due,
-            probe_progress,
-            psnr_from_arrays,
-        )
-
-        probe_cfg = normalize_probe(config.exploration_probe)
-        if probe_cfg.enabled:
+        if probe_cfg.enabled and int(per_model_probe_counts[model_index]) > 0:
             probe_rng = np.random.default_rng(int(probe_cfg.seed) + int(model_index))
-            probe_count = min(int(probe_cfg.max_samples), max(1, int(round(block_values.size * float(probe_cfg.sample_ratio)))))
-            probe_coords_np, probe_targets_np = sample_balanced_block_training_batch(
-                block_values=block_values,
+            cluster_block_ids = np.flatnonzero(assignments == int(model_index))
+            probe_coords_np, probe_targets_np = _sample_cluster_probe_batch(
+                blocks=blocks,
+                block_ids=cluster_block_ids,
                 block_shape=selection.block_shape,
-                batch_size=probe_count,
+                batch_size=int(per_model_probe_counts[model_index]),
                 rng=probe_rng,
             )
-            probe_recorder = ExplorationProbeRecorder(metrics_dir, probe_cfg)
         else:
-            probe_coords_np = probe_targets_np = probe_recorder = None
+            probe_coords_np = probe_targets_np = None
         final_loss = float("nan")
         started_at = time.perf_counter()
         if int(config.training.total_steps) > 0:
@@ -261,21 +319,31 @@ def _train_representative_models(
                     final_loss,
                     float(optimizer.param_groups[0]["lr"]),
                 )
-            if probe_recorder is not None and probe_due(epoch, model_steps, probe_cfg):
+            if probe_coords_np is not None and probe_due(epoch, model_steps, probe_cfg):
                 probe_started = time.perf_counter()
                 model.eval()
                 with torch.no_grad():
                     probe_predictions = model(
                         torch.from_numpy(probe_coords_np).to(device, non_blocking=True)
                     ).detach().cpu().numpy()
-                probe_recorder.record(
-                    progress=probe_progress(epoch, model_steps, probe_cfg),
-                    scope=f"representative:{model_index}:block:{int(block_id)}",
-                    aggregate_psnr=psnr_from_arrays(probe_targets_np, probe_predictions),
-                    sample_count=int(probe_targets_np.shape[0]),
-                    elapsed_seconds=time.perf_counter() - probe_started,
-                    details={"representative_index": int(model_index), "block_id": int(block_id)},
+                progress = probe_progress(epoch, model_steps, probe_cfg)
+                stats = probe_totals.setdefault(
+                    int(progress),
+                    {
+                        "squared_error": 0.0,
+                        "count": 0.0,
+                        "gt_min": float("inf"),
+                        "gt_max": float("-inf"),
+                        "elapsed_seconds": 0.0,
+                    },
                 )
+                target64 = np.asarray(probe_targets_np, dtype=np.float64)
+                prediction64 = np.asarray(probe_predictions, dtype=np.float64)
+                stats["squared_error"] += float(np.sum((prediction64 - target64) ** 2))
+                stats["count"] += float(target64.size)
+                stats["gt_min"] = min(float(stats["gt_min"]), float(np.min(target64)))
+                stats["gt_max"] = max(float(stats["gt_max"]), float(np.max(target64)))
+                stats["elapsed_seconds"] += float(time.perf_counter() - probe_started)
                 model.train()
         cpu_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
         model_states.append(cpu_state)
@@ -300,6 +368,27 @@ def _train_representative_models(
         del model
         if device.type == "cuda":
             torch.cuda.empty_cache()
+    if probe_recorder is not None:
+        for progress in sorted(probe_totals):
+            stats = probe_totals[progress]
+            count = int(stats["count"])
+            mse_value = float(stats["squared_error"]) / max(count, 1)
+            data_range = float(stats["gt_max"] - stats["gt_min"])
+            if not math.isfinite(data_range) or data_range <= 0.0:
+                data_range = max(abs(float(stats["gt_min"])), abs(float(stats["gt_max"])), 1.0e-12)
+            aggregate_psnr = float("inf") if mse_value <= 0.0 else 10.0 * math.log10((data_range * data_range) / mse_value)
+            probe_recorder.record(
+                progress=int(progress),
+                scope="aggregate",
+                aggregate_psnr=aggregate_psnr,
+                sample_count=count,
+                elapsed_seconds=float(stats["elapsed_seconds"]),
+                details={
+                    "metric": "sampled_full_volume_ensemble",
+                    "representative_count": int(widths.size),
+                    "requested_sample_count": int(requested_probe_count),
+                },
+            )
     return model_states, summaries
 
 
@@ -509,15 +598,21 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict[str
         )
 
         if config.compression.target_size_mib is not None:
-            selected_stats = _sum_model_stats(np.asarray(selection.widths, dtype=np.int32))
-            relative_error = abs(
-                float(selected_stats["fp16_size_mb"]) - float(config.compression.target_size_mib)
-            ) / float(config.compression.target_size_mib)
-            if relative_error > 0.05:
+            target_bytes = float(config.compression.target_size_mib) * 1024.0 * 1024.0
+            payload_utilization = float(selection.payload_bytes) / target_bytes
+            if payload_utilization > 1.0 + 1.0e-9:
                 raise ValueError(
-                    "DC-INR selected FP16 parameter size is outside the 5% target tolerance: "
-                    f"actual={selected_stats['fp16_size_mb']:.6f}MiB "
+                    "DC-INR selected payload exceeds the configured size budget: "
+                    f"payload={selection.payload_bytes / (1024.0 * 1024.0):.6f}MiB "
                     f"target={config.compression.target_size_mib:.6f}MiB"
+                )
+            if payload_utilization < 0.95:
+                logger.warning(
+                    "DC-INR discrete architecture uses only %.2f%% of the payload budget "
+                    "(payload=%.6fMiB target=%.6fMiB).",
+                    100.0 * payload_utilization,
+                    float(selection.payload_bytes) / (1024.0 * 1024.0),
+                    float(config.compression.target_size_mib),
                 )
 
         model_states, training_summary = _train_representative_models(

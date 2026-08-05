@@ -46,13 +46,20 @@ def compute_spatiotemporal_distance_matrix(
             f"Distance matrix requires {distance_bytes} bytes, which exceeds "
             f"partition.distance_matrix_max_bytes={int(max_bytes)}. Use coarser blocks."
         )
+    # DC-INR's clustering threshold must be independent of both the block voxel
+    # count and the number of timesteps.  Summed Euclidean distances scale as
+    # O(T * sqrt(V)); with production blocks this made an eps such as 0.01
+    # effectively zero and turned every block into its own representative.
+    # Average per-timestep RMSE keeps the distance in the target value scale.
     distance = np.zeros((num_blocks, num_blocks), dtype=np.float32)
+    voxel_count = int(features.shape[2])
+    time_count = int(features.shape[1])
     for time_index in range(int(features.shape[1])):
         current = features[:, time_index, :]
         norms = np.sum(current * current, axis=1, dtype=np.float64)
         gram = current @ current.T
         squared = np.maximum(norms[:, None] + norms[None, :] - (2.0 * gram), 0.0)
-        distance += np.sqrt(squared).astype(np.float32)
+        distance += np.sqrt(squared / float(voxel_count)).astype(np.float32) / float(time_count)
     np.fill_diagonal(distance, 0.0)
     return distance
 

@@ -72,9 +72,15 @@ def _summarize_metrics(path: Path | None) -> tuple[str, str, str, int]:
     return trajectory, final_psnr, str(has_nonfinite).lower(), len(scopes)
 
 
-def build_summary(config_root: Path, status_path: Path, output_path: Path, repo_root: Path) -> None:
+def build_summary(
+    config_root: Path,
+    status_path: Path,
+    output_path: Path,
+    repo_root: Path,
+    run_root: Path | None = None,
+) -> None:
     statuses = _latest_statuses(status_path)
-    run_root = repo_root / "runs" / "exploration"
+    run_root = run_root or (repo_root / "runs" / "exploration")
     rows = []
     for config_path in sorted(config_root.rglob("*.yaml")):
         relative = config_path.relative_to(repo_root).as_posix()
@@ -113,8 +119,20 @@ def main() -> None:
     parser.add_argument("--status", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, required=True)
+    parser.add_argument(
+        "--run-root",
+        type=Path,
+        default=None,
+        help="Run directory containing exp_id subdirectories (default: <repo>/runs/exploration).",
+    )
     args = parser.parse_args()
-    build_summary(args.config_root.resolve(), args.status.resolve(), args.output.resolve(), args.repo_root.resolve())
+    build_summary(
+        args.config_root.resolve(),
+        args.status.resolve(),
+        args.output.resolve(),
+        args.repo_root.resolve(),
+        None if args.run_root is None else args.run_root.resolve(),
+    )
     print(f"Wrote exploration summary to {args.output}")
 
 

@@ -984,8 +984,8 @@ def _run_stage(
                     predictions = model(coords, cluster_ids, return_concat=True).detach().cpu().numpy()
                     targets = batch.targets_concat.numpy()
                     for entry in layout:
-                        target_parts[entry.name].append(targets[:, entry.start : entry.stop])
-                        prediction_parts[entry.name].append(predictions[:, entry.start : entry.stop])
+                        target_parts[entry.name].append(targets[:, entry.start : entry.end])
+                        prediction_parts[entry.name].append(predictions[:, entry.start : entry.end])
             per_target = {
                 entry.name: psnr_from_arrays(
                     np.concatenate(target_parts[entry.name], axis=0),

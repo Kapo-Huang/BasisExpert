@@ -6,9 +6,13 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/${RUN_TOKEN}}"
+CONFIG_LIST_FILE="${CONFIG_LIST_FILE:-${SCRIPT_DIR}/run_all_configs.list}"
+if command -v cygpath >/dev/null 2>&1; then
+    LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"
+    CONFIG_LIST_FILE="$(cygpath -u "${CONFIG_LIST_FILE}")"
+fi
 STATUS_FILE="${LOG_ROOT}/status.tsv"
 FAILURE_FILE="${LOG_ROOT}/failed.txt"
-CONFIG_LIST_FILE="${CONFIG_LIST_FILE:-${SCRIPT_DIR}/run_all_configs.list}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-0}"
 GROUP_DELIM=$'\034'

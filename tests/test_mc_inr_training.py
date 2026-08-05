@@ -269,6 +269,32 @@ class MCINRTrainingTestCase(unittest.TestCase):
         self.assertTrue(Path(resume_meta_result["checkpoint_path"]).exists())
         self.assertEqual(resume_meta_result["training_summary"]["meta_init"]["last_iteration"], 3)
 
+    def test_multitarget_exploration_probe_uses_layout_end_offsets(self):
+        _, config_path = self._node_config(
+            exp_id="mc-node-probe",
+            meta_iterations=1,
+            finetune_epochs=1,
+            max_recluster_rounds=0,
+        )
+        payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+        payload["exploration_probe"] = {
+            "enabled": True,
+            "total_epoch_equivalents": 1,
+            "every_epoch_equivalents": 1,
+            "sample_ratio": 1.0,
+            "max_samples": 12,
+            "seed": 42,
+        }
+        probe_config = self._write_yaml(self.root / "mc-node-probe-enabled.yaml", payload)
+
+        result = run_train(probe_config)
+
+        run_dir = self._run_dir_from_checkpoint(result["checkpoint_path"])
+        probe_path = run_dir / "metrics" / "exploration_psnr.tsv"
+        self.assertTrue(probe_path.exists())
+        probe_text = probe_path.read_text(encoding="utf-8")
+        self.assertIn("\taggregate\t", probe_text)
+
     def test_resume_finetune_continues_epoch(self):
         _, config_path = self._node_config(exp_id="mc-node-ft", finetune_epochs=1)
         first_run = run_train(config_path)

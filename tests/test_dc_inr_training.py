@@ -155,6 +155,39 @@ class DCINRTrainingTestCase(unittest.TestCase):
         )
         np.testing.assert_array_equal(widths, np.array([4, 4, 4], dtype=np.int32))
 
+    def test_spatiotemporal_distance_is_invariant_to_voxel_and_time_tiling(self):
+        features = np.array(
+            [
+                [[0.0, 0.5], [0.25, 0.75]],
+                [[0.5, 1.0], [0.75, 1.0]],
+            ],
+            dtype=np.float32,
+        )
+        baseline = compute_spatiotemporal_distance_matrix(features, max_bytes=1024)
+        tiled = np.tile(features, (1, 3, 4))
+        tiled_distance = compute_spatiotemporal_distance_matrix(tiled, max_bytes=1024)
+        np.testing.assert_allclose(tiled_distance, baseline, rtol=1.0e-6, atol=1.0e-6)
+
+    def test_exploration_probe_reports_one_sampled_full_volume_scope(self):
+        config = self._base_config(exp_id="dc-probe")
+        config["exploration_probe"] = {
+            "enabled": True,
+            "total_epoch_equivalents": 2,
+            "every_epoch_equivalents": 1,
+            "sample_ratio": 1.0,
+            "max_samples": 8,
+            "seed": 42,
+        }
+        config_path = self._write_yaml(self.root / "dc_probe.yaml", config)
+
+        result = run_train(config_path)
+
+        run_dir = Path(result["checkpoint_path"]).resolve().parent.parent
+        rows = (run_dir / "metrics" / "exploration_psnr.tsv").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all("\taggregate\t" in row for row in rows[1:]))
+        self.assertTrue(all("sampled_full_volume_ensemble" in row for row in rows[1:]))
+
     def test_train_predict_evaluate_and_checkpoint_reload(self):
         config_path = self._write_yaml(self.root / "dc_smoke.yaml", self._base_config())
         train_result = run_train(config_path)
