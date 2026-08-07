@@ -76,12 +76,13 @@ def _build_validate_config(cfg, validate_ckpt_path):
     data_cfg = cfg["DATA"]
     model_cfg = cfg["MODEL"]
     volume_shape = data_cfg["volume_shape"]
+    dataset_name = str(data_cfg["dataset_name"])
     return {
-        "experiment": f"exp_data_ionization_neural_expert_{data_cfg['attr_name']}",
-        "exp_id": f"neural-expert-ionization-{data_cfg['attr_name']}",
+        "experiment": f"exp_data_{dataset_name}_neural_expert_{data_cfg['attr_name']}",
+        "exp_id": f"neural-expert-{dataset_name}-{data_cfg['attr_name']}",
         "experiment_root": "experiments",
         "data": {
-            "dataset_name": "ionization",
+            "dataset_name": dataset_name,
             "split": "train",
             "data_root": "./data",
             "target_path": data_cfg["target_path"],

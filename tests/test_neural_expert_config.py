@@ -17,7 +17,10 @@ class NeuralExpertConfigTestCase(unittest.TestCase):
             self.assertIn("DATA", cfg)
             self.assertIn("MODEL", cfg)
             self.assertIn("TRAINING", cfg)
-            self.assertIn(cfg["DATA"]["dataset_name"], {"bathymetry", "katrina", "ionization"})
+            self.assertIn(
+                cfg["DATA"]["dataset_name"],
+                {"bathymetry", "combustion_40nh3_1", "katrina", "ionization"},
+            )
 
     def test_target_placeholder_and_identifier_override(self):
         payload = {

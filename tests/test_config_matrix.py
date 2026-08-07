@@ -24,6 +24,9 @@ DATASET_TARGETS = {
     "katrina": {"fort63", "fort64", "fort73", "speed", "v"},
     "ionization": {"GT", "H_plus", "H2", "He", "PD"},
 }
+COMBUSTION_DATASET = "combustion_40NH3_1"
+COMBUSTION_TARGETS = set(generate_config_matrix.COMBUSTION_DATASET["targets"])
+COMBUSTION_SCALAR_TARGETS = set(generate_config_matrix.COMBUSTION_SCALAR_TARGETS)
 SIZES = {
     "Size082": 0.82,
     "Size163": 1.63,
@@ -48,12 +51,12 @@ class ConfigMatrixTestCase(unittest.TestCase):
         ]
         return [line for line in selected if line]
 
-    def test_matrix_contains_exactly_356_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 356)
+    def test_matrix_contains_exactly_517_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 517)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
-    def test_generator_preserves_combustion_and_generates_356_configs(self):
+    def test_generator_preserves_combustion_and_generates_517_configs(self):
         committed_path = self.config_root / "VarExpert" / "combustion_40NH3_1.yaml"
         committed_payload = yaml.safe_load(committed_path.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -67,14 +70,14 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(len(generated_paths), 356)
+        self.assertEqual(len(generated_paths), 517)
         self.assertEqual(generated_payload, committed_payload)
 
     def test_default_run_list_contains_the_complete_formal_matrix(self):
         selected = self.read_run_list("run_all_configs.list")
         expected = {path.relative_to(self.repo_root).as_posix() for path in self.paths}
 
-        self.assertEqual(len(selected), 356)
+        self.assertEqual(len(selected), 517)
         self.assertEqual(set(selected), expected)
 
     def test_main_and_rd_curve_lists_partition_the_complete_matrix(self):
@@ -83,7 +86,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         rd_curve_configs = self.read_run_list("run_rd_curve_configs.list")
         size_marker = "/Size"
 
-        self.assertEqual(len(main_configs), 121)
+        self.assertEqual(len(main_configs), 282)
         self.assertEqual(len(rd_curve_configs), 235)
         self.assertTrue(all(size_marker not in path for path in main_configs))
         self.assertTrue(all(size_marker in path for path in rd_curve_configs))
@@ -99,6 +102,19 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     if "managerpretrain" not in path.stem
                 }
                 self.assertEqual(actual, targets, (family, dataset))
+            combustion = {
+                path.stem.split("__")[1]
+                for path in (self.config_root / family).glob(
+                    f"{COMBUSTION_DATASET}__*.yaml"
+                )
+                if "managerpretrain" not in path.stem
+            }
+            expected_combustion = (
+                COMBUSTION_SCALAR_TARGETS
+                if family == "NeuralExpert"
+                else COMBUSTION_TARGETS
+            )
+            self.assertEqual(combustion, expected_combustion, family)
             for size in SIZES:
                 actual = {
                     path.stem.split("__")[1]
@@ -110,6 +126,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
         for family in ("APMGSRN", "DC-INR", "fV-SRN", "RMDSRN"):
             actual = {path.stem.split("__")[1] for path in (self.config_root / family).glob("ionization__*.yaml")}
             self.assertEqual(actual, DATASET_TARGETS["ionization"])
+            combustion = {
+                path.stem.split("__")[1]
+                for path in (self.config_root / family).glob(
+                    f"{COMBUSTION_DATASET}__*.yaml"
+                )
+            }
+            self.assertEqual(combustion, COMBUSTION_SCALAR_TARGETS)
             for size in SIZES:
                 sized = {
                     path.stem.split("__")[1]
@@ -122,6 +145,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
             for path in (self.config_root / "ECNR").glob("ionization__*.yaml")
         }
         self.assertEqual(ecnr_targets, DATASET_TARGETS["ionization"])
+        ecnr_combustion = {
+            path.stem.split("__")[1]
+            for path in (self.config_root / "ECNR").glob(
+                f"{COMBUSTION_DATASET}__*.yaml"
+            )
+        }
+        self.assertEqual(ecnr_combustion, COMBUSTION_SCALAR_TARGETS)
         self.assertEqual(list((self.config_root / "ECNR").glob("Size*/*.yaml")), [])
 
         compact_targets = {
@@ -129,6 +159,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
             for path in (self.config_root / "CompactNGP").glob("ionization__*.yaml")
         }
         self.assertEqual(compact_targets, DATASET_TARGETS["ionization"])
+        compact_combustion = {
+            path.stem.split("__")[1]
+            for path in (self.config_root / "CompactNGP").glob(
+                f"{COMBUSTION_DATASET}__*.yaml"
+            )
+        }
+        self.assertEqual(compact_combustion, COMBUSTION_SCALAR_TARGETS)
         self.assertEqual(
             list((self.config_root / "CompactNGP").glob("bathymetry__*.yaml")), []
         )
@@ -142,6 +179,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
             )
         }
         self.assertEqual(fa_tr_targets, DATASET_TARGETS["ionization"])
+        fa_tr_combustion = {
+            path.stem.split("__")[1]
+            for path in (self.config_root / "FA-TR-INR").glob(
+                f"{COMBUSTION_DATASET}__*.yaml"
+            )
+        }
+        self.assertEqual(fa_tr_combustion, COMBUSTION_SCALAR_TARGETS)
         self.assertEqual(
             list(
                 (self.config_root / "FA-TR-INR").glob(
@@ -165,6 +209,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
             )
         }
         self.assertEqual(instant_targets, DATASET_TARGETS["ionization"])
+        instant_combustion = {
+            path.stem.split("__")[1]
+            for path in (self.config_root / "InstantNGP").glob(
+                f"{COMBUSTION_DATASET}__*.yaml"
+            )
+        }
+        self.assertEqual(instant_combustion, COMBUSTION_SCALAR_TARGETS)
         self.assertEqual(
             list(
                 (self.config_root / "InstantNGP").glob(
@@ -185,7 +236,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
     def test_neural_expert_has_matching_manager_pretrains(self):
         root = self.config_root / "NeuralExpert"
         main_configs = [path for path in root.rglob("*.yaml") if "managerpretrain" not in path.stem]
-        self.assertEqual(len(main_configs), 39)
+        self.assertEqual(len(main_configs), 51)
         for main in main_configs:
             manager = main.with_name(f"{main.stem}__managerpretrain.yaml")
             self.assertTrue(manager.exists(), main)
@@ -194,9 +245,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
         root = self.config_root / "MVNet"
         self.assertEqual(
             {path.stem for path in root.glob("*.yaml")},
-            set(DATASET_TARGETS),
+            set(DATASET_TARGETS) | {COMBUSTION_DATASET},
         )
-        for dataset, expected_targets in DATASET_TARGETS.items():
+        expected_by_dataset = {
+            **DATASET_TARGETS,
+            COMBUSTION_DATASET: COMBUSTION_SCALAR_TARGETS,
+        }
+        for dataset, expected_targets in expected_by_dataset.items():
             payload = yaml.safe_load(
                 (root / f"{dataset}.yaml").read_text(encoding="utf-8")
             )
@@ -217,6 +272,14 @@ class ConfigMatrixTestCase(unittest.TestCase):
             data = payload.get("data") or payload.get("DATA")
             if data.get("dataset_name") == "ionization":
                 self.assertEqual(data["volume_shape"]["T"], 100, path)
+
+    def test_all_combustion_configs_use_exported_shape(self):
+        expected_shape = generate_config_matrix.COMBUSTION_DATASET["volume_shape"]
+        for path in self.paths:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+            data = payload.get("data") or payload.get("DATA")
+            if data.get("dataset_name", "").lower() == COMBUSTION_DATASET.lower():
+                self.assertEqual(data["volume_shape"], expected_shape, path)
 
     def test_generated_paths_are_repo_root_relative(self):
         for path in self.paths:
@@ -270,7 +333,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
             self.assertFalse(training["scheduler"]["enabled"])
 
     def test_instant_ngp_uses_fixed_model_optimizer_and_single_target(self):
-        expected_targets = DATASET_TARGETS["ionization"]
+        expected_targets = DATASET_TARGETS["ionization"] | COMBUSTION_SCALAR_TARGETS
         actual_targets = set()
         for path in (self.config_root / "InstantNGP").glob("*.yaml"):
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -318,6 +381,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
             "bathymetry": ["SALT", "TEMP", "U", "V"],
             "katrina": ["fort63", "fort64", "fort73", "speed", "v"],
             "ionization": ["GT", "H2", "H_plus", "He", "PD"],
+            COMBUSTION_DATASET: sorted(COMBUSTION_SCALAR_TARGETS),
         }
         for path in (self.config_root / "MVNet").glob("*.yaml"):
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -419,7 +483,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 total = payload["training"]["steps"] * payload["training"]["batch_size"]
             else:
                 raise AssertionError(f"Unhandled family: {family}")
-            self.assertEqual(total, expected, path)
+            if (
+                family in {"APMGSRN", "fV-SRN"}
+                and COMBUSTION_DATASET in path.name
+            ):
+                self.assertLess(abs(total - expected) / expected, 0.001, path)
+            else:
+                self.assertEqual(total, expected, path)
 
     def test_static_size_tiers_are_within_five_percent(self):
         for family in ("SIREN", "CoordNet", "MoE-INR", "VarExpert"):

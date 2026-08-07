@@ -85,11 +85,13 @@ python -m var_expert_inr.apmgsrn.cli evaluate --run runs/<run> --timesteps 0:10
 python -m var_expert_inr.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
 ```
 
-The checked-in formal experiment matrix contains 356 configs. General models cover
-Bathymetry, Katrina, and Ionization; volume-only models cover Ionization. Every
-single-target model has one config per attribute, and Ionization additionally
-has `Size082`, `Size163`, `Size326`, `Size652`, and `Size1304` variants plus a
-VarExpert DWA loss-balancing config.
+The checked-in formal experiment matrix contains 517 configs. Every model family
+has a main Combustion (`40NH3_1`) experiment. SIREN, CoordNet, and MoE-INR cover
+all 13 exported fields, including the three-component `Velocity` target. Models
+whose published implementation requires scalar outputs cover the other 12 fields;
+MVNet jointly models those 12 scalar fields, while MC-INR and VarExpert jointly
+model all 13 fields. Ionization additionally has `Size082`, `Size163`, `Size326`,
+`Size652`, and `Size1304` variants plus a VarExpert DWA loss-balancing config.
 All primary training stages except MVNet consume 14.4 billion samples with an
 effective batch size of 16,000. MVNet uses its method-specific 300 epochs,
 2,048-sample batches, and 1,500 random batches per epoch (921.6 million
@@ -120,7 +122,7 @@ CONFIG_LIST_FILE=scripts/my_configs.list bash scripts/run_all_configs.sh
 Two ready-made subsets are also provided:
 
 ```bash
-# Main experiments only: 121 configs without Size tiers
+# Main experiments only: 282 configs without Size tiers
 CONFIG_LIST_FILE=scripts/run_main_configs.list bash scripts/run_all_configs.sh
 
 # RD-Curve experiments only: 235 Size-tier configs
@@ -223,6 +225,31 @@ contain coordinate or time arrays. Render outputs are written below
 in C order from `(T,Y,X,C)`, so x changes fastest, followed by y and t. Their
 normalization parameters and physical coordinate ranges are stored in the
 generated `data/Volume/Combustion/manifest.json`.
+
+## Katrina dynamic wet-point export
+
+The Katrina source arrays under the adjacent Ocean dataset contain all 417,642
+ADCIRC nodes for every timestep. Inspect the dynamic wet-point mask, defined by
+finite `fort63` values other than the `-99999` dry sentinel, with:
+
+```powershell
+D:\Anaconda3\envs\compression\python.exe scripts\katrina_wet.py inspect `
+  --input-dir "E:\Research\Project\Scientific Compression\INR\Datasets\Ocean\train"
+```
+
+Export the normalized wet samples to the repository data tree with:
+
+```powershell
+D:\Anaconda3\envs\compression\python.exe scripts\katrina_wet.py export `
+  --input-dir "E:\Research\Project\Scientific Compression\INR\Datasets\Ocean\train" `
+  --output "data\Mesh\Katrina_Wet"
+```
+
+The exporter normalizes X/Y/Z/T independently, normalizes scalar targets
+independently, and uses one joint range for all three velocity components. It
+also writes `wet_node_indices.npy`, `frame_offsets.npy`, and `manifest.json` so
+the variable-size frames can be mapped back to the original fixed mesh.
+
 When `predict` or `evaluate` runs without an explicit checkpoint, it reuses the
 latest timestamped run under the matching `exp_id`.
 For `var_expert`, architecture fields that remain at default values are omitted

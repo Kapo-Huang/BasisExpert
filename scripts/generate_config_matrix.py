@@ -9,6 +9,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs"
+FORMAL_CONFIG_COUNT = 517
+MAIN_CONFIG_COUNT = 282
+RD_CURVE_CONFIG_COUNT = 235
 REPO_ROOT_TOKEN = "${REPO_ROOT}"
 SIZES = {
     "Size082": 0.82,
@@ -61,6 +64,23 @@ COMBUSTION_DATASET = {
         "Velocity_Magnitude",
     ],
 }
+COMBUSTION_SCALAR_TARGETS = [
+    target for target in COMBUSTION_DATASET["targets"] if target != "Velocity"
+]
+COMBUSTION_KEYFRAMES = [
+    0,
+    182,
+    364,
+    545,
+    727,
+    909,
+    1091,
+    1273,
+    1455,
+    1636,
+    1818,
+    2000,
+]
 TARGET_FILES = {"H_plus": "H+"}
 UNIFIED_SIZE_MODELS = {
     "SIREN": {
@@ -124,6 +144,56 @@ def dump(path: Path, payload: dict) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
+def _formal_sort_key(path: Path) -> tuple[str, int, str]:
+    relative = path.relative_to(CONFIGS)
+    parts = relative.parts
+    is_size = int(len(parts) > 1 and parts[1].startswith("Size"))
+    return parts[0], is_size, relative.as_posix()
+
+
+def write_run_lists() -> None:
+    paths = sorted(CONFIGS.rglob("*.yaml"), key=_formal_sort_key)
+    relative = [f"configs/{path.relative_to(CONFIGS).as_posix()}" for path in paths]
+    main = [path for path in relative if "/Size" not in path]
+    rd_curve = [path for path in relative if "/Size" in path]
+    if (len(relative), len(main), len(rd_curve)) != (
+        FORMAL_CONFIG_COUNT,
+        MAIN_CONFIG_COUNT,
+        RD_CURVE_CONFIG_COUNT,
+    ):
+        raise RuntimeError(
+            "Unexpected run-list partition: "
+            f"all={len(relative)} main={len(main)} rd_curve={len(rd_curve)}"
+        )
+
+    headers = {
+        "run_all_configs.list": [
+            "# Formal training selection: one repository-relative YAML path per line.",
+            "# Comment out or delete entries to run only a subset.",
+            "# Execution order and parallel grouping remain defined by run_all_configs.sh.",
+            f"# Active entries must be unique and belong to the {FORMAL_CONFIG_COUNT}-config formal matrix.",
+        ],
+        "run_main_configs.list": [
+            "# Main-experiment selection: all formal configs without a Size tier.",
+            "# Use with: CONFIG_LIST_FILE=scripts/run_main_configs.list bash scripts/run_all_configs.sh",
+            "# Comment out or delete entries to select a smaller main-experiment subset.",
+        ],
+        "run_rd_curve_configs.list": [
+            "# RD-curve selection: all formal Size-tier configs.",
+            "# Use with: CONFIG_LIST_FILE=scripts/run_rd_curve_configs.list bash scripts/run_all_configs.sh",
+            "# Comment out or delete entries to select a smaller RD-curve subset.",
+        ],
+    }
+    selections = {
+        "run_all_configs.list": relative,
+        "run_main_configs.list": main,
+        "run_rd_curve_configs.list": rd_curve,
+    }
+    for filename, selection in selections.items():
+        content = "\n".join([*headers[filename], "", *selection, ""])
+        (ROOT / "scripts" / filename).write_text(content, encoding="utf-8", newline="\n")
+
+
 def rel_prefix(nested: bool) -> str:
     del nested
     return f"{REPO_ROOT_TOKEN}/"
@@ -155,19 +225,45 @@ def unified_data(dataset: str, nested: bool, target: str | None = None) -> dict:
     return payload
 
 
-def combustion_data() -> dict:
-    dataset_name = COMBUSTION_DATASET["name"]
+def combustion_targets() -> dict[str, str]:
     return {
+        target: repo_path(f"data/Volume/Combustion/target_{target}.npy")
+        for target in COMBUSTION_DATASET["targets"]
+    }
+
+
+def combustion_data(
+    target: str | None = None,
+    *,
+    include_vector: bool = True,
+    four_coordinates: bool = False,
+    selected_only: bool = False,
+) -> dict:
+    dataset_name = COMBUSTION_DATASET["name"]
+    targets = combustion_targets()
+    if not include_vector:
+        targets = {
+            name: path for name, path in targets.items()
+            if name in COMBUSTION_SCALAR_TARGETS
+        }
+    if target is not None and target not in targets:
+        raise ValueError(f"Unknown Combustion target: {target}")
+    if selected_only:
+        if target is None:
+            raise ValueError("selected_only Combustion data requires a target")
+        targets = {target: targets[target]}
+    payload = {
         "kind": "volume",
         "dataset_name": dataset_name,
         "split": "train",
         "volume_shape": deepcopy(COMBUSTION_DATASET["volume_shape"]),
-        "coordinate_axes": list(COMBUSTION_DATASET["coordinate_axes"]),
-        "targets": {
-            target: repo_path(f"data/Volume/Combustion/target_{target}.npy")
-            for target in COMBUSTION_DATASET["targets"]
-        },
+        "targets": targets,
     }
+    if not four_coordinates:
+        payload["coordinate_axes"] = list(COMBUSTION_DATASET["coordinate_axes"])
+    if target is not None and not selected_only:
+        payload["target"] = target
+    return payload
 
 
 def common_training() -> dict:
@@ -226,6 +322,26 @@ def generate_compact_ngp() -> int:
             "log": log_config(),
         }
         dump(CONFIGS / "CompactNGP" / f"ionization__{target}.yaml", payload)
+        count += 1
+    for target in COMBUSTION_SCALAR_TARGETS:
+        payload = {
+            "experiment": f"{COMBUSTION_DATASET['name']}_compact-ngp_{target}",
+            "exp_id": f"compact-ngp-{COMBUSTION_DATASET['name']}-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": combustion_data(
+                target,
+                include_vector=False,
+                four_coordinates=True,
+            ),
+            "model": compact_ngp_model(),
+            "training": compact_ngp_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(
+            CONFIGS / "CompactNGP" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+            payload,
+        )
         count += 1
     return count
 
@@ -290,6 +406,27 @@ def generate_instant_ngp() -> int:
         }
         dump(
             CONFIGS / "InstantNGP" / f"ionization__{target}.yaml",
+            payload,
+        )
+        count += 1
+    for target in COMBUSTION_SCALAR_TARGETS:
+        payload = {
+            "experiment": f"{COMBUSTION_DATASET['name']}_instant_ngp_{target}",
+            "exp_id": f"instant-ngp-{COMBUSTION_DATASET['name']}-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": combustion_data(
+                target,
+                include_vector=False,
+                four_coordinates=True,
+                selected_only=True,
+            ),
+            "model": instant_ngp_model(),
+            "training": instant_ngp_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(
+            CONFIGS / "InstantNGP" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
             payload,
         )
         count += 1
@@ -360,6 +497,23 @@ def generate_mvnet() -> int:
         }
         dump(CONFIGS / "MVNet" / f"{dataset}.yaml", payload)
         count += 1
+    combustion = combustion_data(include_vector=False, four_coordinates=True)
+    combustion["targets"] = {
+        name: combustion["targets"][name]
+        for name in sorted(combustion["targets"])
+    }
+    payload = {
+        "experiment": f"{COMBUSTION_DATASET['name']}_mvnet",
+        "exp_id": f"mvnet-{COMBUSTION_DATASET['name']}",
+        "experiment_root": repo_path("runs"),
+        "data": combustion,
+        "model": mvnet_model(len(COMBUSTION_SCALAR_TARGETS)),
+        "training": mvnet_training(),
+        "evaluation": evaluation(),
+        "log": log_config(),
+    }
+    dump(CONFIGS / "MVNet" / f"{COMBUSTION_DATASET['name']}.yaml", payload)
+    count += 1
     return count
 
 
@@ -414,6 +568,26 @@ def generate_fa_tr_inr() -> int:
             payload,
         )
         count += 1
+    for target in COMBUSTION_SCALAR_TARGETS:
+        payload = {
+            "experiment": f"{COMBUSTION_DATASET['name']}_fa-tr-inr_{target}",
+            "exp_id": f"fa-tr-inr-{COMBUSTION_DATASET['name']}-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": combustion_data(
+                target,
+                include_vector=False,
+                four_coordinates=True,
+            ),
+            "model": fa_tr_inr_model(),
+            "training": fa_tr_inr_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(
+            CONFIGS / "FA-TR-INR" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+            payload,
+        )
+        count += 1
     return count
 
 
@@ -451,6 +625,24 @@ def generate_unified_single() -> int:
                 }
                 dump(CONFIGS / family / f"{dataset}__{target}.yaml", payload)
                 count += 1
+        combustion_model = deepcopy(defaults["volume"])
+        combustion_model["in_features"] = len(COMBUSTION_DATASET["coordinate_axes"])
+        for target in COMBUSTION_DATASET["targets"]:
+            payload = {
+                "experiment": f"{COMBUSTION_DATASET['name']}_{model_slug}_{target}",
+                "exp_id": f"{model_slug}-{COMBUSTION_DATASET['name']}-{target}",
+                "experiment_root": repo_path("runs"),
+                "data": combustion_data(target),
+                "model": deepcopy(combustion_model),
+                "training": common_training(),
+                "evaluation": evaluation(),
+                "log": log_config(),
+            }
+            dump(
+                CONFIGS / family / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+                payload,
+            )
+            count += 1
         for size in SIZES:
             for target in DATASETS["ionization"]["targets"]:
                 payload = {
@@ -592,6 +784,27 @@ def generate_mc() -> int:
     for dataset in DATASETS:
         dump(CONFIGS / "MC-INR" / f"{dataset}.yaml", mc_payload(dataset, False, 128 if dataset == "ionization" else 96))
         count += 1
+    combustion_name = COMBUSTION_DATASET["name"]
+    payload = {
+        "experiment": f"{combustion_name}_mc_inr",
+        "exp_id": f"mc-inr-{combustion_name}",
+        "experiment_root": repo_path("runs"),
+        "data": combustion_data(),
+        "model": {
+            "name": "mc_inr",
+            "hidden_features": 128,
+            "gfe_layers": 5,
+            "lfe_layers": 6,
+        },
+        "training": deepcopy(mc_payload("ionization", False, 128)["training"]),
+        "evaluation": evaluation(),
+        "log": log_config(),
+    }
+    payload["training"]["assignments_cache_path"] = repo_path(
+        f"data/cache/mc_inr/{combustion_name}_assignments_k12.npy"
+    )
+    dump(CONFIGS / "MC-INR" / f"{combustion_name}.yaml", payload)
+    count += 1
     for size, hidden in MC_SIZE_DIMS.items():
         payload = mc_payload("ionization", True, hidden)
         payload["experiment"] = f"ionization_mc_inr_{size.lower()}"
@@ -602,7 +815,11 @@ def generate_mc() -> int:
 
 
 def neural_model(dataset: str, dim: int, nested: bool, target: str, manager_pretrain: bool, size: str | None) -> dict:
-    model_name = "inr_moe_ionization" if dataset == "ionization" else "inr_moe_mesh"
+    model_name = (
+        "inr_moe_ionization"
+        if dataset in {"ionization", COMBUSTION_DATASET["name"]}
+        else "inr_moe_mesh"
+    )
     size_token = size.lower() if size else "default"
     manager_path = (
         f"{rel_prefix(nested)}runs/neural_expert/pretrained_managers/{dataset}/{size_token}/"
@@ -627,13 +844,24 @@ def neural_model(dataset: str, dim: int, nested: bool, target: str, manager_pret
 
 
 def neural_data(dataset: str, target: str, nested: bool) -> dict:
+    is_volume = dataset in {"ionization", COMBUSTION_DATASET["name"]}
+    target_mapping = (
+        targets_for(dataset, nested)
+        if dataset in DATASETS
+        else combustion_targets()
+    )
     data = {
-        "dataset_name": dataset, "target": target, "targets": targets_for(dataset, nested),
+        "dataset_name": dataset, "target": target, "targets": target_mapping,
         "target_stats_path": f"{rel_prefix(nested)}data/cache/neural_expert/{dataset}/target_stats_{target}.npz",
-        "normalize_inputs": dataset == "ionization", "normalize_targets": False,
+        "normalize_inputs": is_volume, "normalize_targets": False,
     }
-    if dataset == "ionization":
-        data.update({"volume_shape": deepcopy(ION_SHAPE), "segmentation_type": "random_balanced", "grid_patch_size": 4, "n_segments": 8})
+    if is_volume:
+        volume_shape = (
+            deepcopy(ION_SHAPE)
+            if dataset == "ionization"
+            else deepcopy(COMBUSTION_DATASET["volume_shape"])
+        )
+        data.update({"volume_shape": volume_shape, "segmentation_type": "random_balanced", "grid_patch_size": 4, "n_segments": 8})
     else:
         meta = DATASETS[dataset]
         data.update({
@@ -657,7 +885,7 @@ def neural_payload(dataset: str, target: str, nested: bool, manager_pretrain: bo
         "log_every": 100,
         "stages": [{"end_iteration_frac": 1.0, "params": "all", "loss_type": loss_name}],
     }
-    if dataset != "ionization":
+    if dataset not in {"ionization", COMBUSTION_DATASET["name"]}:
         training["pretrain_assignment"] = {
             "method": "coord_kmeans", "fit_samples": 50000,
             "cache_path": f"{rel_prefix(nested)}data/cache/neural_expert/{dataset}/coord_kmeans_{target}.npz",
@@ -671,7 +899,11 @@ def neural_payload(dataset: str, target: str, nested: bool, manager_pretrain: bo
         "MODEL": neural_model(dataset, dim, nested, target, manager_pretrain, size),
         "LOSS": {
             "scale_by_q_grad": False, "loss_type": loss_name,
-            "segmentation_type": "both" if dataset == "ionization" else "ce",
+            "segmentation_type": (
+                "both"
+                if dataset in {"ionization", COMBUSTION_DATASET["name"]}
+                else "ce"
+            ),
             "sample_bias_correction": False, "entropy_metric": "kl",
         },
         "DATA": neural_data(dataset, target, nested),
@@ -690,6 +922,21 @@ def generate_neural() -> int:
                     neural_payload(dataset, target, False, pretrain, 64, None),
                 )
                 count += 1
+    for target in COMBUSTION_SCALAR_TARGETS:
+        for pretrain in (True, False):
+            suffix = "__managerpretrain" if pretrain else ""
+            dump(
+                CONFIGS / "NeuralExpert" / f"{COMBUSTION_DATASET['name']}__{target}{suffix}.yaml",
+                neural_payload(
+                    COMBUSTION_DATASET["name"],
+                    target,
+                    False,
+                    pretrain,
+                    64,
+                    None,
+                ),
+            )
+            count += 1
     for size, dim in NEURAL_SIZE_DIMS.items():
         for target in DATASETS["ionization"]["targets"]:
             for pretrain in (True, False):
@@ -702,9 +949,20 @@ def generate_neural() -> int:
     return count
 
 
-def volume_data(target: str, nested: bool, upper: bool = False) -> dict:
+def volume_data(
+    target: str,
+    nested: bool,
+    upper: bool = False,
+    dataset: str = "ionization",
+) -> dict:
     key = "DATA" if upper else "data"
     del key
+    if dataset == COMBUSTION_DATASET["name"]:
+        return combustion_data(
+            target,
+            include_vector=False,
+            four_coordinates=True,
+        )
     return {
         "kind": "volume", "dataset_name": "ionization", "split": "train",
         "target": target, "targets": targets_for("ionization", nested),
@@ -712,15 +970,21 @@ def volume_data(target: str, nested: bool, upper: bool = False) -> dict:
     }
 
 
-def apmg_payload(target: str, nested: bool, size: str | None) -> dict:
+def apmg_payload(
+    target: str,
+    nested: bool,
+    size: str | None,
+    dataset: str = "ionization",
+) -> dict:
     sizing = APMG_SIZE[size] if size else {
         "feature_grid_shape": [8, 8, 8], "n_grids": 64, "n_features": 2,
         "nodes_per_layer": 64, "n_layers": 2,
     }
     tag = f"-{size.lower()}" if size else ""
+    data = volume_data(target, nested, dataset=dataset)
     return {
-        "experiment": f"apmgsrn_ionization{tag}_{target}",
-        "exp_id": f"apmgsrn-ionization{tag}-{target}",
+        "experiment": f"apmgsrn_{dataset}{tag}_{target}",
+        "exp_id": f"apmgsrn-{dataset}{tag}-{target}",
         "experiment_root": f"{rel_prefix(nested)}runs",
         "MODEL": {
             "model_name": "apmgsrn", "n_dims": 3, "n_outputs": 1,
@@ -734,12 +998,13 @@ def apmg_payload(target: str, nested: bool, size: str | None) -> dict:
             "requires_padded_feats": True if size else None,
         },
         "DATA": {
-            "dataset_name": "ionization", "target": target,
-            "targets": targets_for("ionization", nested),
-            "volume_shape": deepcopy(ION_SHAPE), "align_corners": True,
+            "dataset_name": dataset, "target": target,
+            "targets": data["targets"],
+            "volume_shape": data["volume_shape"], "align_corners": True,
         },
         "TRAINING": {
-            "iterations": 9000, "points_per_iteration": 16000,
+            "iterations": 450 if dataset == COMBUSTION_DATASET["name"] else 9000,
+            "points_per_iteration": 16000,
             "prediction_points_per_batch": 16000, "lr": 0.01,
             "beta_1": 0.9, "beta_2": 0.99, "device": "cuda:0",
             "data_device": "same", "save_every": 0, "log_every": 100,
@@ -749,24 +1014,38 @@ def apmg_payload(target: str, nested: bool, size: str | None) -> dict:
     }
 
 
-def dc_payload(target: str, nested: bool, size: str | None) -> dict:
+def dc_payload(
+    target: str,
+    nested: bool,
+    size: str | None,
+    dataset: str = "ionization",
+) -> dict:
     tag = f"-{size.lower()}" if size else ""
     compression = {"max_initial_neurons": 2048, "min_initial_neurons": 4}
     if size:
         compression["target_size_mib"] = SINGLE_TARGET_SIZES[size]
     else:
         compression["target_cr"] = 20.0
+    candidate_shapes = (
+        [
+            {"sx": 32, "sy": 32, "sz": 1},
+            {"sx": 64, "sy": 16, "sz": 1},
+            {"sx": 16, "sy": 64, "sz": 1},
+        ]
+        if dataset == COMBUSTION_DATASET["name"]
+        else [
+            {"sx": 150, "sy": 8, "sz": 124}, {"sx": 150, "sy": 124, "sz": 8},
+            {"sx": 300, "sy": 4, "sz": 124}, {"sx": 300, "sy": 124, "sz": 4},
+        ]
+    )
     return {
-        "experiment": f"dc_inr_ionization{tag}_{target}",
-        "exp_id": f"dc-inr-ionization{tag}-{target}",
+        "experiment": f"dc_inr_{dataset}{tag}_{target}",
+        "exp_id": f"dc-inr-{dataset}{tag}-{target}",
         "experiment_root": repo_path("runs/dc_inr"),
-        "data": volume_data(target, nested),
+        "data": volume_data(target, nested, dataset=dataset),
         "model": {"name": "dc_inr"},
         "partition": {
-            "candidate_block_shapes": [
-                {"sx": 150, "sy": 8, "sz": 124}, {"sx": 150, "sy": 124, "sz": 8},
-                {"sx": 300, "sy": 4, "sz": 124}, {"sx": 300, "sy": 124, "sz": 4},
-            ],
+            "candidate_block_shapes": candidate_shapes,
             "dbscan_eps": 1.0e-2, "dbscan_min_samples": 1,
             "entropy_bins": 256, "distance_matrix_max_bytes": 1073741824,
         },
@@ -783,25 +1062,37 @@ def dc_payload(target: str, nested: bool, size: str | None) -> dict:
     }
 
 
-def fv_payload(target: str, nested: bool, size: str | None) -> dict:
+def fv_payload(
+    target: str,
+    nested: bool,
+    size: str | None,
+    dataset: str = "ionization",
+) -> dict:
     resolution, channels = FV_SIZE[size] if size else (32, 16)
     tag = f"-{size.lower()}" if size else ""
     return {
-        "experiment": f"fv_srn_ionization{tag}_{target}",
-        "exp_id": f"fv-srn-ionization{tag}-{target}",
+        "experiment": f"fv_srn_{dataset}{tag}_{target}",
+        "exp_id": f"fv-srn-{dataset}{tag}-{target}",
         "experiment_root": repo_path("runs/fv_srn"),
-        "data": volume_data(target, nested),
+        "data": volume_data(target, nested, dataset=dataset),
         "model": {
             "name": "fv_srn", "grid_resolution": resolution,
             "grid_channels": channels, "grid_init_std": 0.01,
-            "keyframe_indices": [0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99],
+            "keyframe_indices": (
+                deepcopy(COMBUSTION_KEYFRAMES)
+                if dataset == COMBUSTION_DATASET["name"]
+                else [0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99]
+            ),
             "fourier_features": 14, "fourier_mode": "nerf",
             "hidden_features": 32, "hidden_layers": 3,
             "activation": "snake_alt", "activation_frequency": 1.0,
             "time_encoding": "none",
         },
         "training": {
-            "epochs": 600, "samples_per_timestep": 240000,
+            "epochs": 600,
+            "samples_per_timestep": (
+                12000 if dataset == COMBUSTION_DATASET["name"] else 240000
+            ),
             "validation_fraction": 0.0, "batch_size": 16000,
             "prediction_batch_size": 16000, "lr": 0.01,
             "beta_1": 0.9, "beta_2": 0.999, "lr_step": 100,
@@ -814,15 +1105,19 @@ def fv_payload(target: str, nested: bool, size: str | None) -> dict:
     }
 
 
-def ecnr_payload(target: str) -> dict:
+def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
     return {
-        "experiment": f"ecnr_ionization_{target}",
-        "exp_id": f"ecnr-ionization-{target}",
+        "experiment": f"ecnr_{dataset}_{target}",
+        "exp_id": f"ecnr-{dataset}-{target}",
         "experiment_root": repo_path("runs/ecnr"),
-        "data": volume_data(target, False),
+        "data": volume_data(target, False, dataset=dataset),
         "model": {
             "name": "ecnr", "scales": 3,
-            "block_shape_xyz": [25, 31, 31],
+            "block_shape_xyz": (
+                [16, 16, 1]
+                if dataset == COMBUSTION_DATASET["name"]
+                else [25, 31, 31]
+            ),
             "residual_threshold": 1.0e-4,
             "gaussian_kernel_size": 5, "gaussian_sigma": 1.0,
             "gaussian_padding": "reflect", "latent_dim": 8,
@@ -877,22 +1172,36 @@ def ecnr_payload(target: str) -> dict:
 def generate_ecnr() -> int:
     for target in DATASETS["ionization"]["targets"]:
         dump(CONFIGS / "ECNR" / f"ionization__{target}.yaml", ecnr_payload(target))
-    return len(DATASETS["ionization"]["targets"])
+    for target in COMBUSTION_SCALAR_TARGETS:
+        dump(
+            CONFIGS / "ECNR" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+            ecnr_payload(target, COMBUSTION_DATASET["name"]),
+        )
+    return len(DATASETS["ionization"]["targets"]) + len(COMBUSTION_SCALAR_TARGETS)
 
 
-def rm_payload(target: str, nested: bool, size: str | None) -> dict:
+def rm_payload(
+    target: str,
+    nested: bool,
+    size: str | None,
+    dataset: str = "ionization",
+) -> dict:
     resolution, channels = RM_SIZE[size] if size else (32, 16)
     tag = f"-{size.lower()}" if size else ""
     return {
-        "experiment": f"rmdsrn_ionization{tag}_{target}",
-        "exp_id": f"rmdsrn-ionization{tag}-{target}",
+        "experiment": f"rmdsrn_{dataset}{tag}_{target}",
+        "exp_id": f"rmdsrn-{dataset}{tag}-{target}",
         "experiment_root": repo_path("runs/rmdsrn"),
-        "data": volume_data(target, nested),
+        "data": volume_data(target, nested, dataset=dataset),
         "model": {
             "name": "rmdsrn", "base_encoder": "temporal_fv_srn",
             "grid_resolution": resolution, "grid_channels": channels,
             "grid_init_std": 0.01,
-            "keyframe_indices": [0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99],
+            "keyframe_indices": (
+                deepcopy(COMBUSTION_KEYFRAMES)
+                if dataset == COMBUSTION_DATASET["name"]
+                else [0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99]
+            ),
             "fourier_features": 14, "fourier_mode": "nerf",
             "decoder_count": 5, "decoder_hidden_features": 64,
             "decoder_hidden_layers": 2, "activation": "snake_alt",
@@ -924,6 +1233,12 @@ def generate_volume_only() -> int:
         for target in DATASETS["ionization"]["targets"]:
             dump(CONFIGS / family / f"ionization__{target}.yaml", builder(target, False, None))
             count += 1
+        for target in COMBUSTION_SCALAR_TARGETS:
+            dump(
+                CONFIGS / family / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+                builder(target, False, None, COMBUSTION_DATASET["name"]),
+            )
+            count += 1
         for size in SIZES:
             for target in DATASETS["ionization"]["targets"]:
                 dump(CONFIGS / family / size / f"ionization__{target}.yaml", builder(target, True, size))
@@ -948,8 +1263,12 @@ def main() -> None:
         "ecnr": generate_ecnr(),
     }
     total = sum(counts.values())
-    if total != 356:
-        raise RuntimeError(f"Expected 356 configs, generated {total}: {counts}")
+    if total != FORMAL_CONFIG_COUNT:
+        raise RuntimeError(
+            f"Expected {FORMAL_CONFIG_COUNT} configs, generated {total}: {counts}"
+        )
+    if CONFIGS.resolve() == (ROOT / "configs").resolve():
+        write_run_lists()
     print(f"Generated {total} configs: {counts}")
 
 

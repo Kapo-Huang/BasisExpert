@@ -1,0 +1,65 @@
+experiment: combustion_40NH3_1_instant_ngp_Velocity_Magnitude
+exp_id: instant-ngp-combustion_40NH3_1-Velocity_Magnitude
+experiment_root: ${REPO_ROOT}/runs
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+model:
+  name: instant_ngp
+  in_features: 4
+  out_features: 1
+  n_levels: 16
+  n_features_per_level: 2
+  base_resolution: 16
+  finest_resolution: 600
+  log2_hashmap_size: 19
+  hidden_features: 64
+  hidden_layers: 2
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 0.01
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    interval: optimizer_step
+    milestones:
+    - 20480
+    - 30720
+    gamma: 0.33
+  gradient_accumulation_steps: 16
+  beta_1: 0.9
+  beta_2: 0.99
+  epsilon: 1.0e-15
+  weight_decay: 0.0
+  pretrain:
+    enabled: false
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

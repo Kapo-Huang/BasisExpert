@@ -10,7 +10,7 @@ from .config import load_config
 def run_train(config_path: str | Path, *, target: str | None = None, identifier: str | None = None, gpu: int = 0) -> dict:
     cfg = load_config(config_path, target_override=target, identifier=identifier)
     dataset_name = cfg["DATA"]["dataset_name"]
-    if dataset_name == "ionization":
+    if dataset_name in {"ionization", "combustion_40nh3_1"}:
         from .ionization.runner import run_train as run_ionization_train
 
         return run_ionization_train(cfg, gpu=gpu)

@@ -181,8 +181,11 @@ def _expand_time_indices(raw_value: Any, *, time_count: int) -> list[int]:
 def _normalize_data_section(data_cfg: dict[str, Any]) -> dict[str, Any]:
     _reject_unknown_keys(data_cfg, DATA_KEYS | {"attr_name"}, label="DATA")
     dataset_name = str(data_cfg.get("dataset_name", "")).strip().lower()
-    if dataset_name != "ionization":
-        raise ValueError(f"APMGSRN only supports DATA.dataset_name='ionization', got {data_cfg.get('dataset_name')!r}")
+    if dataset_name not in {"ionization", "combustion_40nh3_1"}:
+        raise ValueError(
+            "APMGSRN only supports structured volume datasets "
+            f"'ionization' and 'combustion_40NH3_1', got {data_cfg.get('dataset_name')!r}"
+        )
     volume_shape = _normalize_volume_shape(data_cfg.get("volume_shape"))
     return {
         "dataset_name": dataset_name,
@@ -292,7 +295,9 @@ def load_config(config_path: str | Path, *, target_override: str | None = None, 
         _ensure_mapping(cfg.get("EVALUATION"), label="EVALUATION"),
     )
 
-    exp_id_default = f"apmgsrn-ionization-{normalized_data['target']}"
+    exp_id_default = (
+        f"apmgsrn-{normalized_data['dataset_name']}-{normalized_data['target']}"
+    )
     return {
         "experiment": str(cfg.get("experiment") or exp_id_default),
         "exp_id": str(identifier or cfg.get("exp_id") or exp_id_default),

@@ -136,7 +136,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 2 of 356 configs", output)
+            self.assertIn("Selected 2 of 517 configs", output)
             main_position = output.index("configs/VarExpert/combustion_40NH3_1.yaml")
             size_position = output.index("configs/SIREN/Size082/ionization__GT.yaml")
             self.assertLess(main_position, size_position)

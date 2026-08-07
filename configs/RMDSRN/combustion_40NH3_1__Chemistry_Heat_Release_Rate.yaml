@@ -1,0 +1,78 @@
+experiment: rmdsrn_combustion_40NH3_1_Chemistry_Heat_Release_Rate
+exp_id: rmdsrn-combustion_40NH3_1-Chemistry_Heat_Release_Rate
+experiment_root: ${REPO_ROOT}/runs/rmdsrn
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${REPO_ROOT}/data/Volume/Combustion/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_OH.npy
+    Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Pressure.npy
+    Temperature: ${REPO_ROOT}/data/Volume/Combustion/target_Temperature.npy
+    Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+  target: Chemistry_Heat_Release_Rate
+model:
+  name: rmdsrn
+  base_encoder: temporal_fv_srn
+  grid_resolution: 32
+  grid_channels: 16
+  grid_init_std: 0.01
+  keyframe_indices:
+  - 0
+  - 182
+  - 364
+  - 545
+  - 727
+  - 909
+  - 1091
+  - 1273
+  - 1455
+  - 1636
+  - 1818
+  - 2000
+  fourier_features: 14
+  fourier_mode: nerf
+  decoder_count: 5
+  decoder_hidden_features: 64
+  decoder_hidden_layers: 2
+  activation: snake_alt
+  activation_frequency: 1.0
+training:
+  steps: 900000
+  batch_size: 16000
+  lr: 0.005
+  beta_1: 0.9
+  beta_2: 0.999
+  min_lr: 1.0e-07
+  lambda_min: 0.0
+  lambda_max: 10.0
+  lambda_growth_rate: 500.0
+  epsilon: 1.0e-12
+  save_every: 5000
+  log_every: 100
+  seed: 42
+  device: cuda
+evaluation:
+  batch_size: 16000
+  save_mean: true
+  save_variance: true
+  run_after_training: false
+  default_model: artifact
+  uncertainty_sample_size: 1000000
+  topk_fractions:
+  - 0.01
+  - 0.05
+  seed: 42

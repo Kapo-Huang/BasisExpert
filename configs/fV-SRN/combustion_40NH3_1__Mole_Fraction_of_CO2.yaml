@@ -1,0 +1,77 @@
+experiment: fv_srn_combustion_40NH3_1_Mole_Fraction_of_CO2
+exp_id: fv-srn-combustion_40NH3_1-Mole_Fraction_of_CO2
+experiment_root: ${REPO_ROOT}/runs/fv_srn
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${REPO_ROOT}/data/Volume/Combustion/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_OH.npy
+    Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Pressure.npy
+    Temperature: ${REPO_ROOT}/data/Volume/Combustion/target_Temperature.npy
+    Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+  target: Mole_Fraction_of_CO2
+model:
+  name: fv_srn
+  grid_resolution: 32
+  grid_channels: 16
+  grid_init_std: 0.01
+  keyframe_indices:
+  - 0
+  - 182
+  - 364
+  - 545
+  - 727
+  - 909
+  - 1091
+  - 1273
+  - 1455
+  - 1636
+  - 1818
+  - 2000
+  fourier_features: 14
+  fourier_mode: nerf
+  hidden_features: 32
+  hidden_layers: 3
+  activation: snake_alt
+  activation_frequency: 1.0
+  time_encoding: none
+training:
+  epochs: 600
+  samples_per_timestep: 12000
+  validation_fraction: 0.0
+  batch_size: 16000
+  prediction_batch_size: 16000
+  lr: 0.01
+  beta_1: 0.9
+  beta_2: 0.999
+  lr_step: 100
+  lr_gamma: 0.5
+  l1_weight: 1.0
+  l2_weight: 0.0
+  importance_floor: 0.01
+  rebuild_every: 51
+  rebuild_grid_size: 32
+  rebuild_samples_per_cell: 2
+  save_every: 20
+  log_every: 1
+  seed: 42
+  device: cuda
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+  run_after_training: false
+  default_model: compact

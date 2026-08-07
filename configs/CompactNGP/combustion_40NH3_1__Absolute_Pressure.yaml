@@ -1,0 +1,73 @@
+experiment: combustion_40NH3_1_compact-ngp_Absolute_Pressure
+exp_id: compact-ngp-combustion_40NH3_1-Absolute_Pressure
+experiment_root: ${REPO_ROOT}/runs
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${REPO_ROOT}/data/Volume/Combustion/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_OH.npy
+    Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Pressure.npy
+    Temperature: ${REPO_ROOT}/data/Volume/Combustion/target_Temperature.npy
+    Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+  target: Absolute_Pressure
+model:
+  name: compact_ngp
+  in_features: 4
+  out_features: 1
+  num_levels: 16
+  features_per_level: 2
+  feature_table_size: 1024
+  index_table_size: 65536
+  num_probes: 4
+  base_resolution: 16
+  max_resolution: 2048
+  hidden_features: 64
+  hidden_layers: 2
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 0.01
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+  beta_1: 0.9
+  beta_2: 0.99
+  epsilon: 1.0e-15
+  weight_decay: 1.0e-06
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

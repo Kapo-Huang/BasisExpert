@@ -10,7 +10,6 @@ data:
     Y: 128
     Z: 1
     T: 2001
-  coordinate_axes: [x, y, t]
   targets:
     Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
     Chemistry_Heat_Release_Rate: ${REPO_ROOT}/data/Volume/Combustion/target_Chemistry_Heat_Release_Rate.npy
@@ -25,6 +24,10 @@ data:
     Temperature: ${REPO_ROOT}/data/Volume/Combustion/target_Temperature.npy
     Velocity: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity.npy
     Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+  coordinate_axes:
+  - x
+  - y
+  - t
 model:
   name: var_expert
   in_features: 3

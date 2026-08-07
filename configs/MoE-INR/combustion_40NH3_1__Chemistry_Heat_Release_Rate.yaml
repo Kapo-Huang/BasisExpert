@@ -1,0 +1,67 @@
+experiment: combustion_40NH3_1_moe-inr_Chemistry_Heat_Release_Rate
+exp_id: moe-inr-combustion_40NH3_1-Chemistry_Heat_Release_Rate
+experiment_root: ${REPO_ROOT}/runs
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${REPO_ROOT}/data/Volume/Combustion/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_OH.npy
+    Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Pressure.npy
+    Temperature: ${REPO_ROOT}/data/Volume/Combustion/target_Temperature.npy
+    Velocity: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity.npy
+    Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+  coordinate_axes:
+  - x
+  - y
+  - t
+  target: Chemistry_Heat_Release_Rate
+model:
+  name: moe_inr
+  in_features: 3
+  num_experts: 7
+  base_dim: 45
+  policy_num_layers: 3
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 5.0e-05
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

@@ -125,8 +125,12 @@ def _normalize_data(
     _reject(payload, DATA_KEYS, "data")
     if str(payload.get("kind", "volume")).strip().lower() != "volume":
         raise ValueError("RMDSRN only supports data.kind='volume'")
-    if str(payload.get("dataset_name", "ionization")).strip().lower() != "ionization":
-        raise ValueError("RMDSRN only supports data.dataset_name='ionization'")
+    dataset_name = str(payload.get("dataset_name", "ionization")).strip().lower()
+    if dataset_name not in {"ionization", "combustion_40nh3_1"}:
+        raise ValueError(
+            "RMDSRN only supports structured volume datasets "
+            "'ionization' and 'combustion_40NH3_1'"
+        )
     targets = payload.get("targets")
     selected = str(target_override or payload.get("target") or "").strip()
     if targets:
@@ -149,7 +153,7 @@ def _normalize_data(
         raise ValueError("data requires target_path or targets")
     return {
         "kind": "volume",
-        "dataset_name": "ionization",
+        "dataset_name": dataset_name,
         "split": str(payload.get("split", "train")),
         "target": selected,
         "target_path": str(target_path),

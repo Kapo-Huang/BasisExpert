@@ -69,7 +69,7 @@ append_attribute_main_groups() {
     local mode="${2:-all}"
     local dataset config
     local -a configs=()
-    for dataset in bathymetry katrina ionization; do
+    for dataset in bathymetry combustion_40NH3_1 katrina ionization; do
         configs=()
         while IFS= read -r config; do
             case "${mode}" in
@@ -104,10 +104,14 @@ append_volume_main_group() {
     local family="$1"
     local config
     local -a configs=()
-    while IFS= read -r config; do
-        configs+=("${config}")
-    done < <(collect_files "${REPO_ROOT}/configs/${family}" 'ionization__*.yaml')
-    add_group "main:${family}:ionization" "${configs[@]}"
+    local dataset
+    for dataset in combustion_40NH3_1 ionization; do
+        configs=()
+        while IFS= read -r config; do
+            configs+=("${config}")
+        done < <(collect_files "${REPO_ROOT}/configs/${family}" "${dataset}__*.yaml")
+        add_group "main:${family}:${dataset}" "${configs[@]}"
+    done
 }
 
 append_volume_size_groups() {
@@ -244,8 +248,8 @@ wait_for_all_pids() {
 }
 
 matrix_total="$(group_config_count)"
-if [[ "${matrix_total}" -ne 356 ]]; then
-    printf 'Expected 356 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
+if [[ "${matrix_total}" -ne 517 ]]; then
+    printf 'Expected 517 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
     exit 2
 fi
 load_config_selection || exit $?
