@@ -87,7 +87,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
         self.assertEqual(Path(loaded.experiment_root), repo_root / "runs")
         self.assertEqual(
             Path(loaded.training.pretrain.assignments_cache_path),
-            repo_root / "data" / "cache" / "ionization_voxel_assignments_6.npy",
+            repo_root / "data" / "cache" / "ionization_voxel_assignments_9.npy",
         )
         self.assertEqual(
             Path(loaded.data.targets["GT"]),

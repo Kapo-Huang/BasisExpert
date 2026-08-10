@@ -19,9 +19,9 @@ data:
 model:
   name: var_expert
   in_features: 4
-  num_experts: 6
-  base_dim: 70
-  top_k: 3
+  num_experts: 9
+  base_dim: 61
+  top_k: 4
 training:
   epochs: 600
   batch_size: 16000
@@ -30,9 +30,9 @@ training:
   lr: 5.0e-05
   val_split: 0.0
   log_every: 10
-  log_psnr_every: 100
+  log_psnr_every: 25
   psnr_sample_ratio: 0.1
-  save_every: 600
+  save_every: 100
   early_stop_patience: 0
   loss_type: mse
   seed: 42
@@ -44,18 +44,18 @@ training:
     gamma: 0.92
   multiview_ema_loss:
     enabled: true
-    beta: 0.95
+    beta: 0.99
     eps: 1.0e-08
-    w_min: 0.2
-    w_max: 5.0
-    warmup_steps: 45000
-    alpha: 5.0
+    w_min: 0.5
+    w_max: 2.0
+    warmup_steps: 75000
+    alpha: 1.0
   pretrain:
     enabled: true
     epochs: 5
     lr: 5.0e-05
     cluster_seed: 42
-    assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_6.npy
+    assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_9.npy
 evaluation:
   batch_size: 16000
   save_predictions: false

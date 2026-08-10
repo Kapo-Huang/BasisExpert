@@ -7,9 +7,9 @@ MODEL:
   model_name: inr_moe_ionization
   in_dim: 4
   out_dim: 1
-  decoder_hidden_dim: 33
-  decoder_n_hidden_layers: 2
-  decoder_input_encoding: learned_264_2_sine_siren_none
+  decoder_hidden_dim: 34
+  decoder_n_hidden_layers: 1
+  decoder_input_encoding: learned_272_2_sine_siren_none
   decoder_nl: sine
   decoder_init_type: siren
   n_experts: 8
@@ -18,9 +18,9 @@ MODEL:
   decoder_freqs: 30.0
   decoder_trainable_freqs: false
   top_k: 1
-  manager_hidden_dim: 66
-  manager_n_hidden_layers: 2
-  manager_input_encoding: learned_66_2_sine_siren_none
+  manager_hidden_dim: 68
+  manager_n_hidden_layers: 1
+  manager_input_encoding: learned_68_2_sine_siren_none
   manager_nl: sine
   manager_init: siren
   manager_type: standard

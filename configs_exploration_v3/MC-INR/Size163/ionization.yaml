@@ -1,0 +1,77 @@
+experiment: exploration_v3_ionization_mc_inr_size163
+exp_id: explore-v3-mc-inr-ionization-size163
+experiment_root: ${REPO_ROOT}/runs/exploration_v3
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
+  targets:
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+model:
+  name: mc_inr
+  hidden_features: 43
+  gfe_layers: 3
+  lfe_layers: 4
+training:
+  epochs: 50
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 5.0e-05
+  weight_decay: 0.0
+  loss_type: mse
+  log_every: 1
+  save_every: 50
+  seed: 42
+  device: cuda
+  initial_k: 12
+  cluster_init_method: voxel_clustering
+  assignments_cache_path: ${REPO_ROOT}/data/cache/mc_inr/ionization_assignments_k12.npy
+  meta_iterations: 5
+  meta_inner_steps: 5
+  meta_inner_batch_size: 16000
+  meta_inner_lr: 0.0001
+  meta_batch_clusters: 4
+  meta_support_max_rows: 32000
+  meta_outer_lr: 0.001
+  convergence_patience: 0
+  convergence_delta: 0.0
+  finetune_epochs: 50
+  batches_per_epoch_budget: 1500
+  finetune_lr: 5.0e-05
+  finetune_sampling_ratio: 1.0
+  recluster_after_finetune: false
+  split_threshold: 0.0005
+  min_split_points: 32
+  max_recluster_rounds: 0
+  cluster_aware_batches: false
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false
+exploration_probe:
+  enabled: true
+  total_epoch_equivalents: 50
+  every_epoch_equivalents: 5
+  sample_ratio: 0.01
+  max_samples: 100000
+  seed: 42

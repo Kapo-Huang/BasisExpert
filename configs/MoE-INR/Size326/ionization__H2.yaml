@@ -22,6 +22,8 @@ model:
   in_features: 4
   num_experts: 7
   base_dim: 66
+  encoder_feature_dim: 528
+  policy_hidden_dim: 66
   policy_num_layers: 3
 training:
   epochs: 600

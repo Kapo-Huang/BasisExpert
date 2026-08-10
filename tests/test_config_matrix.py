@@ -59,6 +59,12 @@ class ConfigMatrixTestCase(unittest.TestCase):
     def test_generator_preserves_combustion_and_generates_517_configs(self):
         committed_path = self.config_root / "VarExpert" / "combustion_40NH3_1.yaml"
         committed_payload = yaml.safe_load(committed_path.read_text(encoding="utf-8"))
+        committed_moe = {
+            path.relative_to(self.config_root / "MoE-INR").as_posix(): yaml.safe_load(
+                path.read_text(encoding="utf-8")
+            )
+            for path in (self.config_root / "MoE-INR").rglob("*.yaml")
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             generated_root = Path(tmpdir) / "configs"
             with mock.patch.object(generate_config_matrix, "CONFIGS", generated_root):
@@ -69,9 +75,16 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
+            generated_moe = {
+                path.relative_to(generated_root / "MoE-INR").as_posix(): yaml.safe_load(
+                    path.read_text(encoding="utf-8")
+                )
+                for path in (generated_root / "MoE-INR").rglob("*.yaml")
+            }
 
         self.assertEqual(len(generated_paths), 517)
         self.assertEqual(generated_payload, committed_payload)
+        self.assertEqual(generated_moe, committed_moe)
 
     def test_default_run_list_contains_the_complete_formal_matrix(self):
         selected = self.read_run_list("run_all_configs.list")
@@ -273,6 +286,18 @@ class ConfigMatrixTestCase(unittest.TestCase):
             if data.get("dataset_name") == "ionization":
                 self.assertEqual(data["volume_shape"]["T"], 100, path)
 
+    def test_all_moe_configs_declare_consistent_widths(self):
+        root = self.config_root / "MoE-INR"
+        main_paths = sorted(root.glob("*.yaml"))
+        paths = sorted(root.rglob("*.yaml"))
+        self.assertEqual(len(main_paths), 27)
+        self.assertEqual(len(paths), 52)
+        self.assertEqual(len(paths) - len(main_paths), 25)
+        for path in paths:
+            model = yaml.safe_load(path.read_text(encoding="utf-8"))["model"]
+            self.assertEqual(model["encoder_feature_dim"], 8 * model["base_dim"], path)
+            self.assertEqual(model["policy_hidden_dim"], model["base_dim"], path)
+
     def test_all_combustion_configs_use_exported_shape(self):
         expected_shape = generate_config_matrix.COMBUSTION_DATASET["volume_shape"]
         for path in self.paths:
@@ -307,10 +332,58 @@ class ConfigMatrixTestCase(unittest.TestCase):
             if timing is not None:
                 self.assertFalse(timing["step_window"], path)
 
-    def test_var_expert_alpha_is_five(self):
+    def test_var_expert_balancing_profiles(self):
         for path in (self.config_root / "VarExpert").rglob("*.yaml"):
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["training"]["multiview_ema_loss"]["alpha"], 5.0, path)
+            ema = payload["training"]["multiview_ema_loss"]
+            is_size_config = path.relative_to(self.config_root / "VarExpert").parts[0].startswith("Size")
+            if is_size_config:
+                self.assertEqual(ema["beta"], 0.99, path)
+                self.assertEqual(ema["w_min"], 0.5, path)
+                self.assertEqual(ema["w_max"], 2.0, path)
+                self.assertEqual(ema["warmup_steps"], 75000, path)
+                self.assertEqual(ema["alpha"], 1.0, path)
+            else:
+                self.assertEqual(ema["alpha"], 5.0, path)
+
+    def test_exploration_v2_winners_drive_formal_size_profiles(self):
+        expected_var = {
+            "Size082": (8, 15, 4),
+            "Size163": (9, 21, 4),
+            "Size326": (9, 30, 4),
+            "Size652": (9, 43, 4),
+            "Size1304": (9, 61, 4),
+        }
+        expected_dc_eps = {"GT": 0.10, "H_plus": 0.10, "H2": 0.05, "He": 0.05, "PD": 0.10}
+        for size in SIZES:
+            var_model = yaml.safe_load(
+                (self.config_root / "VarExpert" / size / "ionization.yaml").read_text(encoding="utf-8")
+            )["model"]
+            self.assertEqual(
+                (var_model["num_experts"], var_model["base_dim"], var_model["top_k"]),
+                expected_var[size],
+            )
+
+            mc_model = yaml.safe_load(
+                (self.config_root / "MC-INR" / size / "ionization.yaml").read_text(encoding="utf-8")
+            )["model"]
+            self.assertEqual((mc_model["gfe_layers"], mc_model["lfe_layers"]), (3, 4))
+
+            for target, expected_eps in expected_dc_eps.items():
+                dc_partition = yaml.safe_load(
+                    (self.config_root / "DC-INR" / size / f"ionization__{target}.yaml").read_text(encoding="utf-8")
+                )["partition"]
+                self.assertEqual(dc_partition["dbscan_eps"], expected_eps)
+
+            for target in DATASET_TARGETS["ionization"]:
+                for suffix in ("", "__managerpretrain"):
+                    neural_model = yaml.safe_load(
+                        (self.config_root / "NeuralExpert" / size / f"ionization__{target}{suffix}.yaml").read_text(
+                            encoding="utf-8"
+                        )
+                    )["MODEL"]
+                    self.assertEqual(neural_model["decoder_n_hidden_layers"], 1)
+                    self.assertEqual(neural_model["manager_n_hidden_layers"], 1)
 
     def test_fa_tr_inr_uses_fixed_model_and_optimizer(self):
         for path in (self.config_root / "FA-TR-INR").glob("*.yaml"):

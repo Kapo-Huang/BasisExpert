@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -8,6 +8,37 @@ import torch.nn as nn
 from .siren import SineLayer
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_moe_dimensions(
+    cfg: Mapping[str, Any],
+) -> tuple[Optional[int], int, int]:
+    """Resolve and validate the three width settings used by MoE-INR."""
+    base_value = cfg.get("base_dim")
+    feature_value = cfg.get("encoder_feature_dim")
+    policy_value = cfg.get("policy_hidden_dim")
+
+    if base_value is None:
+        base_dim = None
+        encoder_feature_dim = 256 if feature_value is None else int(feature_value)
+        policy_hidden_dim = 128 if policy_value is None else int(policy_value)
+    else:
+        base_dim = int(base_value)
+        if base_dim <= 0:
+            raise ValueError("base_dim must be positive")
+        encoder_feature_dim = 8 * base_dim
+        if feature_value is not None and int(feature_value) != encoder_feature_dim:
+            raise ValueError(
+                "encoder_feature_dim must equal 8 * base_dim "
+                f"({encoder_feature_dim}), got {feature_value}"
+            )
+        policy_hidden_dim = base_dim if policy_value is None else int(policy_value)
+
+    if encoder_feature_dim <= 0 or encoder_feature_dim % 8 != 0:
+        raise ValueError("encoder_feature_dim must be a positive multiple of 8")
+    if policy_hidden_dim <= 0:
+        raise ValueError("policy_hidden_dim must be positive")
+    return base_dim, encoder_feature_dim, policy_hidden_dim
 
 
 def _count_parameters(module: nn.Module) -> int:
@@ -90,7 +121,11 @@ class SharedSirenEncoder(nn.Module):
     ):
         super().__init__()
         if base_dim is None:
-            base_dim = max(16, feature_dim // 8)
+            if feature_dim <= 0 or feature_dim % 8 != 0:
+                raise ValueError("feature_dim must be a positive multiple of 8")
+            base_dim = feature_dim // 8
+        if base_dim <= 0:
+            raise ValueError("base_dim must be positive")
         pe_mapping_dim = base_dim
         sine1_dim = 4 * base_dim
         sine2_dim = 8 * base_dim
@@ -172,18 +207,19 @@ class MoEINR(nn.Module):
             first_omega_0=encoder_first_omega_0,
             hidden_omega_0=encoder_hidden_omega_0,
         )
+        encoder_out_dim = self.encoder.out_dim
         self.policy = PolicyNetwork(
             in_features=in_features,
             hidden_dim=policy_hidden_dim,
             num_layers=policy_num_layers,
             num_experts=num_experts,
-            gate_in_dim=encoder_feature_dim + policy_hidden_dim,
+            gate_in_dim=encoder_out_dim + policy_hidden_dim,
             first_omega_0=policy_first_omega_0,
             hidden_omega_0=policy_hidden_omega_0,
         )
         self.num_experts = num_experts
         self.experts = nn.ModuleList(
-            [ExpertDecoder(in_dim=encoder_feature_dim, out_features=out_features) for _ in range(num_experts)]
+            [ExpertDecoder(in_dim=encoder_out_dim, out_features=out_features) for _ in range(num_experts)]
         )
         logger.info(
             "MoEINR init params: policy_network=%s experts=%s shared_encoder=%s",
@@ -215,14 +251,7 @@ class MoEINR(nn.Module):
 
 
 def build_moe_inr_from_config(cfg) -> MoEINR:
-    base_dim = cfg.get("base_dim")
-    if base_dim is not None:
-        base_dim = int(base_dim)
-        encoder_feature_dim = 8 * base_dim
-        policy_hidden_dim = base_dim
-    else:
-        encoder_feature_dim = int(cfg.get("encoder_feature_dim", 256))
-        policy_hidden_dim = int(cfg.get("policy_hidden_dim", 128))
+    base_dim, encoder_feature_dim, policy_hidden_dim = resolve_moe_dimensions(cfg)
     return MoEINR(
         in_features=int(cfg.get("in_features", 4)),
         out_features=int(cfg.get("out_features", 1)),

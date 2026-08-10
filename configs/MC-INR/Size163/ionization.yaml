@@ -18,9 +18,9 @@ data:
     PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
 model:
   name: mc_inr
-  hidden_features: 33
-  gfe_layers: 5
-  lfe_layers: 6
+  hidden_features: 43
+  gfe_layers: 3
+  lfe_layers: 4
 training:
   epochs: 60
   batch_size: 16000

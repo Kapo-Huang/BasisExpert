@@ -24,7 +24,7 @@ from .sota.instant_ngp import (
     INSTANT_NGP_LOG2_HASHMAP_SIZE,
     build_instant_ngp_from_config,
 )
-from .sota.moe_inr import build_moe_inr_from_config
+from .sota.moe_inr import build_moe_inr_from_config, resolve_moe_dimensions
 from .sota.mvnet import (
     MVNET_BIAS,
     MVNET_HIDDEN_FEATURES,
@@ -217,15 +217,8 @@ def _materialize_moe_inr(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, An
         },
         "moe_inr",
     )
-    base_dim = cfg.get("base_dim")
-    if base_dim is not None:
-        base_dim = int(base_dim)
-        encoder_feature_dim = 8 * base_dim
-        policy_hidden_dim = base_dim
-    else:
-        encoder_feature_dim = int(cfg.get("encoder_feature_dim", 256))
-        policy_hidden_dim = int(cfg.get("policy_hidden_dim", 128))
-    return {
+    base_dim, encoder_feature_dim, policy_hidden_dim = resolve_moe_dimensions(cfg)
+    materialized = {
         "in_features": _resolve_in_features(cfg, meta, "moe_inr"),
         "out_features": _resolve_single_target_out_features(cfg, meta, "moe_inr"),
         "num_experts": int(cfg.get("num_experts", 7)),
@@ -237,6 +230,9 @@ def _materialize_moe_inr(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, An
         "policy_first_omega_0": float(cfg.get("policy_first_omega_0", 30.0)),
         "policy_hidden_omega_0": float(cfg.get("policy_hidden_omega_0", 30.0)),
     }
+    if base_dim is not None:
+        materialized["base_dim"] = base_dim
+    return materialized
 
 
 def _materialize_compact_ngp(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:

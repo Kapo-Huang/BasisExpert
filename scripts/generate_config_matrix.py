@@ -98,11 +98,11 @@ UNIFIED_SIZE_MODELS = {
         "Size1304": {"name": "coordnet", "in_features": 4, "init_features": 61, "num_res": 10},
     },
     "MoE-INR": {
-        "Size082": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 32, "policy_num_layers": 3},
-        "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 46, "policy_num_layers": 3},
-        "Size326": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 66, "policy_num_layers": 3},
-        "Size652": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 93, "policy_num_layers": 3},
-        "Size1304": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 132, "policy_num_layers": 3},
+        "Size082": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 32, "encoder_feature_dim": 256, "policy_hidden_dim": 32, "policy_num_layers": 3},
+        "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 46, "encoder_feature_dim": 368, "policy_hidden_dim": 46, "policy_num_layers": 3},
+        "Size326": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 66, "encoder_feature_dim": 528, "policy_hidden_dim": 66, "policy_num_layers": 3},
+        "Size652": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 93, "encoder_feature_dim": 744, "policy_hidden_dim": 93, "policy_num_layers": 3},
+        "Size1304": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 132, "encoder_feature_dim": 1056, "policy_hidden_dim": 132, "policy_num_layers": 3},
     },
 }
 DEFAULT_MODELS = {
@@ -115,13 +115,20 @@ DEFAULT_MODELS = {
         "volume": {"name": "coordnet", "in_features": 4, "init_features": 21, "num_res": 10},
     },
     "MoE-INR": {
-        "node": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 14, "policy_num_layers": 3},
-        "volume": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 45, "policy_num_layers": 3},
+        "node": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 14, "encoder_feature_dim": 112, "policy_hidden_dim": 14, "policy_num_layers": 3},
+        "volume": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 45, "encoder_feature_dim": 360, "policy_hidden_dim": 45, "policy_num_layers": 3},
     },
 }
-VAR_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 49, "Size1304": 70}
-NEURAL_SIZE_DIMS = {"Size082": 16, "Size163": 23, "Size326": 33, "Size652": 47, "Size1304": 66}
-MC_SIZE_DIMS = {"Size082": 23, "Size163": 33, "Size326": 48, "Size652": 68, "Size1304": 97}
+VAR_SIZE_PROFILES = {
+    "Size082": {"num_experts": 8, "base_dim": 15, "top_k": 4},
+    "Size163": {"num_experts": 9, "base_dim": 21, "top_k": 4},
+    "Size326": {"num_experts": 9, "base_dim": 30, "top_k": 4},
+    "Size652": {"num_experts": 9, "base_dim": 43, "top_k": 4},
+    "Size1304": {"num_experts": 9, "base_dim": 61, "top_k": 4},
+}
+NEURAL_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 48, "Size1304": 67}
+MC_SIZE_DIMS = {"Size082": 30, "Size163": 43, "Size326": 62, "Size652": 88, "Size1304": 125}
+DC_SIZE_DBSCAN_EPS = {"GT": 0.10, "H_plus": 0.10, "H2": 0.05, "He": 0.05, "PD": 0.10}
 APMG_SIZE = {
     "Size082": {"feature_grid_shape": [7, 7, 7], "n_grids": 1, "n_features": 1, "nodes_per_layer": 16, "n_layers": 2},
     "Size163": {"feature_grid_shape": [5, 5, 5], "n_grids": 6, "n_features": 1, "nodes_per_layer": 16, "n_layers": 3},
@@ -732,14 +739,24 @@ def generate_var_expert() -> int:
     }
     dump(CONFIGS / "VarExpert" / f"{combustion_name}.yaml", combustion_payload)
     count += 1
-    for size, dim in VAR_SIZE_DIMS.items():
+    for size, model_profile in VAR_SIZE_PROFILES.items():
+        experts = int(model_profile["num_experts"])
+        training = var_training("ionization", True, experts)
+        # Exploration v2 showed late PSNR collapses when alpha=5 allowed the
+        # per-target EMA weights to swing from about 0.2 to 3.8.  Keep the
+        # formal size runs adaptive, but make the controller substantially
+        # smoother and bounded, and retain checkpoints around any regression.
+        training["multiview_ema_loss"].update(
+            {"beta": 0.99, "w_min": 0.5, "w_max": 2.0, "warmup_steps": 75000, "alpha": 1.0}
+        )
+        training.update({"log_psnr_every": 25, "save_every": 100})
         payload = {
             "experiment": f"ionization_var_expert_{size.lower()}",
             "exp_id": f"var-expert-ionization-{size.lower()}",
             "experiment_root": repo_path("runs"),
             "data": unified_data("ionization", True),
-            "model": {"name": "var_expert", "in_features": 4, "num_experts": 6, "base_dim": dim, "top_k": 3},
-            "training": var_training("ionization", True),
+            "model": {"name": "var_expert", "in_features": 4, **model_profile},
+            "training": training,
             "evaluation": evaluation(),
             "log": log_config(),
         }
@@ -807,6 +824,7 @@ def generate_mc() -> int:
     count += 1
     for size, hidden in MC_SIZE_DIMS.items():
         payload = mc_payload("ionization", True, hidden)
+        payload["model"].update({"gfe_layers": 3, "lfe_layers": 4})
         payload["experiment"] = f"ionization_mc_inr_{size.lower()}"
         payload["exp_id"] = f"mc-inr-ionization-{size.lower()}"
         dump(CONFIGS / "MC-INR" / size / "ionization.yaml", payload)
@@ -941,9 +959,13 @@ def generate_neural() -> int:
         for target in DATASETS["ionization"]["targets"]:
             for pretrain in (True, False):
                 suffix = "__managerpretrain" if pretrain else ""
+                payload = neural_payload("ionization", target, True, pretrain, dim, size)
+                payload["MODEL"].update(
+                    {"decoder_n_hidden_layers": 1, "manager_n_hidden_layers": 1}
+                )
                 dump(
                     CONFIGS / "NeuralExpert" / size / f"ionization__{target}{suffix}.yaml",
-                    neural_payload("ionization", target, True, pretrain, dim, size),
+                    payload,
                 )
                 count += 1
     return count
@@ -1241,7 +1263,10 @@ def generate_volume_only() -> int:
             count += 1
         for size in SIZES:
             for target in DATASETS["ionization"]["targets"]:
-                dump(CONFIGS / family / size / f"ionization__{target}.yaml", builder(target, True, size))
+                payload = builder(target, True, size)
+                if family == "DC-INR":
+                    payload["partition"]["dbscan_eps"] = DC_SIZE_DBSCAN_EPS[target]
+                dump(CONFIGS / family / size / f"ionization__{target}.yaml", payload)
                 count += 1
     return count
 

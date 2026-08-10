@@ -1,0 +1,76 @@
+experiment: exploration_v3_dc_inr_ionization-size163_H_plus
+exp_id: explore-v3-dc-inr-ionization-size163-H_plus
+experiment_root: ${REPO_ROOT}/runs/exploration_v3
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  target: H_plus
+  targets:
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
+model:
+  name: dc_inr
+partition:
+  candidate_block_shapes:
+  - sx: 150
+    sy: 8
+    sz: 124
+  - sx: 150
+    sy: 124
+    sz: 8
+  - sx: 300
+    sy: 4
+    sz: 124
+  - sx: 300
+    sy: 124
+    sz: 4
+  dbscan_eps: 0.1
+  dbscan_min_samples: 1
+  entropy_bins: 256
+  distance_matrix_max_bytes: 1073741824
+compression:
+  max_initial_neurons: 2048
+  min_initial_neurons: 4
+  target_size_mib: 0.32599999999999996
+training:
+  epochs: 300
+  total_steps: 75000
+  batch_size: 16000
+  lr: 0.0001
+  beta_1: 0.9
+  beta_2: 0.999
+  points_per_timestep: 160
+  prediction_batch_size: 16000
+  lr_milestones:
+  - 450000
+  - 675000
+  lr_gamma: 0.5
+  log_every: 7500
+  seed: 42
+  device: cuda
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false
+exploration_probe:
+  enabled: true
+  total_epoch_equivalents: 50
+  every_epoch_equivalents: 5
+  sample_ratio: 0.01
+  max_samples: 100000
+  seed: 42

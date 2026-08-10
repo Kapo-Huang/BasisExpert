@@ -33,7 +33,7 @@ partition:
   - sx: 300
     sy: 124
     sz: 4
-  dbscan_eps: 0.01
+  dbscan_eps: 0.1
   dbscan_min_samples: 1
   entropy_bins: 256
   distance_matrix_max_bytes: 1073741824
