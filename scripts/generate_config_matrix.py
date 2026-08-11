@@ -119,6 +119,12 @@ DEFAULT_MODELS = {
         "volume": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 45, "encoder_feature_dim": 360, "policy_hidden_dim": 45, "policy_num_layers": 3},
     },
 }
+MOE_MAIN_BASE_DIMS = {
+    "bathymetry": {"default": 18},
+    "katrina": {"default": 16, "v": 15},
+    "ionization": {"default": 45},
+    COMBUSTION_DATASET["name"]: {"default": 23, "Velocity": 22},
+}
 VAR_SIZE_PROFILES = {
     "Size082": {"num_experts": 8, "base_dim": 15, "top_k": 4},
     "Size163": {"num_experts": 9, "base_dim": 21, "top_k": 4},
@@ -614,27 +620,55 @@ def log_config() -> dict:
     }
 
 
+def moe_main_model(dataset: str, target: str) -> dict:
+    widths = MOE_MAIN_BASE_DIMS[dataset]
+    base_dim = int(widths.get(target, widths["default"]))
+    in_features = (
+        len(COMBUSTION_DATASET["coordinate_axes"])
+        if dataset == COMBUSTION_DATASET["name"]
+        else 4
+    )
+    return {
+        "name": "moe_inr",
+        "in_features": in_features,
+        "num_experts": 7,
+        "base_dim": base_dim,
+        "encoder_feature_dim": 8 * base_dim,
+        "policy_hidden_dim": base_dim,
+        "policy_num_layers": 3,
+    }
+
+
 def generate_unified_single() -> int:
     count = 0
     for family, defaults in DEFAULT_MODELS.items():
         model_slug = defaults["volume"]["name"].replace("_", "-")
         for dataset, meta in DATASETS.items():
             for target in meta["targets"]:
+                model = (
+                    moe_main_model(dataset, target)
+                    if family == "MoE-INR"
+                    else deepcopy(defaults[meta["kind"]])
+                )
                 payload = {
                     "experiment": f"{dataset}_{model_slug}_{target}",
                     "exp_id": f"{model_slug}-{dataset}-{target}",
                     "experiment_root": repo_path("runs"),
                     "data": unified_data(dataset, False, target),
-                    "model": deepcopy(defaults[meta["kind"]]),
+                    "model": model,
                     "training": common_training(),
                     "evaluation": evaluation(),
                     "log": log_config(),
                 }
                 dump(CONFIGS / family / f"{dataset}__{target}.yaml", payload)
                 count += 1
-        combustion_model = deepcopy(defaults["volume"])
-        combustion_model["in_features"] = len(COMBUSTION_DATASET["coordinate_axes"])
         for target in COMBUSTION_DATASET["targets"]:
+            combustion_model = (
+                moe_main_model(COMBUSTION_DATASET["name"], target)
+                if family == "MoE-INR"
+                else deepcopy(defaults["volume"])
+            )
+            combustion_model["in_features"] = len(COMBUSTION_DATASET["coordinate_axes"])
             payload = {
                 "experiment": f"{COMBUSTION_DATASET['name']}_{model_slug}_{target}",
                 "exp_id": f"{model_slug}-{COMBUSTION_DATASET['name']}-{target}",

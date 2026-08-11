@@ -1,0 +1,24 @@
+# MoE-INR main experiments only: Bathymetry, Combustion, and Katrina.
+# Ionization, Size, and ablation experiments are intentionally excluded.
+configs/MoE-INR/bathymetry__SALT.yaml
+configs/MoE-INR/bathymetry__TEMP.yaml
+configs/MoE-INR/bathymetry__U.yaml
+configs/MoE-INR/bathymetry__V.yaml
+configs/MoE-INR/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/MoE-INR/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/MoE-INR/combustion_40NH3_1__Pressure.yaml
+configs/MoE-INR/combustion_40NH3_1__Temperature.yaml
+configs/MoE-INR/combustion_40NH3_1__Velocity.yaml
+configs/MoE-INR/combustion_40NH3_1__Velocity_Magnitude.yaml
+configs/MoE-INR/katrina__fort63.yaml
+configs/MoE-INR/katrina__fort64.yaml
+configs/MoE-INR/katrina__fort73.yaml
+configs/MoE-INR/katrina__speed.yaml
+configs/MoE-INR/katrina__v.yaml

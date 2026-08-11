@@ -8,6 +8,8 @@ from pathlib import Path
 
 HELPER = Path(__file__).resolve().parents[1] / "scripts" / "lib" / "batch_runner.sh"
 RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_all_configs.sh"
+MOE_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.sh"
+MOE_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.list"
 
 
 class BatchRunnerTestCase(unittest.TestCase):
@@ -141,6 +143,97 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             size_position = output.index("configs/SIREN/Size082/ionization__GT.yaml")
             self.assertLess(main_position, size_position)
             self.assertIn("Completed 2 configs; failures=0", output)
+
+    def test_moe_runner_dry_run_selects_only_22_main_configs(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                }
+            )
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+            completed = subprocess.run(
+                [bash, MOE_RUNNER.as_posix()],
+                cwd=MOE_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            output = completed.stdout
+
+            self.assertIn("Selected 22 of 517 configs", output)
+            self.assertEqual(output.count("DRY_RUN:"), 22)
+            bathymetry = output.index("main:MoE-INR:bathymetry:all")
+            combustion = output.index("main:MoE-INR:combustion_40NH3_1:all")
+            katrina = output.index("main:MoE-INR:katrina:all")
+            self.assertLess(bathymetry, combustion)
+            self.assertLess(combustion, katrina)
+            self.assertNotIn("main:MoE-INR:ionization", output)
+            self.assertNotIn("size:MoE-INR", output)
+
+    def test_moe_runner_validates_terminal_status_and_final_psnr(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_root = root / "batch"
+            logs = log_root / "logs"
+            logs.mkdir(parents=True)
+            selected = [
+                line.split("#", 1)[0].strip()
+                for line in MOE_LIST.read_text(encoding="utf-8").splitlines()
+                if line.split("#", 1)[0].strip()
+            ]
+            status = log_root / "status.tsv"
+            with status.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write("config\tstatus\texit_code\tlog\n")
+                for index, config in enumerate(selected):
+                    log_path = logs / f"config-{index}.log"
+                    log_path.write_text(
+                        "2026-08-12 | INFO | PSNR epoch 600/600: aggregate=42.00 time=1.0s\n",
+                        encoding="utf-8",
+                    )
+                    handle.write(f"{config}\tok\t0\t{log_path.as_posix()}\n")
+
+            environment = os.environ.copy()
+            environment["BATCH_LOG_ROOT"] = log_root.as_posix()
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+            completed = subprocess.run(
+                [bash, MOE_RUNNER.as_posix()],
+                cwd=MOE_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertIn("Validated 22/22", completed.stdout)
+
+            (logs / "config-0.log").write_text("training ended without PSNR\n", encoding="utf-8")
+            failed = subprocess.run(
+                [bash, MOE_RUNNER.as_posix()],
+                cwd=MOE_RUNNER.parents[1],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(failed.returncode, 1)
+            self.assertIn("INVALID missing final PSNR", failed.stderr)
 
 
 if __name__ == "__main__":

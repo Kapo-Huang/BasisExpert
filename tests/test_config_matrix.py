@@ -34,6 +34,7 @@ SIZES = {
     "Size652": 6.52,
     "Size1304": 13.04,
 }
+MOE_RERUN_LIST = "run_moe_non_ionization_main.list"
 
 
 class ConfigMatrixTestCase(unittest.TestCase):
@@ -105,6 +106,27 @@ class ConfigMatrixTestCase(unittest.TestCase):
         self.assertTrue(all(size_marker in path for path in rd_curve_configs))
         self.assertTrue(set(main_configs).isdisjoint(rd_curve_configs))
         self.assertEqual(set(main_configs) | set(rd_curve_configs), all_configs)
+
+    def test_moe_non_ionization_rerun_list_has_exact_main_scope(self):
+        selected = self.read_run_list(MOE_RERUN_LIST)
+        expected = {
+            f"configs/MoE-INR/bathymetry__{target}.yaml"
+            for target in DATASET_TARGETS["bathymetry"]
+        }
+        expected.update(
+            f"configs/MoE-INR/katrina__{target}.yaml"
+            for target in DATASET_TARGETS["katrina"]
+        )
+        expected.update(
+            f"configs/MoE-INR/{COMBUSTION_DATASET}__{target}.yaml"
+            for target in COMBUSTION_TARGETS
+        )
+
+        self.assertEqual(len(selected), 22)
+        self.assertEqual(len(set(selected)), 22)
+        self.assertEqual(set(selected), expected)
+        self.assertTrue(all("/Size" not in path for path in selected))
+        self.assertTrue(all("ionization" not in path.lower() for path in selected))
 
     def test_single_target_default_and_size_coverage(self):
         for family in ("SIREN", "CoordNet", "MoE-INR", "NeuralExpert"):
@@ -297,6 +319,80 @@ class ConfigMatrixTestCase(unittest.TestCase):
             model = yaml.safe_load(path.read_text(encoding="utf-8"))["model"]
             self.assertEqual(model["encoder_feature_dim"], 8 * model["base_dim"], path)
             self.assertEqual(model["policy_hidden_dim"], model["base_dim"], path)
+
+    def test_moe_main_widths_match_dataset_budgets(self):
+        expected_widths = {
+            "bathymetry": {"default": 18},
+            "katrina": {"default": 16, "v": 15},
+            COMBUSTION_DATASET: {"default": 23, "Velocity": 22},
+        }
+        total_mib = {dataset: 0.0 for dataset in expected_widths}
+
+        for dataset, widths in expected_widths.items():
+            for path in sorted((self.config_root / "MoE-INR").glob(f"{dataset}__*.yaml")):
+                payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+                target = payload["data"]["target"]
+                target_dim = 3 if target in {"v", "Velocity"} else 1
+                expected_base_dim = widths.get(target, widths["default"])
+                self.assertEqual(payload["model"]["base_dim"], expected_base_dim, path)
+                meta = DatasetMeta(
+                    kind=payload["data"]["kind"],
+                    n_samples=1,
+                    input_dim=payload["model"]["in_features"],
+                    target_names=(target,),
+                    target_dims={target: target_dim},
+                    volume_shape=payload["data"].get("volume_shape"),
+                )
+                model_payload = payload["model"]
+                model = build_model(
+                    ModelConfig(
+                        name=model_payload["name"],
+                        params={key: value for key, value in model_payload.items() if key != "name"},
+                    ),
+                    meta,
+                )
+                total_mib[dataset] += sum(parameter.numel() for parameter in model.parameters()) * 2 / (1024**2)
+
+        var_expert_totals = {}
+        for dataset, target_dims in {
+            "bathymetry": {name: 1 for name in DATASET_TARGETS["bathymetry"]},
+            "katrina": {
+                **{name: 1 for name in DATASET_TARGETS["katrina"]},
+                "v": 3,
+            },
+        }.items():
+            payload = yaml.safe_load(
+                (self.config_root / "VarExpert" / f"{dataset}.yaml").read_text(encoding="utf-8")
+            )
+            model_payload = payload["model"]
+            target_names = tuple(payload["data"]["targets"])
+            model = build_model(
+                ModelConfig(
+                    name=model_payload["name"],
+                    params={key: value for key, value in model_payload.items() if key != "name"},
+                ),
+                DatasetMeta(
+                    kind="node",
+                    n_samples=1,
+                    input_dim=model_payload["in_features"],
+                    target_names=target_names,
+                    target_dims=target_dims,
+                    volume_shape=None,
+                ),
+            )
+            var_expert_totals[dataset] = sum(parameter.numel() for parameter in model.parameters()) * 2 / (1024**2)
+
+        self.assertLessEqual(
+            abs(total_mib["bathymetry"] - var_expert_totals["bathymetry"])
+            / var_expert_totals["bathymetry"],
+            0.05,
+        )
+        self.assertLessEqual(
+            abs(total_mib["katrina"] - var_expert_totals["katrina"])
+            / var_expert_totals["katrina"],
+            0.05,
+        )
+        self.assertLessEqual(abs(total_mib[COMBUSTION_DATASET] - 1.11) / 1.11, 0.05)
 
     def test_all_combustion_configs_use_exported_shape(self):
         expected_shape = generate_config_matrix.COMBUSTION_DATASET["volume_shape"]
