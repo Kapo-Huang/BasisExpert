@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 import time
 from pathlib import Path
 
@@ -724,6 +725,9 @@ def train_model(
         if probe_cfg.enabled
         else None
     )
+    best_probe_psnr = float("-inf")
+    best_probe_progress = None
+    best_probe_checkpoint = None
     started_at = time.time()
     global_data_step = 0
     global_optimizer_step = 0
@@ -738,6 +742,8 @@ def train_model(
         epoch_loss = 0.0
         epoch_regularization = 0.0
         epoch_optimizer_steps = 0
+        epoch_max_grad_norm = 0.0
+        epoch_clipped_steps = 0
         steps = 0
         hard_topk = int(epoch) > int(cfg.hard_topk_warmup_epochs)
         epoch_timing = TimingBreakdown()
@@ -892,6 +898,15 @@ def train_model(
                         regularization.detach().item()
                     )
                     epoch_regularization += regularization_value
+                if float(cfg.grad_clip_norm) > 0.0:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(),
+                        max_norm=float(cfg.grad_clip_norm),
+                    )
+                    grad_norm_value = float(grad_norm.detach().item())
+                    epoch_max_grad_norm = max(epoch_max_grad_norm, grad_norm_value)
+                    if grad_norm_value > float(cfg.grad_clip_norm):
+                        epoch_clipped_steps += 1
                 optimizer.step()
                 global_optimizer_step += 1
                 epoch_optimizer_steps += 1
@@ -1131,14 +1146,49 @@ def train_model(
             if timing_enabled:
                 epoch_timing.psnr += timing_elapsed(psnr_started_at, device, sync_timing)
             if probe_recorder is not None:
+                progress = probe_progress(epoch, cfg.epochs, probe_cfg)
                 probe_recorder.record(
-                    progress=probe_progress(epoch, cfg.epochs, probe_cfg),
+                    progress=progress,
                     scope="aggregate",
                     aggregate_psnr=aggregate_psnr,
                     sample_count=len(psnr_dataset),
                     elapsed_seconds=time.perf_counter() - probe_wall_started,
                     details=per_target_psnr,
                 )
+                if (
+                    probe_cfg.retain_best_checkpoint
+                    and math.isfinite(float(aggregate_psnr))
+                    and float(aggregate_psnr) > best_probe_psnr
+                ):
+                    best_probe_psnr = float(aggregate_psnr)
+                    best_probe_progress = int(progress)
+                    best_probe_checkpoint = save_checkpoint(
+                        model=model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        dataset=dataset,
+                        epoch=epoch,
+                        config_hash=config_hash,
+                        global_data_step=global_data_step,
+                        global_optimizer_step=global_optimizer_step,
+                        gradient_accumulation_count=accumulation_count,
+                        path=Path(checkpoint_dir) / f"{exp_id}_best_probe.pth",
+                    )
+                    logger.info(
+                        "Best exploration checkpoint: progress=%d psnr=%.4f path=%s",
+                        best_probe_progress,
+                        best_probe_psnr,
+                        best_probe_checkpoint,
+                    )
+
+        if float(cfg.grad_clip_norm) > 0.0 and log_cfg.epoch_summary:
+            logger.info(
+                "Gradient clipping epoch=%d max_pre_clip_norm=%.6e clipped_steps=%d threshold=%.6e",
+                epoch,
+                epoch_max_grad_norm,
+                epoch_clipped_steps,
+                float(cfg.grad_clip_norm),
+            )
 
         if cfg.save_every > 0 and epoch % cfg.save_every == 0:
             if accumulation_count != 0:
@@ -1223,6 +1273,9 @@ def train_model(
     )
     result = {
         "checkpoint_path": final_ckpt,
+        "best_probe_checkpoint_path": best_probe_checkpoint,
+        "best_probe_progress": best_probe_progress,
+        "best_probe_psnr": None if best_probe_progress is None else best_probe_psnr,
         "global_data_step": global_data_step,
         "global_optimizer_step": global_optimizer_step,
         "gradient_accumulation_count": accumulation_count,

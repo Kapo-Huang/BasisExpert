@@ -57,6 +57,11 @@ TRAINING_DEFAULTS = {
     "seed": 42,
     "device": "cuda",
 }
+TRAINING_OPTIONAL_KEYS = {
+    "lr_schedule_steps",
+    "lambda_schedule_steps",
+    "grad_clip_norm",
+}
 EVALUATION_DEFAULTS = {
     "batch_size": 65_536,
     "save_mean": True,
@@ -203,7 +208,7 @@ def _normalize_model(payload: dict[str, Any], *, time_count: int) -> dict[str, A
 
 def _normalize_training(payload: dict[str, Any]) -> dict[str, Any]:
     training = {**TRAINING_DEFAULTS, **payload}
-    _reject(training, set(TRAINING_DEFAULTS), "training")
+    _reject(training, set(TRAINING_DEFAULTS) | TRAINING_OPTIONAL_KEYS, "training")
     for key in ("steps", "batch_size"):
         training[key] = _positive(training[key], f"training.{key}", integer=True)
     for key in ("save_every", "log_every"):
@@ -227,6 +232,15 @@ def _normalize_training(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("training.lambda_growth_rate must be at least 1")
     training["seed"] = int(training["seed"])
     training["device"] = str(training["device"])
+    for key in ("lr_schedule_steps", "lambda_schedule_steps"):
+        if key in training:
+            training[key] = _positive(training[key], f"training.{key}", integer=True)
+            if int(training[key]) < int(training["steps"]):
+                raise ValueError(f"training.{key} must be at least training.steps")
+    if "grad_clip_norm" in training:
+        training["grad_clip_norm"] = float(training["grad_clip_norm"])
+        if training["grad_clip_norm"] < 0.0:
+            raise ValueError("training.grad_clip_norm must be non-negative")
     return training
 
 

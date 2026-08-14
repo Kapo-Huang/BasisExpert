@@ -181,6 +181,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         gradient_accumulation_steps=int(
             training_payload.get("gradient_accumulation_steps", 1)
         ),
+        grad_clip_norm=float(training_payload.get("grad_clip_norm", 0.0)),
         freeze_router_at=float(training_payload.get("freeze_router_at", 0.0)),
         hard_topk_warmup_epochs=int(training_payload.get("hard_topk_warmup_epochs", 0)),
         gradient_balancer=GradientBalancerConfig(**gradient_balancer_payload),

@@ -1,0 +1,81 @@
+experiment: exploration_v4_rmdsrn_size652_schedule900k_lambda10_GT
+exp_id: explore-v4-rmdsrn-size652-schedule900k_lambda10-GT
+experiment_root: ${REPO_ROOT}/runs/exploration_v4
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  target: GT
+  targets:
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
+model:
+  name: rmdsrn
+  base_encoder: temporal_fv_srn
+  grid_resolution: 17
+  grid_channels: 11
+  grid_init_std: 0.01
+  keyframe_indices:
+  - 0
+  - 9
+  - 18
+  - 27
+  - 36
+  - 45
+  - 54
+  - 63
+  - 72
+  - 81
+  - 90
+  - 99
+  fourier_features: 14
+  fourier_mode: nerf
+  decoder_count: 5
+  decoder_hidden_features: 64
+  decoder_hidden_layers: 2
+  activation: snake_alt
+  activation_frequency: 1.0
+training:
+  steps: 75000
+  batch_size: 16000
+  lr: 0.005
+  beta_1: 0.9
+  beta_2: 0.999
+  min_lr: 1.0e-07
+  lambda_min: 0.0
+  lambda_max: 10.0
+  lambda_growth_rate: 500.0
+  epsilon: 1.0e-12
+  save_every: 75000
+  log_every: 7500
+  seed: 42
+  device: cuda
+  lr_schedule_steps: 900000
+  lambda_schedule_steps: 900000
+evaluation:
+  batch_size: 16000
+  save_mean: true
+  save_variance: true
+  run_after_training: false
+  default_model: artifact
+  uncertainty_sample_size: 1000000
+  topk_fractions:
+  - 0.01
+  - 0.05
+  seed: 42
+exploration_probe:
+  enabled: true
+  total_epoch_equivalents: 50
+  every_epoch_equivalents: 5
+  sample_ratio: 0.01
+  max_samples: 100000
+  seed: 42
+  retain_best_checkpoint: true

@@ -10,6 +10,7 @@ HELPER = Path(__file__).resolve().parents[1] / "scripts" / "lib" / "batch_runner
 RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_all_configs.sh"
 MOE_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.sh"
 MOE_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.list"
+V4_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v4.sh"
 
 
 class BatchRunnerTestCase(unittest.TestCase):
@@ -180,6 +181,41 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             self.assertLess(combustion, katrina)
             self.assertNotIn("main:MoE-INR:ionization", output)
             self.assertNotIn("size:MoE-INR", output)
+
+    def test_exploration_v4_dry_run_has_exact_matrix_and_default_parallelism(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                    "RUN_TOKEN": "test-v4",
+                }
+            )
+            environment.pop("MAX_PARALLEL_JOBS", None)
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+            completed = subprocess.run(
+                [bash, V4_RUNNER.as_posix()],
+                cwd=V4_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            output = completed.stdout
+            self.assertEqual(output.count("DRY_RUN:"), 81)
+            self.assertIn("RMDSRN corrected schedule (15 configs, max_parallel=5)", output)
+            self.assertIn("RMDSRN lambda ablations (12 configs, max_parallel=5)", output)
+            self.assertIn("CoordNet equal-budget depth (45 configs, max_parallel=5)", output)
+            self.assertIn("CoordNet causal controls (9 configs, max_parallel=5)", output)
+            self.assertIn("Completed 81 exploration-v4 configs; failures=0", output)
 
     def test_moe_runner_validates_terminal_status_and_final_psnr(self):
         bash = self._bash()

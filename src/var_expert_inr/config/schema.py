@@ -183,6 +183,7 @@ class ExplorationProbeConfig:
     sample_ratio: float = 0.01
     max_samples: int = 100_000
     seed: int = 42
+    retain_best_checkpoint: bool = False
 
     def __post_init__(self) -> None:
         if int(self.total_epoch_equivalents) <= 0:
@@ -303,6 +304,7 @@ class TrainingConfig:
     sampler: str = "uniform_random"
     batches_per_epoch_budget: int = 0
     gradient_accumulation_steps: int = 1
+    grad_clip_norm: float = 0.0
     freeze_router_at: float = 0.0
     hard_topk_warmup_epochs: int = 0
     gradient_balancer: GradientBalancerConfig = field(default_factory=GradientBalancerConfig)
@@ -326,6 +328,8 @@ class TrainingConfig:
             raise ValueError(
                 "training.gradient_accumulation_steps must be positive"
             )
+        if float(self.grad_clip_norm) < 0.0:
+            raise ValueError("training.grad_clip_norm must be non-negative")
 
 
 @dataclass(frozen=True)

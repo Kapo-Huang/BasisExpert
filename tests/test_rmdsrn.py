@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
@@ -107,8 +108,24 @@ class RMDSRNTestCase(unittest.TestCase):
         self.assertEqual(cfg["data"]["target"], "PD")
         self.assertEqual(cfg["model"]["decoder_count"], 3)
         self.assertEqual(cfg["training"]["steps"], 2)
+        self.assertNotIn("lr_schedule_steps", cfg["training"])
+        self.assertNotIn("lambda_schedule_steps", cfg["training"])
+        self.assertNotIn("grad_clip_norm", cfg["training"])
 
         payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        payload["training"].update(
+            {
+                "lr_schedule_steps": 20,
+                "lambda_schedule_steps": 20,
+                "grad_clip_norm": 1.0,
+            }
+        )
+        config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+        explicit = load_config(config_path)
+        self.assertEqual(explicit["training"]["lr_schedule_steps"], 20)
+        self.assertEqual(explicit["training"]["lambda_schedule_steps"], 20)
+        self.assertEqual(explicit["training"]["grad_clip_norm"], 1.0)
+
         payload["model"]["decoder_count"] = 1
         config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "decoder_count"):
@@ -119,6 +136,18 @@ class RMDSRNTestCase(unittest.TestCase):
         config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "Unknown training"):
             load_config(config_path)
+
+        payload["training"].pop("unknown")
+        for field, value in (
+            ("grad_clip_norm", -1.0),
+            ("lr_schedule_steps", 1),
+            ("lambda_schedule_steps", 1),
+        ):
+            invalid = yaml.safe_load(yaml.safe_dump(payload))
+            invalid["training"][field] = value
+            config_path.write_text(yaml.safe_dump(invalid), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, field):
+                load_config(config_path)
 
     def test_model_interpolation_members_and_statistics(self):
         model = RMDSRN(self._model_config())
@@ -210,10 +239,50 @@ class RMDSRNTestCase(unittest.TestCase):
         data_path = self.root / "data.npy"
         np.save(data_path, values)
         config_path = self._config(data_path, run_after_training=True)
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        payload["training"].update(
+            {
+                "lr_schedule_steps": 20,
+                "lambda_schedule_steps": 20,
+                "grad_clip_norm": 1.0,
+            }
+        )
+        payload["exploration_probe"] = {
+            "enabled": True,
+            "total_epoch_equivalents": 50,
+            "every_epoch_equivalents": 5,
+            "sample_ratio": 1.0,
+            "max_samples": 100,
+            "seed": 42,
+            "retain_best_checkpoint": True,
+        }
+        config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
-        trained = run_train(config_path, target="GT")
+        original_clip = torch.nn.utils.clip_grad_norm_
+        with mock.patch(
+            "torch.nn.utils.clip_grad_norm_", wraps=original_clip
+        ) as clip:
+            trained = run_train(config_path, target="GT")
+        self.assertEqual(clip.call_count, 2)
         self.assertTrue(Path(trained["checkpoint_path"]).exists())
+        self.assertTrue(Path(trained["best_probe_checkpoint_path"]).exists())
+        self.assertNotEqual(
+            Path(trained["checkpoint_path"]),
+            Path(trained["best_probe_checkpoint_path"]),
+        )
         self.assertTrue(Path(trained["artifact_path"]).exists())
+        self.assertEqual(trained["lr_schedule_steps"], 20)
+        self.assertEqual(trained["lambda_schedule_steps"], 20)
+        self.assertAlmostEqual(
+            trained["final_lambda"],
+            exponential_variance_weight(
+                2,
+                20,
+                minimum=0.0,
+                maximum=1.0,
+                growth_rate=5.0,
+            ),
+        )
         mean = np.load(trained["mean_prediction_path"], mmap_mode="r")
         variance = np.load(trained["variance_prediction_path"], mmap_mode="r")
         self.assertEqual(mean.shape, values.shape)
@@ -222,6 +291,22 @@ class RMDSRNTestCase(unittest.TestCase):
         aggregate = trained["metrics"]["aggregate"]
         self.assertIn("variance_error_pearson", aggregate)
         self.assertEqual(set(aggregate["topk_hit_rate"]), {"0.1", "0.25"})
+        probe_metrics = Path(trained["checkpoint_path"]).parent.parent / "metrics" / "exploration_psnr.tsv"
+        rows = probe_metrics.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(rows), 3)
+        details = yaml.safe_load(rows[-1].split("\t")[-1])
+        self.assertEqual(
+            set(details),
+            {
+                "member_mse",
+                "variance_kl",
+                "variance_weight",
+                "weighted_variance_loss",
+                "weighted_variance_to_member_ratio",
+                "variance_error_pearson",
+                "topk_hit_rate",
+            },
+        )
         del mean
         del variance
 

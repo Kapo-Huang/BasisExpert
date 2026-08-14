@@ -353,7 +353,11 @@ def run_train(
         )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=int(cfg["training"]["steps"]),
+            T_max=int(
+                cfg["training"].get(
+                    "lr_schedule_steps", cfg["training"]["steps"]
+                )
+            ),
             eta_min=float(cfg["training"]["min_lr"]),
         )
         start_step = 0
@@ -385,11 +389,18 @@ def run_train(
             normalize_probe,
             probe_due,
             probe_progress,
-            probe_temporal_volume_model,
+            probe_temporal_volume_ensemble_model,
         )
 
         probe_cfg = normalize_probe(cfg.get("exploration_probe"))
         probe_recorder = ExplorationProbeRecorder(dirs["metrics"], probe_cfg) if probe_cfg.enabled else None
+        best_probe_psnr = float("-inf")
+        best_probe_progress = None
+        best_probe_checkpoint = None
+        lambda_schedule_steps = int(
+            cfg["training"].get("lambda_schedule_steps", cfg["training"]["steps"])
+        )
+        final_weight = float(cfg["training"]["lambda_min"])
         started_at = time.perf_counter()
         for step in range(start_step + 1, int(cfg["training"]["steps"]) + 1):
             timestep = frame_sampler.next()
@@ -403,7 +414,7 @@ def run_train(
             targets = torch.from_numpy(targets_np).to(device, non_blocking=True)
             weight = exponential_variance_weight(
                 step,
-                int(cfg["training"]["steps"]),
+                lambda_schedule_steps,
                 minimum=float(cfg["training"]["lambda_min"]),
                 maximum=float(cfg["training"]["lambda_max"]),
                 growth_rate=float(cfg["training"]["lambda_growth_rate"]),
@@ -417,8 +428,14 @@ def run_train(
                 epsilon=float(cfg["training"]["epsilon"]),
             )
             output.total.backward()
+            if float(cfg["training"].get("grad_clip_norm", 0.0)) > 0.0:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    max_norm=float(cfg["training"]["grad_clip_norm"]),
+                )
             optimizer.step()
             scheduler.step()
+            final_weight = float(weight)
             final_losses = {
                 "total": float(output.total.detach().item()),
                 "member": float(output.member.detach().item()),
@@ -451,20 +468,48 @@ def run_train(
                 )
             if probe_recorder is not None and probe_due(step, int(cfg["training"]["steps"]), probe_cfg):
                 probe_started = time.perf_counter()
-                probe_psnr, probe_count = probe_temporal_volume_model(
+                probe_psnr, probe_count, probe_details = probe_temporal_volume_ensemble_model(
                     model=model,
                     volume=volume,
                     device=device,
                     batch_size=int(cfg["evaluation"]["batch_size"]),
                     probe=probe_cfg,
+                    variance_weight=weight,
+                    epsilon=float(cfg["training"]["epsilon"]),
+                    topk_fractions=list(cfg["evaluation"]["topk_fractions"]),
                 )
+                progress = probe_progress(step, int(cfg["training"]["steps"]), probe_cfg)
                 probe_recorder.record(
-                    progress=probe_progress(step, int(cfg["training"]["steps"]), probe_cfg),
+                    progress=progress,
                     scope=str(cfg["data"]["target"]),
                     aggregate_psnr=probe_psnr,
                     sample_count=probe_count,
                     elapsed_seconds=time.perf_counter() - probe_started,
+                    details=probe_details,
                 )
+                if (
+                    probe_cfg.retain_best_checkpoint
+                    and math.isfinite(float(probe_psnr))
+                    and float(probe_psnr) > best_probe_psnr
+                ):
+                    best_probe_psnr = float(probe_psnr)
+                    best_probe_progress = int(progress)
+                    best_probe_checkpoint = save_checkpoint(
+                        dirs["checkpoints"] / f"{cfg['exp_id']}_best_probe.pth",
+                        model=model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        step=step,
+                        cfg=cfg,
+                        config_hash=config_hash,
+                        frame_sampler=frame_sampler,
+                    )
+                    logger.info(
+                        "Best exploration checkpoint: progress=%d psnr=%.4f path=%s",
+                        best_probe_progress,
+                        best_probe_psnr,
+                        best_probe_checkpoint,
+                    )
                 model.train()
 
         checkpoint_path = save_checkpoint(
@@ -490,6 +535,19 @@ def run_train(
             "raw_target_bytes": int(volume.raw_bytes),
             "cr": float(volume.raw_bytes) / max(int(artifact_payload["artifact_bytes"]), 1),
             "steps": int(cfg["training"]["steps"]),
+            "lr_schedule_steps": int(
+                cfg["training"].get("lr_schedule_steps", cfg["training"]["steps"])
+            ),
+            "lambda_schedule_steps": lambda_schedule_steps,
+            "final_lr": float(optimizer.param_groups[0]["lr"]),
+            "final_lambda": final_weight,
+            "best_probe_checkpoint_path": (
+                None if best_probe_checkpoint is None else str(best_probe_checkpoint)
+            ),
+            "best_probe_progress": best_probe_progress,
+            "best_probe_psnr": (
+                None if best_probe_progress is None else best_probe_psnr
+            ),
             "final_losses": final_losses,
             "elapsed_seconds": float(time.perf_counter() - started_at),
         }
