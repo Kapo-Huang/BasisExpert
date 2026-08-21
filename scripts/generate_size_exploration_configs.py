@@ -9,7 +9,6 @@ from generate_config_matrix import (
     REPO_ROOT_TOKEN,
     apmg_payload,
     common_training,
-    dc_payload,
     dump,
     evaluation,
     fv_payload,
@@ -164,8 +163,8 @@ def generate_neural_expert() -> int:
                 model["decoder_n_hidden_layers"] = values["depth"]
                 model["manager_n_hidden_layers"] = values["depth"]
                 model["manager_pt_path"] = manager_path
-                payload["TRAINING"]["num_epochs"] = 2_500 if pretrain else 75_000
-                payload["TRAINING"]["log_every"] = 100 if pretrain else 7_500
+                payload["TRAINING"]["num_epochs"] = 2_500 if pretrain else 60_000
+                payload["TRAINING"]["log_every"] = 100 if pretrain else 6_000
                 payload["TRAINING"]["save_every"] = payload["TRAINING"]["num_epochs"]
                 payload = _tag(payload, "NeuralExpert", profile, target)
                 if pretrain:
@@ -186,20 +185,6 @@ def generate_apmgsrn() -> int:
             payload["TRAINING"].update({"iterations": 750, "log_every": 75, "save_every": 750})
             payload = _tag(payload, "APMGSRN", profile, target)
             dump(EXPLORATION_CONFIGS / "APMGSRN" / SIZE_NAME / profile / f"ionization__{target}.yaml", payload)
-            count += 1
-    return count
-
-
-def generate_dc_inr() -> int:
-    count = 0
-    for maximum in (512, 1024, 2048):
-        profile = f"max{maximum}"
-        for target in TARGETS:
-            payload = dc_payload(target, True, SIZE_NAME)
-            payload["compression"]["max_initial_neurons"] = maximum
-            payload["training"].update({"total_steps": 75_000, "log_every": 7_500})
-            payload = _tag(payload, "DC-INR", profile, target)
-            dump(EXPLORATION_CONFIGS / "DC-INR" / SIZE_NAME / profile / f"ionization__{target}.yaml", payload)
             count += 1
     return count
 
@@ -230,13 +215,12 @@ def main() -> None:
         "mc_inr": generate_mc_inr(),
         "neural_expert": generate_neural_expert(),
         "apmgsrn": generate_apmgsrn(),
-        "dc_inr": generate_dc_inr(),
         "fv_srn": _generate_temporal("fV-SRN", fv_payload, FV_PROFILES),
         "rmdsrn": _generate_temporal("RMDSRN", rm_payload, RM_PROFILES),
     }
     total = sum(counts.values())
-    if total != 141:
-        raise RuntimeError(f"Expected 141 exploration configs, generated {total}: {counts}")
+    if total != 126:
+        raise RuntimeError(f"Expected 126 exploration configs, generated {total}: {counts}")
     print(f"Generated {total} exploration configs: {counts}")
 
 

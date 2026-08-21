@@ -65,13 +65,13 @@ TRAINING:
   lr: 3.0e-05
   lr_gamma: 0.9999
   lr_scheduler: ExponentialLR
-  num_epochs: 75000
+  num_epochs: 60000
   batch_size: 1
   num_workers: 0
   grad_clip_norm: 10.0
-  save_every: 75000
+  save_every: 60000
   segmentation_mode: false
-  log_every: 7500
+  log_every: 6000
   stages:
   - end_iteration_frac: 1.0
     params: all

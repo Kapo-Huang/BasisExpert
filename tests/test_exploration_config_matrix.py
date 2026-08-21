@@ -8,7 +8,6 @@ from var_expert_inr.apmgsrn.model import APMGSRN
 from var_expert_inr.apmgsrn.config import load_config as load_apmg_config
 from var_expert_inr.config import load_experiment_config
 from var_expert_inr.config.schema import ModelConfig
-from var_expert_inr.dc_inr.config import load_config as load_dc_config
 from var_expert_inr.data.base import DatasetMeta
 from var_expert_inr.fv_srn.model import TemporalFVSRN
 from var_expert_inr.fv_srn.config import load_config as load_fv_config
@@ -35,7 +34,7 @@ class ExplorationConfigMatrixTestCase(unittest.TestCase):
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_count_root_and_probe(self):
-        self.assertEqual(len(self.paths), 141)
+        self.assertEqual(len(self.paths), 126)
         for path in self.paths:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             self.assertEqual(payload["experiment_root"], "${REPO_ROOT}/runs/exploration", path)
@@ -61,7 +60,6 @@ class ExplorationConfigMatrixTestCase(unittest.TestCase):
             "MC-INR": {"depth3_4", "depth5_6", "depth7_8"},
             "NeuralExpert": {"depth1", "depth2", "depth3"},
             "APMGSRN": {"grid_heavy", "balanced", "decoder_heavy"},
-            "DC-INR": {"max512", "max1024", "max2048"},
             "fV-SRN": {"grid_heavy", "balanced", "decoder_heavy"},
             "RMDSRN": {"grid_heavy", "balanced", "decoder_heavy"},
         }
@@ -82,7 +80,6 @@ class ExplorationConfigMatrixTestCase(unittest.TestCase):
             "MC-INR": load_mc_config,
             "NeuralExpert": load_neural_config,
             "APMGSRN": load_apmg_config,
-            "DC-INR": load_dc_config,
             "fV-SRN": load_fv_config,
             "RMDSRN": load_rm_config,
         }
@@ -105,6 +102,14 @@ class ExplorationConfigMatrixTestCase(unittest.TestCase):
             self.assertTrue(manager_path.exists(), main_path)
             main = yaml.safe_load(main_path.read_text(encoding="utf-8"))
             manager = yaml.safe_load(manager_path.read_text(encoding="utf-8"))
+            self.assertEqual(main["TRAINING"]["n_points"], 16000, main_path)
+            self.assertEqual(main["TRAINING"]["num_epochs"], 60000, main_path)
+            self.assertEqual(main["TRAINING"]["log_every"], 6000, main_path)
+            self.assertEqual(main["TRAINING"]["save_every"], 60000, main_path)
+            self.assertEqual(manager["TRAINING"]["n_points"], 16000, manager_path)
+            self.assertEqual(manager["TRAINING"]["num_epochs"], 2500, manager_path)
+            self.assertEqual(manager["TRAINING"]["log_every"], 100, manager_path)
+            self.assertEqual(manager["TRAINING"]["save_every"], 2500, manager_path)
             self.assertEqual(main["MODEL"]["manager_pt_path"], manager["MODEL"]["manager_pt_path"])
             manager_paths.add(main["MODEL"]["manager_pt_path"])
         self.assertEqual(len(manager_paths), 15)
@@ -125,10 +130,6 @@ class ExplorationConfigMatrixTestCase(unittest.TestCase):
                 self.assertEqual(len(set(profile_models)), 3)
                 for actual in profile_sizes:
                     self.assertLessEqual(abs(actual - target) / target, 0.05)
-
-        for config_path in (self.root / "DC-INR" / "Size163").rglob("*.yaml"):
-            payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            self.assertAlmostEqual(payload["compression"]["target_size_mib"], SINGLE_TARGET_MIB, places=9)
 
     def _build(self, family, payload):
         if family in {"SIREN", "CoordNet", "MoE-INR", "VarExpert"}:

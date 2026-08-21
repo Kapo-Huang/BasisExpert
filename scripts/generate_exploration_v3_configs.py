@@ -17,7 +17,7 @@ FORMAL_CONFIG_ROOT = ROOT / "configs"
 CONFIG_LIST = ROOT / "scripts" / "run_rd_curve_configs.list"
 CONFIG_ROOT = ROOT / "configs_exploration_v3"
 RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v3"
-EXPECTED_TOTAL = 235
+EXPECTED_TOTAL = 210
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,
@@ -95,17 +95,13 @@ def _quick_neural_expert(payload: dict, *, size: str, manager_pretrain: bool) ->
     )
     payload["MODEL"]["manager_pt_path"] = manager_path
     training = payload["TRAINING"]
-    training["num_epochs"] = 2_500 if manager_pretrain else 75_000
-    training["log_every"] = 100 if manager_pretrain else 7_500
+    training["num_epochs"] = 2_500 if manager_pretrain else 60_000
+    training["log_every"] = 100 if manager_pretrain else 6_000
     training["save_every"] = training["num_epochs"]
 
 
 def _quick_apmgsrn(payload: dict) -> None:
     payload["TRAINING"].update({"iterations": 750, "log_every": 75, "save_every": 750})
-
-
-def _quick_dc_inr(payload: dict) -> None:
-    payload["training"].update({"total_steps": 75_000, "log_every": 7_500})
 
 
 def _quick_fv_srn(payload: dict) -> None:
@@ -132,8 +128,6 @@ def quick_payload(formal_path: Path) -> dict:
         )
     elif family == "APMGSRN":
         _quick_apmgsrn(payload)
-    elif family == "DC-INR":
-        _quick_dc_inr(payload)
     elif family == "fV-SRN":
         _quick_fv_srn(payload)
     elif family == "RMDSRN":

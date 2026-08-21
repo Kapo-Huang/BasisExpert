@@ -1,4 +1,5 @@
 ﻿import csv
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -391,10 +392,18 @@ class TrainingPipelineTestCase(unittest.TestCase):
                 "timing": {
                     "enabled": False,
                 },
+                "memory": {
+                    "enabled": True,
+                    "sample_interval_seconds": 0.001,
+                },
             },
         }
         config_path = self._write_yaml(self.root / "budgeted_pretrain.yaml", config)
-        run_train(config_path)
+        result = run_train(config_path)
+
+        memory_payload = json.loads(Path(result["training_memory_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(memory_payload["measured_data_steps"], 4)
+        self.assertEqual(memory_payload["measured_optimizer_steps"], 4)
 
         log_text = self._read_log_text("budgeted-pretrain")
         self.assertIn("Pretrain start: epochs=1 batch_size=2", log_text)

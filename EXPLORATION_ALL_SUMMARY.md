@@ -4,13 +4,13 @@
 
 ## 1. 汇总范围与判定口径
 
-本报告覆盖 `exploration`、`explorationv2`、`explorationv3`、`explorationv4` 共 525 项配置。逐项配置、实验目的、PSNR 轨迹、首/峰/末探针、训练状态、异常原因和数据来源见 `EXPLORATION_ALL_RESULTS.csv`。
+本报告覆盖 `exploration`、`explorationv2`、`explorationv3`、`explorationv4` 共 470 项配置。逐项配置、实验目的、PSNR 轨迹、首/峰/末探针、训练状态、异常原因和数据来源见 `EXPLORATION_ALL_RESULTS.csv`。
 
 | 版本 | 配置数 | 重建项 | 管理器预训练项 | 成功 | 失败 | 重建项需关注 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| exploration | 141 | 126 | 15 | 135 | 6 | 36 |
-| explorationv2 | 68 | 53 | 15 | 68 | 0 | 8 |
-| explorationv3 | 235 | 210 | 25 | 235 | 0 | 62 |
+| exploration | 126 | 111 | 15 | 123 | 3 | 33 |
+| explorationv2 | 53 | 38 | 15 | 53 | 0 | 6 |
+| explorationv3 | 210 | 185 | 25 | 210 | 0 | 57 |
 | explorationv4 | 81 | 81 | 0 | 81 | 0 | 45 |
 
 统一的“需关注”判定为：最终 PSNR 比峰值回落超过 1 dB，或最终 PSNR 相对首个探针提升不足 0.1 dB；训练失败或探针缺失也计入需关注。v3 直接采用官方汇总的严格校验结果；v1/v2 是按同一阈值回溯计算；v4 因尚未生成汇总 TSV，依据 81 份完整日志重建。
@@ -23,7 +23,7 @@ NeuralExpert 的 manager-pretraining 配置不产生重建 PSNR，因此不计�
 
 ### 实验目的
 
-第一轮在 Size163 预算和统一 50 epoch-equivalent 探针下，系统检查网络深度、专家数、网格/解码器预算分配、DC-INR 初始神经元上限等结构变量。主要目标不是产生正式 RD 曲线，而是快速找出每个方法族的可用结构与明显故障。
+第一轮在 Size163 预算和统一 50 epoch-equivalent 探针下，系统检查网络深度、专家数和网格/解码器预算分配等结构变量。主要目标不是产生正式 RD 曲线，而是快速找出每个方法族的可用结构与明显故障。
 
 ### 各实验组结果
 
@@ -36,7 +36,6 @@ NeuralExpert 的 manager-pretraining 配置不产生重建 PSNR，因此不计�
 | MC-INR | depth3_4 / depth5_6 / depth7_8 | 无 | — | 三项全部失败，无法判断结构优劣；随后在 v2 修复目标布局后重跑。 |
 | NeuralExpert | depth1 / depth2 / depth3 | depth1 | 37.898 | 三种深度都稳定；depth1 最高，继续加深没有收益。15 个 manager-pretraining 均成功。 |
 | APMGSRN | decoder-heavy / balanced / grid-heavy | balanced | 27.156 | balanced 最好，grid-heavy 次之（25.815），decoder-heavy 最低（23.998）。 |
-| DC-INR | max initial neurons 512 / 1024 / 2048 | 并列 | -0.247 | 三组四个成功目标的结果完全相同，说明上限未实际约束分区；三组 H2 均失败。 |
 | fV-SRN | decoder-heavy / balanced / grid-heavy | grid-heavy | 27.295 | grid-heavy 明显最好且稳定；balanced 5/5 需关注，decoder-heavy 2/5 需关注。 |
 | RMDSRN | decoder-heavy / balanced / grid-heavy | balanced | 28.256 | balanced 均值最高，但 4/5 需关注；另外两组 5/5 需关注，暴露出训练/调度稳定性问题。 |
 
@@ -44,27 +43,26 @@ NeuralExpert 的 manager-pretraining 配置不产生重建 PSNR，因此不计�
 
 - 较浅或较平衡的结构普遍更可靠：CoordNet res5、NeuralExpert depth1、SIREN depth3 分别胜出。
 - VarExpert experts8/top-3 是本轮最好的多变量配置，最终 aggregate PSNR 为 43.936 dB。
-- MC-INR 的三项失败和 DC-INR 的 H2 失败属于实现/分区问题，而不是可靠的模型能力结论。
+- MC-INR 的三项失败属于实现问题，而不是可靠的模型能力结论。
 - RMDSRN 和 fV-SRN 对训练过程更敏感，只看最终 PSNR 会掩盖中途峰值回落。
 
 ## 3. explorationv2：修复验证与定向超参数搜索
 
 ### 实验目的
 
-v2 保留 v1，不覆盖旧结果，并围绕四个问题开展复验：修复 MC-INR 目标布局；用 DBSCAN eps 替代无约束的 DC-INR 神经元上限扫描；把 NeuralExpert 提高到 Size326；围绕 v1 的 VarExpert experts8/top-3 对照扫描 9/10 专家和全部 top-k。
+v2 保留 v1，不覆盖旧结果，并围绕三个问题开展复验：修复 MC-INR 目标布局；把 NeuralExpert 提高到 Size326；围绕 v1 的 VarExpert experts8/top-3 对照扫描 9/10 专家和全部 top-k。
 
 ### 各实验组结果
 
 | 实验组 | 主要结果 | 结论 |
 | --- | --- | --- |
 | MC-INR 修复后重跑 | depth3_4=38.166、depth5_6=38.036、depth7_8=31.198 dB | 3/3 成功，证明 v1 的失败主要来自目标布局问题。depth3_4 最终值最高，但有回落标记；depth5_6 略低但更稳定，是更稳妥的候选。 |
-| DC-INR DBSCAN eps | eps0.01=14.224、eps0.05=20.264、eps0.10=22.041 dB | eps 增大显著改善平均结果，eps0.10 最佳；说明分区尺度是关键变量，而 `max_initial_neurons` 在 v1 中只是非约束安全上限。 |
 | NeuralExpert Size326 | depth1=39.483、depth2=38.908、depth3=39.265 dB | 15 个重建项和 15 个管理器项全部成功；depth1 再次最好，浅层结论跨预算保持一致。 |
 | VarExpert experts/top-k | 最佳 experts9_top4=44.329 dB；其次 experts9_top5=44.286、experts10_top7=44.261 | 相对 experts8_top3 对照（43.936），最佳提升约 0.392 dB。top-k 不是越大越好，且若干组合存在明显回落，单次 seed 的最优点应在正式实验中复验。 |
 
 ### v2 结论
 
-- v1 的两个阻塞问题得到解决：MC-INR 全部完成，DC-INR H2 也能完成。
+- v1 的 MC-INR 阻塞问题得到解决，全部配置均已完成。
 - VarExpert 的最佳点落在 9 专家/top-4，而不是最大专家数或最稠密路由；路由稀疏度比单纯增加专家更重要。
 - NeuralExpert 的浅层优势重复出现，说明 depth1 是后续 Size 矩阵的合理基线。
 
@@ -72,7 +70,7 @@ v2 保留 v1，不覆盖旧结果，并围绕四个问题开展复验：修复 M
 
 ### 实验目的
 
-v3 将正式 RD-curve 清单中的 235 个配置原样复制到隔离目录，只把训练长度统一缩短到 50 epoch-equivalent，并每 5 个等效 epoch 做固定样本探针。目标是覆盖五个 Size 档位和十个方法族，检查正式配置是否能训练、是否随容量改善，以及是否发生塌陷。
+v3 将正式 RD-curve 清单中的 210 个配置原样复制到隔离目录，只把训练长度统一缩短到 50 epoch-equivalent，并每 5 个等效 epoch 做固定样本探针。目标是覆盖五个 Size 档位和九个方法族，检查正式配置是否能训练、是否随容量改善，以及是否发生塌陷。
 
 ### 方法族结果
 
@@ -82,7 +80,6 @@ v3 将正式 RD-curve 清单中的 235 个配置原样复制到隔离目录，�
 | --- | --- | --- | --- |
 | APMGSRN | 25.253(0/5), 27.587(0/5), 29.083(0/5), 29.290(0/5), 29.211(0/5) | Size652 | 稳定扩展到 Size652，Size1304 已基本饱和。 |
 | CoordNet | 36.447(1/5), 35.787(4/5), 29.203(4/5), 20.780(5/5), 15.436(5/5) | Size082 | 容量越大反而越差，Size652/1304 全面塌陷，是 v3 最明确的系统性故障。 |
-| DC-INR | 21.715(1/5), 22.174(1/5), 22.390(0/5), 23.005(2/5), 23.523(1/5) | Size1304 | 随容量缓慢改善，但收益有限且部分目标仍缺乏增益。 |
 | fV-SRN | 27.656(1/5), 27.395(1/5), 28.660(2/5), 28.732(2/5), 30.338(2/5) | Size1304 | 总体随容量改善，但轨迹噪声和峰值回落较多。 |
 | MC-INR | 38.648(0/1), 38.166(1/1), 39.918(0/1), 39.587(0/1), 38.612(0/1) | Size326 | Size326 最佳，继续增大没有收益；仅 Size163 被标记回落。 |
 | MoE-INR | 35.983(0/5), 36.862(1/5), 37.119(1/5), 38.229(0/5), 37.249(1/5) | Size652 | 到 Size652 基本正向扩展，Size1304 略回落。 |
@@ -91,7 +88,7 @@ v3 将正式 RD-curve 清单中的 235 个配置原样复制到隔离目录，�
 | SIREN | 36.799(0/5), 37.829(0/5), 38.340(0/5), 38.553(0/5), 35.352(2/5) | Size652 | 到 Size652 稳定提升，Size1304 出现退化和两项塌陷。 |
 | VarExpert | 41.385(0/1), 42.833(0/1), 43.119(0/1), 42.793(0/1), 42.450(0/1) | Size326 | Size326 达峰，后续容量没有转化为 50-epoch 短程收益，但五档均通过稳定性检查。 |
 
-v3 的 62 个重建异常项中，33 项同时满足“峰值回落”和“无有效增益”，16 项仅峰值回落，13 项仅无有效增益。按方法族计：RMDSRN 24、CoordNet 19、fV-SRN 8、DC-INR 5、MoE-INR 3、SIREN 2、MC-INR 1；APMGSRN、NeuralExpert、VarExpert 为 0。
+v3 的 57 个重建异常项中，33 项同时满足“峰值回落”和“无有效增益”，16 项仅峰值回落，8 项仅无有效增益。按方法族计：RMDSRN 24、CoordNet 19、fV-SRN 8、MoE-INR 3、SIREN 2、MC-INR 1；APMGSRN、NeuralExpert、VarExpert 为 0。
 
 ### v3 结论
 

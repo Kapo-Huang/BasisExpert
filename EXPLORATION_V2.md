@@ -18,14 +18,12 @@ multi-variable method receives the full number.
 | Size163 | 1.630 MiB | 0.326 MiB |
 | Size326 | 3.260 MiB | 0.652 MiB |
 
-The v2 matrix uses NeuralExpert at Size326, MC-INR and VarExpert at the
-Size163 multi-variable budget, and DC-INR at the Size163 per-variable budget.
+The v2 matrix uses NeuralExpert at Size326 and MC-INR and VarExpert at the
+Size163 multi-variable budget.
 
 ## Matrix
 
 - MC-INR: the three original depth profiles, re-run after the target-layout fix.
-- DC-INR: normalized block RMSE with DBSCAN eps 0.01, 0.05, and 0.10 for all
-  five variables. `max_initial_neurons` remains only a non-binding safety cap.
 - NeuralExpert: Size326 depth 1, 2, and 3 for all five variables, including
   one-to-one manager pretraining configs.
 - VarExpert: experts8/top3 as a control; experts9 with top-1 through top-9;
@@ -38,7 +36,7 @@ python scripts/generate_exploration_v2_configs.py
 MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v2.sh
 ```
 
-The runner executes NeuralExpert managers first, then fixed MC-INR/DC-INR,
+The runner executes NeuralExpert managers first, then fixed MC-INR,
 then the expert-count control, the top-k sweep, and finally NeuralExpert main
 training. Successful configs are skipped when the same batch log directory is
 resumed.

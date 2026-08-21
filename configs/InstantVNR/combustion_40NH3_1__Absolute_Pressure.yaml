@@ -1,0 +1,64 @@
+experiment: combustion_40NH3_1_instant_vnr_Absolute_Pressure
+exp_id: instant-vnr-combustion_40NH3_1-Absolute_Pressure
+experiment_root: ${REPO_ROOT}/runs
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
+model:
+  name: instant_vnr
+  in_features: 4
+  out_features: 1
+  n_levels: 8
+  n_features_per_level: 8
+  base_resolution: 16
+  per_level_scale: 2.0
+  log2_hashmap_size: 19
+  hidden_features: 64
+  hidden_layers: 4
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 0.005
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 600
+  early_stop_patience: 0
+  loss_type: l1
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    interval: optimizer_step
+    step_size: 1000
+    decay_start: 2000
+    gamma: 0.99
+  gradient_accumulation_steps: 4
+  beta_1: 0.9
+  beta_2: 0.999
+  epsilon: 1.0e-15
+  weight_decay: 1.0e-06
+  pretrain:
+    enabled: false
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

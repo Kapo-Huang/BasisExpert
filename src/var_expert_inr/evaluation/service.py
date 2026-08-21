@@ -14,8 +14,6 @@ import yaml
 from ..config.io import load_experiment_config
 from ..data.base import DatasetMeta, FieldBatch, FieldDataset, normalize_index_coordinates
 from ..models import build_model
-from ..models.common import ModelAdapter
-from ..models.sota.compact_ngp import load_compact_ngp_artifact
 from ..training.engine import _predict_batch
 from ..utils.checkpoint import read_checkpoint_payload, validate_checkpoint_target_order
 from .ground_truth import portable_data_path, target_paths_from_config, validate_ground_truth_paths
@@ -238,23 +236,19 @@ def _indices(indexer: slice | np.ndarray) -> np.ndarray:
 
 def _resolve_standard_source(request: EvaluationRequest, config) -> tuple[str, Path]:
     if request.artifact is not None:
-        return "artifact", request.artifact.resolve()
+        raise ValueError("Unified models do not support artifact sources; use checkpoint or prediction")
     if request.checkpoint is not None:
         return "checkpoint", request.checkpoint.resolve()
     if request.prediction is not None:
         return "prediction", request.prediction.resolve()
     requested = str(request.source).lower()
-    artifact_dir = request.run_dir / "artifacts"
     checkpoint_dir = request.run_dir / "checkpoints"
     prediction_dir = request.run_dir / "predictions"
-    artifacts = sorted(path for path in artifact_dir.glob("*") if path.is_file()) if artifact_dir.exists() else []
     checkpoints = sorted(checkpoint_dir.glob("*.pth")) if checkpoint_dir.exists() else []
     canonical = checkpoint_dir / f"{config.exp_id}.pth"
     predictions = sorted(prediction_dir.glob("*.npy")) if prediction_dir.exists() else []
-    if requested in {"auto", "artifact"} and artifacts:
-        return "artifact", artifacts[-1]
     if requested == "artifact":
-        raise FileNotFoundError(f"No artifact found under {artifact_dir}")
+        raise ValueError("Unified models do not support artifact sources; use checkpoint or prediction")
     if requested in {"auto", "checkpoint"} and canonical.is_file():
         return "checkpoint", canonical
     if requested in {"auto", "checkpoint"} and checkpoints:
@@ -286,18 +280,7 @@ def _load_prediction_arrays(
     return result
 
 
-def _load_standard_model(config, dataset, device: torch.device, kind: str, source: Path):
-    if kind == "artifact":
-        if config.model.name.strip().lower().replace("-", "_") != "compact_ngp":
-            raise ValueError(
-                f"Run-based compact artifact loading is not supported for model {config.model.name!r}; "
-                "use its standalone evaluate entrypoint or --source prediction"
-            )
-        model, payload = load_compact_ngp_artifact(source, device=device)
-        if payload.get("target_names_order"):
-            dataset.align_target_order(tuple(payload["target_names_order"]))
-        validate_checkpoint_target_order(payload, dataset.target_names())
-        return ModelAdapter(model)
+def _load_standard_model(config, dataset, device: torch.device, source: Path):
     payload = read_checkpoint_payload(source)
     if payload.get("target_names_order"):
         dataset.align_target_order(tuple(payload["target_names_order"]))
@@ -473,7 +456,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
             model = None
         else:
             source_arrays = None
-            model = _load_standard_model(config, dataset, device, kind, source_path)
+            model = _load_standard_model(config, dataset, device, source_path)
         synchronize_cuda(device)
         load_seconds = float(time.perf_counter() - started)
     memory_samples.append(load_measurement.as_dict())

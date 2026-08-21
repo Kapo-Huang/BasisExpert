@@ -42,7 +42,7 @@ def identify_subsystem(raw: dict[str, Any]) -> str | None:
         if "neural" in name or "inr_moe" in name:
             return "neural_expert"
     name = str((raw.get("model") or {}).get("name", "")).lower().replace("-", "_")
-    return name if name in {"mc_inr", "dc_inr", "fv_srn", "rmdsrn", "ecnr"} else None
+    return name if name in {"mc_inr", "fv_srn", "rmdsrn", "ecnr"} else None
 
 
 def _resolve_path(value: str | Path, *, repo_root: Path, config_path: Path) -> Path:
@@ -212,13 +212,13 @@ def _decode_neural_expert_frames(
     data = dict(raw.get("DATA") or {})
     dataset_name = str(data.get("dataset_name", "")).strip().lower()
     model_name = str((raw.get("MODEL") or {}).get("model_name", ""))
-    if dataset_name == "ionization":
+    if dataset_name in {"ionization", "combustion_40nh3_1"}:
         if model_name == "inr_moe_ionization":
             from ..neural_expert.ionization.inr_moe import INR_MoE as ModelClass
         elif model_name == "inr_ionization":
             from ..neural_expert.ionization.inr import INR as ModelClass
         else:
-            raise ValueError(f"Unsupported NeuralExpert ionization model: {model_name!r}")
+            raise ValueError(f"Unsupported NeuralExpert volume model: {model_name!r}")
     else:
         if model_name == "inr_moe_mesh":
             from ..neural_expert.mesh.inr_moe import INR_MoE as ModelClass
@@ -281,9 +281,6 @@ def _invoke_predict(subsystem: str, config_path: Path, source_kind: str, source_
     if subsystem == "mc_inr":
         from ..mc_inr.runner import run_predict
         return run_predict(config_path, checkpoint_path=source_path if source_kind == "checkpoint" else None)
-    if subsystem == "dc_inr":
-        from ..dc_inr.runner import run_predict
-        return run_predict(config_path, checkpoint_path=source_path if source_kind == "checkpoint" else None, target=target)
     if subsystem == "fv_srn":
         from ..fv_srn.runner import run_predict
         return run_predict(config_path, target=target, artifact=source_path if source_kind == "artifact" else None, checkpoint=source_path if source_kind == "checkpoint" else None)

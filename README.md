@@ -13,14 +13,12 @@ From the repository root:
 ```bash
 python -m var_expert_inr.cli train --config configs/VarExpert/ionization.yaml
 python -m var_expert_inr.cli train --config configs/SIREN/ionization__GT.yaml
-python -m var_expert_inr.cli train --config configs/CompactNGP/ionization__GT.yaml
 python -m var_expert_inr.cli train --config configs/InstantNGP/ionization__GT.yaml
+python -m var_expert_inr.cli train --config configs/InstantVNR/ionization__GT.yaml
 python -m var_expert_inr.cli train --config configs/MVNet/ionization.yaml
-python -m var_expert_inr.cli train --config configs/FA-TR-INR/ionization__GT.yaml
 python -m var_expert_inr.mc_inr.cli train --config configs/MC-INR/ionization.yaml
 python -m var_expert_inr.neural_expert.cli train --config configs/NeuralExpert/ionization__GT__managerpretrain.yaml
 python -m var_expert_inr.neural_expert.cli train --config configs/NeuralExpert/ionization__GT.yaml
-python -m var_expert_inr.dc_inr.cli train --config configs/DC-INR/ionization__GT.yaml
 python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization__GT.yaml
 python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization__GT.yaml
 python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization__GT.yaml
@@ -85,22 +83,23 @@ python -m var_expert_inr.apmgsrn.cli evaluate --run runs/<run> --timesteps 0:10
 python -m var_expert_inr.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
 ```
 
-The checked-in formal experiment matrix contains 517 configs. Every model family
+The checked-in formal experiment matrix contains 458 configs. Every model family
 has a main Combustion (`40NH3_1`) experiment. SIREN, CoordNet, and MoE-INR cover
 all 13 exported fields, including the three-component `Velocity` target. Models
 whose published implementation requires scalar outputs cover the other 12 fields;
 MVNet jointly models those 12 scalar fields, while MC-INR and VarExpert jointly
 model all 13 fields. Ionization additionally has `Size082`, `Size163`, `Size326`,
 `Size652`, and `Size1304` variants plus a VarExpert DWA loss-balancing config.
-All primary training stages except MVNet consume 14.4 billion samples with an
-effective batch size of 16,000. MVNet uses its method-specific 300 epochs,
+All primary training stages except MVNet and NeuralExpert consume 14.4 billion physical samples. NeuralExpert uses 960 million sampled points (60,000 optimizer steps at 16,000 points per step).
+InstantVNR accumulates four 16,000-sample batches into an approximately
+paper-sized 64,000-sample optimizer update; other unified baselines retain their
+configured update batches. MVNet uses its method-specific 300 epochs,
 2,048-sample batches, and 1,500 random batches per epoch (921.6 million
 samples). Model-size tiers use all parameters at two bytes per parameter
 (theoretical FP16 size). The Ionization tier is a total five-variable budget:
 single-target models receive one fifth of `0.82/1.63/3.26/6.52/13.04 MiB`,
 while VarExpert and MC-INR receive the full tier. APMGSRN counts all 100
-timestep models toward that one-variable share; DC-INR receives the already
-divided target through `compression.target_size_mib`.
+timestep models toward that one-variable share.
 
 The default selection file, `scripts/run_all_configs.list`, contains the full
 formal matrix. Comment out or delete paths in that file to select a subset; no
@@ -122,10 +121,10 @@ CONFIG_LIST_FILE=scripts/my_configs.list bash scripts/run_all_configs.sh
 Two ready-made subsets are also provided:
 
 ```bash
-# Main experiments only: 282 configs without Size tiers
+# Main experiments only: 248 configs without Size tiers
 CONFIG_LIST_FILE=scripts/run_main_configs.list bash scripts/run_all_configs.sh
 
-# RD-Curve experiments only: 235 Size-tier configs
+# RD-Curve experiments only: 210 Size-tier configs
 CONFIG_LIST_FILE=scripts/run_rd_curve_configs.list bash scripts/run_all_configs.sh
 ```
 
@@ -144,6 +143,20 @@ beginning without a checkpoint. Every retry gets an `attempt-N.log`, and a
 only on the config path: an old `ok` row still skips that path even if the YAML
 contents have since changed.
 
+The combined SIREN + NeuralExpert non-Ionization entrypoint runs the 13 SIREN
+Combustion targets, then the 16 NeuralExpert manager pretrains and their 16
+Bathymetry/Combustion main runs. It defaults to five parallel training jobs;
+NeuralExpert full-dataset PSNR evaluations run serially afterward. SIREN keeps
+its final deterministic 10% PSNR probe. Results are collected in
+`experiment_psnr.tsv` beneath the batch log directory.
+
+```bash
+bash scripts/run_neural_expert_non_ionization_main.sh
+DRY_RUN=1 bash scripts/run_neural_expert_non_ionization_main.sh
+BATCH_LOG_ROOT=batch_logs/<existing-batch> bash scripts/run_neural_expert_non_ionization_main.sh
+MAX_PARALLEL_JOBS=5 CONDA_ENV=compression bash scripts/run_neural_expert_non_ionization_main.sh
+```
+
 Size-structure exploration is generated and run independently of the formal
 matrix:
 
@@ -152,7 +165,7 @@ python scripts/generate_size_exploration_configs.py
 bash scripts/run_size_exploration.sh
 ```
 
-This creates 141 Size163 configs under `configs_exploration/`. Their 50
+This creates 126 Size163 configs under `configs_exploration/`. Their 50
 epoch-equivalent budgets and fixed 1% PSNR probes are isolated under
 `runs/exploration/<exp_id>/<timestamp>/`; batch logs go to
 `batch_logs/exploration/<timestamp>/`. Each run writes
@@ -166,22 +179,40 @@ When running without installation, this repository ships a small package shim so
 
 Each train run writes outputs into `runs/<exp_id>/<timestamp>/`, including
 `checkpoints/`, `configs/`, `logs/`, `metrics/`, and `predictions/`.
-CompactNGP runs additionally write a baked FP16/2-bit representation under
-`artifacts/`. Unified `predict` and `evaluate` accept it through `--artifact`;
-checkpoint inference bakes the learned confidence tables once before querying.
 InstantNGP is a pure PyTorch four-dimensional multiresolution hash grid. It
 consumes the framework's existing `[-1, 1]` XYZT coordinates, accumulates 16
 physical batches per optimizer update, and applies its learning-rate milestones
 per optimizer step.
+InstantVNR is a separate pure-PyTorch 4D extension of the
+[official InstantVNR](https://github.com/VIDILabs/instantvnr) neural
+representation. It uses the released eight-level, eight-feature HashGrid and
+four-layer ReLU MLP defaults, L1 loss, Adam, and delayed piecewise exponential
+decay while retaining this framework's XYZT and target scaling conventions. It
+is intended for neural-field compression comparisons; the original native CUDA
+renderer, macro-cell acceleration, out-of-core sampler, and interactive online
+training system are outside this reproduction's scope. See the
+[paper](https://arxiv.org/abs/2207.11620) for the complete rendering system.
 MVNet is a shared multi-output residual SIREN that consumes the existing
 `[-1, 1]` XYZT coordinates and predicts every scalar variable in the dataset in
 one forward pass. Its output-column order is stored in each checkpoint and
 reused by unified prediction and evaluation.
-FA-TR-INR runs use the unified checkpoint path without a separate inference
-artifact. The model contracts five independent sine-MLP factors in the fixed
-`x -> y -> f -> z -> t -> x` Tensor Ring order and directly consumes the
-framework's existing `[-1, 1]` coordinates and targets.
 The resolved effective config is saved as `runs/<exp_id>/<timestamp>/configs/config.yaml`.
+
+For unified-engine models, opt in to training-step peak memory measurement with:
+
+```yaml
+log:
+  memory:
+    enabled: true
+    sample_interval_seconds: 0.01
+```
+
+The run writes `metrics/training_memory.json` with main-process RSS and PyTorch
+peak CUDA allocated memory. Measurement covers data fetch, transfer, forward,
+backward, and optimizer work, including pretraining and gradient-accumulation
+microbatches. Validation, probes, checkpoints, and post-training prediction are
+excluded. The feature is disabled by default because isolating CUDA step peaks
+requires synchronization.
 
 ## RealPDEBench combustion tools
 
@@ -259,12 +290,6 @@ from the saved effective config and log output.
 It uses the same run directory layout and evaluation outputs as the unified
 framework, but it does not participate in the main `var_expert_inr.cli` model
 registry or training engine.
-
-`dc_inr` is also provided as a standalone subsystem under
-`var_expert_inr.dc_inr`. It performs block partition search, representative
-selection, entropy-guided tiny INR training, and decompression for single-target
-volume data, and it does not participate in the main `var_expert_inr.cli`
-model registry.
 
 `apmgsrn` is also provided as a standalone subsystem under
 `var_expert_inr.apmgsrn`. It currently only supports single-target `ionization`

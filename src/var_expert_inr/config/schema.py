@@ -111,6 +111,7 @@ class SchedulerConfig:
     gamma: float = 1.0
     interval: str = "epoch"
     milestones: tuple[int, ...] = ()
+    decay_start: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -126,6 +127,12 @@ class SchedulerConfig:
                 "scheduler.milestones must be strictly increasing"
             )
         object.__setattr__(self, "milestones", milestones)
+        if int(self.decay_start) < 0:
+            raise ValueError("scheduler.decay_start must be non-negative")
+        if milestones and int(self.decay_start) != 0:
+            raise ValueError(
+                "scheduler.decay_start cannot be combined with milestones"
+            )
         if self.enabled and not milestones and int(self.step_size) <= 0:
             raise ValueError(
                 "enabled scheduler requires positive step_size or milestones"
@@ -206,6 +213,16 @@ class TimingLogConfig:
 
 
 @dataclass(frozen=True)
+class MemoryLogConfig:
+    enabled: bool = False
+    sample_interval_seconds: float = 0.01
+
+    def __post_init__(self) -> None:
+        if float(self.sample_interval_seconds) <= 0.0:
+            raise ValueError("log.memory.sample_interval_seconds must be positive")
+
+
+@dataclass(frozen=True)
 class LogConfig:
     effective_config: bool = True
     model_stats: bool = True
@@ -213,6 +230,7 @@ class LogConfig:
     startup_timing: bool = True
     psnr: PSNRLogConfig = field(default_factory=PSNRLogConfig)
     timing: TimingLogConfig = field(default_factory=TimingLogConfig)
+    memory: MemoryLogConfig = field(default_factory=MemoryLogConfig)
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,6 @@ import yaml
 from scripts import generate_exploration_v3_configs as generator
 from var_expert_inr.apmgsrn.config import load_config as load_apmg_config
 from var_expert_inr.config import load_experiment_config
-from var_expert_inr.dc_inr.config import load_config as load_dc_config
 from var_expert_inr.fv_srn.config import load_config as load_fv_config
 from var_expert_inr.mc_inr.config import load_config as load_mc_config
 from var_expert_inr.neural_expert.config import load_config as load_neural_config
@@ -18,7 +17,6 @@ from var_expert_inr.rmdsrn.config import load_config as load_rm_config
 EXPECTED_COUNTS = {
     "APMGSRN": 25,
     "CoordNet": 25,
-    "DC-INR": 25,
     "fV-SRN": 25,
     "MC-INR": 5,
     "MoE-INR": 25,
@@ -80,15 +78,11 @@ class ExplorationV3ConfigMatrixTestCase(unittest.TestCase):
                 generated_model.pop("manager_pt_path")
                 formal_model.pop("manager_pt_path")
             self.assertEqual(generated_model, formal_model, path)
-            if family == "DC-INR":
-                self.assertEqual(generated["partition"], formal["partition"], path)
-                self.assertEqual(generated["compression"], formal["compression"], path)
 
     def test_every_config_loads_with_its_runner(self):
         loaders = {
             "APMGSRN": load_apmg_config,
             "MC-INR": load_mc_config,
-            "DC-INR": load_dc_config,
             "fV-SRN": load_fv_config,
             "NeuralExpert": load_neural_config,
             "RMDSRN": load_rm_config,
@@ -112,11 +106,14 @@ class ExplorationV3ConfigMatrixTestCase(unittest.TestCase):
                 self.assertEqual(payload["training"]["finetune_epochs"], 50, path)
             elif family == "NeuralExpert":
                 manager = path.stem.endswith("__managerpretrain")
-                self.assertEqual(payload["TRAINING"]["num_epochs"], 2_500 if manager else 75_000, path)
+                expected_steps = 2_500 if manager else 60_000
+                expected_log_every = 100 if manager else 6_000
+                self.assertEqual(payload["TRAINING"]["n_points"], 16_000, path)
+                self.assertEqual(payload["TRAINING"]["num_epochs"], expected_steps, path)
+                self.assertEqual(payload["TRAINING"]["log_every"], expected_log_every, path)
+                self.assertEqual(payload["TRAINING"]["save_every"], expected_steps, path)
             elif family == "APMGSRN":
                 self.assertEqual(payload["TRAINING"]["iterations"], 750, path)
-            elif family == "DC-INR":
-                self.assertEqual(payload["training"]["total_steps"], 75_000, path)
             elif family == "fV-SRN":
                 self.assertEqual(payload["training"]["epochs"], 50, path)
             elif family == "RMDSRN":

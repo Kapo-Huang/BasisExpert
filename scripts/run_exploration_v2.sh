@@ -16,7 +16,7 @@ FAILURE_FILE="${LOG_ROOT}/failed.txt"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-0}"
 GROUP_DELIM=$'\034'
-EXPECTED_TOTAL=68
+EXPECTED_TOTAL=53
 
 source "${SCRIPT_DIR}/lib/batch_runner.sh"
 batch_init_status
@@ -67,11 +67,8 @@ for profile in depth1 depth2 depth3; do
         "${CONFIG_ROOT}/NeuralExpert/Size326/${profile}/*.yaml"
 done
 
-# Re-run the previously blocked/faulty methods after the code fixes.
+# Re-run the previously blocked method after the code fix.
 collect_sorted "MC-INR:Size163:fixed" "${CONFIG_ROOT}/MC-INR/Size163/*/*.yaml"
-for profile in eps0p01 eps0p05 eps0p10; do
-    collect_sorted "DC-INR:Size163:${profile}" "${CONFIG_ROOT}/DC-INR/Size163/${profile}/*.yaml"
-done
 
 # Stage A compares the previous winner with experts9/10 under the same top-3 routing.
 collect_sorted "VarExpert:Size163:expert-count-control" \

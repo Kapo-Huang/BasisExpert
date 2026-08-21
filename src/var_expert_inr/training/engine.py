@@ -13,7 +13,6 @@ from torch.utils.data import DataLoader, Subset, random_split
 
 from ..config.schema import LogConfig
 from ..evaluation.metrics import PSNRAccumulator
-from ..models.sota.compact_ngp import CompactNGP, save_compact_ngp_artifact
 from ..models.sota.instant_ngp import (
     INSTANT_NGP_DECODER_L2_WEIGHT,
     InstantNGP,
@@ -21,6 +20,7 @@ from ..models.sota.instant_ngp import (
 from ..models.sota.mvnet import MVNet4D
 from ..pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ..utils.checkpoint import save_checkpoint
+from ..utils.memory import TrainingMemoryTracker, write_training_memory
 from ..utils.timing import TimingBreakdown, log_epoch_timing, log_step_timing_window, timing_elapsed, timing_start
 from .balancers import GradNormBalancer, MultiAttrDWALoss, MultiAttrEMALoss, apply_multitask_gradient
 from .losses import pointwise_loss, reconstruction_loss_with_breakdown
@@ -107,6 +107,21 @@ def build_training_scheduler(optimizer, scheduler_cfg):
             optimizer,
             milestones=list(scheduler_cfg.milestones),
             gamma=float(scheduler_cfg.gamma),
+        )
+    if int(scheduler_cfg.decay_start) > 0:
+        decay_start = int(scheduler_cfg.decay_start)
+        decay_interval = int(scheduler_cfg.step_size)
+        decay_base = float(scheduler_cfg.gamma)
+
+        def learning_rate_factor(step: int) -> float:
+            if int(step) < decay_start:
+                return 1.0
+            exponent = 1 + (int(step) - decay_start) // decay_interval
+            return decay_base**exponent
+
+        return torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=learning_rate_factor,
         )
     return torch.optim.lr_scheduler.StepLR(
         optimizer,
@@ -408,7 +423,14 @@ def _log_step_window_if_needed(
     return time.perf_counter(), steps_seen + 1
 
 
-def _run_pretrain(model, dataset, cfg, device, log_cfg: LogConfig):
+def _run_pretrain(
+    model,
+    dataset,
+    cfg,
+    device,
+    log_cfg: LogConfig,
+    memory_tracker: TrainingMemoryTracker | None = None,
+):
     if not cfg.pretrain.enabled or cfg.pretrain.epochs <= 0:
         return
     if dataset.meta.volume_shape is None:
@@ -479,10 +501,16 @@ def _run_pretrain(model, dataset, cfg, device, log_cfg: LogConfig):
         iterator = iter(pretrain_loader)
         batch_fetch_started_at = time.perf_counter()
         while True:
+            if memory_tracker is not None:
+                memory_tracker.start_data_step()
             try:
                 batch = next(iterator)
             except StopIteration:
+                if memory_tracker is not None:
+                    memory_tracker.cancel_data_step()
                 break
+            if memory_tracker is not None:
+                memory_tracker.confirm_data_step()
 
             data_seconds = 0.0
             if timing_enabled:
@@ -507,6 +535,8 @@ def _run_pretrain(model, dataset, cfg, device, log_cfg: LogConfig):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if memory_tracker is not None:
+                memory_tracker.record_optimizer_step()
 
             training_seconds = 0.0
             if timing_enabled:
@@ -520,6 +550,8 @@ def _run_pretrain(model, dataset, cfg, device, log_cfg: LogConfig):
             total += int(coords.shape[0])
             correct += int((torch.argmax(logits, dim=-1) == expert_ids).sum().item())
             steps_seen += 1
+            if memory_tracker is not None:
+                memory_tracker.finish_data_step()
 
             if step_window_enabled and steps_seen % step_window_every == 0:
                 log_started_at = time.perf_counter()
@@ -592,9 +624,74 @@ def train_model(
     prediction_dir: str | Path,
     exp_id: str,
     predict_after_training: bool = True,
-    artifact_dir: str | Path | None = None,
-    model_config: dict | None = None,
     exploration_probe=None,
+):
+    memory_tracker = None
+    memory_path = Path(checkpoint_dir).parent / "metrics" / "training_memory.json"
+    if log_cfg.memory.enabled:
+        memory_tracker = TrainingMemoryTracker(
+            device,
+            sample_interval_seconds=log_cfg.memory.sample_interval_seconds,
+        )
+    try:
+        result = _train_model_impl(
+            model=model,
+            dataset=dataset,
+            cfg=cfg,
+            log_cfg=log_cfg,
+            device=device,
+            checkpoint_dir=checkpoint_dir,
+            config_hash=config_hash,
+            prediction_dir=prediction_dir,
+            exp_id=exp_id,
+            predict_after_training=predict_after_training,
+            exploration_probe=exploration_probe,
+            memory_tracker=memory_tracker,
+        )
+    except BaseException as error:
+        if memory_tracker is not None:
+            try:
+                memory_payload = memory_tracker.close(
+                    status="failed",
+                    error_type=type(error).__name__,
+                )
+                write_training_memory(memory_path, memory_payload)
+            except Exception:
+                logger.exception("Failed to persist training memory after an error")
+        raise
+    if memory_tracker is not None:
+        memory_payload = memory_tracker.close(status="completed")
+        written_path = write_training_memory(memory_path, memory_payload)
+        result["training_memory"] = memory_payload
+        result["training_memory_path"] = written_path
+        mib = 1024.0 * 1024.0
+        logger.info(
+            "Training peak memory: cpu_rss=%.2f MiB cpu_delta=%.2f MiB cuda_allocated=%s",
+            float(memory_payload["cpu_rss_peak_bytes"] or 0) / mib,
+            float(memory_payload["cpu_rss_peak_delta_bytes"] or 0) / mib,
+            (
+                "n/a"
+                if memory_payload["cuda_peak_allocated_bytes"] is None
+                else f"{float(memory_payload['cuda_peak_allocated_bytes']) / mib:.2f} MiB"
+            ),
+        )
+    return result
+
+
+def _train_model_impl(
+    *,
+    model,
+    dataset,
+    cfg,
+    log_cfg: LogConfig,
+    device: torch.device,
+    checkpoint_dir: str | Path,
+    config_hash: str,
+    prediction_dir: str | Path,
+    exp_id: str,
+    predict_after_training: bool = True,
+    exploration_probe=None,
+    memory_tracker: TrainingMemoryTracker | None = None,
 ):
     backbone = getattr(model, "backbone", model)
     is_var_expert = type(backbone).__name__ == "VarExpert"
@@ -666,7 +763,14 @@ def train_model(
         )
 
     model = model.to(device)
-    _run_pretrain(model, dataset, cfg, device, log_cfg)
+    _run_pretrain(
+        model,
+        dataset,
+        cfg,
+        device,
+        log_cfg,
+        memory_tracker=memory_tracker,
+    )
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=float(cfg.lr),
@@ -779,10 +883,16 @@ def train_model(
         iterator = iter(train_loader)
         batch_fetch_started_at = time.perf_counter()
         while True:
+            if memory_tracker is not None:
+                memory_tracker.start_data_step()
             try:
                 batch = next(iterator)
             except StopIteration:
+                if memory_tracker is not None:
+                    memory_tracker.cancel_data_step()
                 break
+            if memory_tracker is not None:
+                memory_tracker.confirm_data_step()
 
             data_seconds = 0.0
             if timing_enabled:
@@ -908,6 +1018,8 @@ def train_model(
                     if grad_norm_value > float(cfg.grad_clip_norm):
                         epoch_clipped_steps += 1
                 optimizer.step()
+                if memory_tracker is not None:
+                    memory_tracker.record_optimizer_step()
                 global_optimizer_step += 1
                 epoch_optimizer_steps += 1
                 if (
@@ -936,6 +1048,8 @@ def train_model(
 
             epoch_loss += float(loss_to_log.detach().item())
             steps += 1
+            if memory_tracker is not None:
+                memory_tracker.finish_data_step()
 
             if step_window_enabled and steps % step_window_every == 0:
                 log_started_at = time.perf_counter()
@@ -1280,24 +1394,6 @@ def train_model(
         "global_optimizer_step": global_optimizer_step,
         "gradient_accumulation_count": accumulation_count,
     }
-    backbone = getattr(model, "backbone", model)
-    if isinstance(backbone, CompactNGP):
-        if artifact_dir is None or model_config is None:
-            raise ValueError("CompactNGP training requires artifact_dir and model_config")
-        artifact_result = save_compact_ngp_artifact(
-            Path(artifact_dir) / f"{exp_id}.pt",
-            model=model,
-            model_config=model_config,
-            dataset=dataset,
-            config_hash=config_hash,
-        )
-        result.update(artifact_result)
-        logger.info(
-            "CompactNGP artifact: path=%s payload=%s bytes file=%s bytes",
-            artifact_result["artifact_path"],
-            artifact_result["compact_payload_bytes"],
-            artifact_result["artifact_file_bytes"],
-        )
     if not bool(predict_after_training):
         logger.info("Skipping automatic prediction/evaluation after training.")
         return result

@@ -70,9 +70,7 @@ def select_run_adapter(raw: dict[str, Any]) -> RunAdapter:
 
 SUPPORTED_ADAPTERS = (
     "unified",
-    "compact_ngp",
     "mc_inr",
-    "dc_inr",
     "apmgsrn",
     "fv_srn",
     "rmdsrn",

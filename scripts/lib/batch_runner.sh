@@ -75,7 +75,6 @@ batch_module_for_config() {
         */MC-INR/*) echo "var_expert_inr.mc_inr.cli" ;;
         */NeuralExpert/*) echo "var_expert_inr.neural_expert.cli" ;;
         */APMGSRN/*) echo "var_expert_inr.apmgsrn.cli" ;;
-        */DC-INR/*) echo "var_expert_inr.dc_inr.cli" ;;
         */fV-SRN/*) echo "var_expert_inr.fv_srn.cli" ;;
         */RMDSRN/*) echo "var_expert_inr.rmdsrn.cli" ;;
         *) echo "var_expert_inr.cli" ;;

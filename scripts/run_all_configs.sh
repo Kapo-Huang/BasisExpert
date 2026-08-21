@@ -206,14 +206,12 @@ append_serial_main_family "MVNet"
 append_attribute_main_groups "SIREN" "all"
 append_attribute_main_groups "CoordNet" "all"
 append_attribute_main_groups "MoE-INR" "all"
-append_volume_main_group "CompactNGP"
 append_volume_main_group "InstantNGP"
-append_volume_main_group "FA-TR-INR"
+append_volume_main_group "InstantVNR"
 append_serial_main_family "MC-INR"
 append_attribute_main_groups "NeuralExpert" "manager"
 append_attribute_main_groups "NeuralExpert" "main"
 append_volume_main_group "APMGSRN"
-append_volume_main_group "DC-INR"
 append_volume_main_group "fV-SRN"
 append_volume_main_group "RMDSRN"
 append_volume_main_group "ECNR"
@@ -227,7 +225,6 @@ append_serial_size_family "MC-INR"
 append_attribute_size_groups "NeuralExpert" "manager"
 append_attribute_size_groups "NeuralExpert" "main"
 append_volume_size_groups "APMGSRN"
-append_volume_size_groups "DC-INR"
 append_volume_size_groups "fV-SRN"
 append_volume_size_groups "RMDSRN"
 
@@ -248,8 +245,8 @@ wait_for_all_pids() {
 }
 
 matrix_total="$(group_config_count)"
-if [[ "${matrix_total}" -ne 517 ]]; then
-    printf 'Expected 517 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
+if [[ "${matrix_total}" -ne 458 ]]; then
+    printf 'Expected 458 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
     exit 2
 fi
 load_config_selection || exit $?

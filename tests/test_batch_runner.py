@@ -10,6 +10,8 @@ HELPER = Path(__file__).resolve().parents[1] / "scripts" / "lib" / "batch_runner
 RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_all_configs.sh"
 MOE_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.sh"
 MOE_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.list"
+COMBINED_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.sh"
+COMBINED_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.list"
 V4_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v4.sh"
 
 
@@ -139,7 +141,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 2 of 517 configs", output)
+            self.assertIn("Selected 2 of 458 configs", output)
             main_position = output.index("configs/VarExpert/combustion_40NH3_1.yaml")
             size_position = output.index("configs/SIREN/Size082/ionization__GT.yaml")
             self.assertLess(main_position, size_position)
@@ -172,7 +174,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 22 of 517 configs", output)
+            self.assertIn("Selected 22 of 458 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 22)
             bathymetry = output.index("main:MoE-INR:bathymetry:all")
             combustion = output.index("main:MoE-INR:combustion_40NH3_1:all")
@@ -181,6 +183,169 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             self.assertLess(combustion, katrina)
             self.assertNotIn("main:MoE-INR:ionization", output)
             self.assertNotIn("size:MoE-INR", output)
+
+    def test_combined_runner_dry_run_selects_exact_scope_and_default_parallelism(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                }
+            )
+            environment.pop("MAX_PARALLEL_JOBS", None)
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+            completed = subprocess.run(
+                [bash, COMBINED_RUNNER.as_posix()],
+                cwd=COMBINED_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            output = completed.stdout
+
+            self.assertIn("SIREN + NeuralExpert non-Ionization matrix: 45 configs, max_parallel=5", output)
+            self.assertIn("Selected 45 of 458 configs", output)
+            self.assertEqual(output.count("DRY_RUN:"), 45)
+            siren = output.index("main:SIREN:combustion_40NH3_1:all")
+            bathymetry_manager = output.index("main:NeuralExpert:bathymetry:manager")
+            combustion_manager = output.index("main:NeuralExpert:combustion_40NH3_1:manager")
+            bathymetry_main = output.index("main:NeuralExpert:bathymetry:main")
+            combustion_main = output.index("main:NeuralExpert:combustion_40NH3_1:main")
+            self.assertLess(siren, bathymetry_manager)
+            self.assertLess(bathymetry_manager, combustion_manager)
+            self.assertLess(combustion_manager, bathymetry_main)
+            self.assertLess(bathymetry_main, combustion_main)
+            self.assertNotIn("main:NeuralExpert:katrina", output)
+            self.assertNotIn("main:NeuralExpert:ionization", output)
+            self.assertNotIn("size:NeuralExpert", output)
+
+    def test_combined_runner_validates_training_artifacts_and_psnr_results(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        selected = [
+            line.split("#", 1)[0].strip()
+            for line in COMBINED_LIST.read_text(encoding="utf-8").splitlines()
+            if line.split("#", 1)[0].strip()
+        ]
+        cases = (
+            ("ok", None, 0, "Validated SIREN=13/13"),
+            ("training_failure", "failed_status", 1, "INVALID status=failed"),
+            ("ok", "missing_siren_psnr", 1, "INVALID missing or non-finite final SIREN PSNR"),
+            ("ok", "missing_manager_export", 1, "INVALID missing manager checkpoint export"),
+            ("nonfinite", None, 1, "INVALID missing or malformed NeuralExpert PSNR result"),
+            ("failure", None, 1, "INVALID NeuralExpert PSNR evaluation failed"),
+        )
+
+        for evaluation_mode, corruption, expected_code, expected_message in cases:
+            with self.subTest(evaluation_mode=evaluation_mode, corruption=corruption), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                log_root = root / "batch"
+                logs = log_root / "logs"
+                fake_bin = root / "bin"
+                logs.mkdir(parents=True)
+                fake_bin.mkdir()
+                status_path = log_root / "status.tsv"
+                log_paths = {}
+                with status_path.open("w", encoding="utf-8", newline="\n") as handle:
+                    handle.write("config\tstatus\texit_code\tlog\n")
+                    for index, relative in enumerate(selected):
+                        log_path = logs / f"config-{index}.log"
+                        log_paths[relative] = log_path
+                        if relative.startswith("configs/SIREN/"):
+                            content = "PSNR epoch 600/600: aggregate=42.00 time=1.0s\n"
+                        elif relative.endswith("__managerpretrain.yaml"):
+                            content = "Exported manager pretrain checkpoint to /fake/manager.pth\n"
+                        else:
+                            content = "Saved final state dict to /fake/trained_models/model_final.pth\n"
+                        log_path.write_text(content, encoding="utf-8")
+                        status = "failed" if corruption == "failed_status" and index == 0 else "ok"
+                        exit_code = "7" if status == "failed" else "0"
+                        handle.write(f"{relative}\t{status}\t{exit_code}\t{log_path.as_posix()}\n")
+
+                if corruption == "missing_siren_psnr":
+                    relative = next(path for path in selected if path.startswith("configs/SIREN/"))
+                    log_paths[relative].write_text("training ended without PSNR\n", encoding="utf-8")
+                if corruption == "missing_manager_export":
+                    relative = next(path for path in selected if path.endswith("__managerpretrain.yaml"))
+                    log_paths[relative].write_text("manager training ended without export\n", encoding="utf-8")
+
+                fake_conda = fake_bin / "conda"
+                fake_conda.write_text(
+                    """#!/usr/bin/env bash
+mode="${FAKE_EVAL_MODE:-ok}"
+config=""
+is_train=0
+while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" == "train" ]]; then
+        is_train=1
+    fi
+    if [[ "$1" == "--config" ]]; then
+        shift
+        config="$1"
+    fi
+    shift
+done
+if [[ "${mode}" == "training_failure" && "${is_train}" == "1" ]]; then
+    exit 7
+fi
+if [[ "${mode}" == "failure" ]]; then
+    exit 7
+fi
+filename="${config##*/}"
+target="${filename#*__}"
+target="${target%.yaml}"
+psnr="42.5"
+if [[ "${mode}" == "nonfinite" ]]; then
+    psnr="nan"
+fi
+printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${target}" "${psnr}"
+""",
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                fake_conda.chmod(0o755)
+
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "BATCH_LOG_ROOT": log_root.as_posix(),
+                        "FAKE_EVAL_MODE": evaluation_mode,
+                    }
+                )
+                environment.pop("DRY_RUN", None)
+                path_parts = [str(fake_bin)]
+                if os.name == "nt":
+                    git_root = Path(bash).parents[1]
+                    path_parts.extend([str(git_root / "usr" / "bin"), str(git_root / "bin")])
+                path_parts.append(environment.get("PATH", ""))
+                environment["PATH"] = os.pathsep.join(path_parts)
+
+                completed = subprocess.run(
+                    [bash, COMBINED_RUNNER.as_posix()],
+                    cwd=COMBINED_RUNNER.parents[1],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                )
+                self.assertEqual(completed.returncode, expected_code, completed.stdout + completed.stderr)
+                combined_output = completed.stdout + completed.stderr
+                self.assertIn(expected_message, combined_output)
+                if expected_code == 0:
+                    summary = (log_root / "experiment_psnr.tsv").read_text(encoding="utf-8").splitlines()
+                    self.assertEqual(len(summary), 30)
+                    self.assertEqual(sum("\tSIREN\t" in f"\t{line}\t" for line in summary), 13)
+                    self.assertEqual(sum("\tNeuralExpert\t" in f"\t{line}\t" for line in summary), 16)
 
     def test_exploration_v4_dry_run_has_exact_matrix_and_default_parallelism(self):
         bash = self._bash()

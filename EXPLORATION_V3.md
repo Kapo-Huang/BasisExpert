@@ -1,8 +1,8 @@
 # Exploration v3: all Size configs
 
 Exploration v3 is a 50-epoch-equivalent smoke matrix for every formal Size
-configuration listed in `scripts/run_rd_curve_configs.list`. It contains 235
-configs across five sizes and ten model families. Model architecture, target,
+configuration listed in `scripts/run_rd_curve_configs.list`. It contains 210
+configs across five sizes and nine model families. Model architecture, target,
 partition, and compression settings are copied unchanged from the formal
 configs; only training length, logging/checkpoint cadence, experiment IDs, and
 output roots are changed.
@@ -27,7 +27,7 @@ The runner executes NeuralExpert manager-pretraining configs before the
 matching reconstruction configs. Other families are grouped by family and
 Size. Adjust `MAX_PARALLEL_JOBS` to fit available GPUs/resources.
 
-To inspect all 235 commands without training:
+To inspect all 210 commands without training:
 
 ```bash
 DRY_RUN=1 MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v3.sh
@@ -71,8 +71,6 @@ nonzero batch exit code.
 | MC-INR | 50 epochs, 5 meta-iterations, 50 fine-tune epochs |
 | fV-SRN | 50 epochs |
 | APMGSRN | 750 iterations |
-| DC-INR | 75,000 steps |
 | RMDSRN | 75,000 steps |
 | NeuralExpert manager pretraining | 2,500 iterations |
 | NeuralExpert reconstruction | 75,000 iterations |
-

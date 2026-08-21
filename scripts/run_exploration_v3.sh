@@ -19,7 +19,7 @@ STRICT_VALIDATION="${STRICT_VALIDATION:-1}"
 COLLAPSE_THRESHOLD_DB="${COLLAPSE_THRESHOLD_DB:-1.0}"
 MINIMUM_GAIN_DB="${MINIMUM_GAIN_DB:-0.1}"
 GROUP_DELIM=$'\034'
-EXPECTED_TOTAL=235
+EXPECTED_TOTAL=210
 
 source "${SCRIPT_DIR}/lib/batch_runner.sh"
 batch_init_status
@@ -55,7 +55,7 @@ collect_group() {
 }
 
 declare -a SIZES=(Size082 Size163 Size326 Size652 Size1304)
-declare -a FAMILIES=(APMGSRN CoordNet DC-INR fV-SRN MC-INR MoE-INR RMDSRN SIREN VarExpert)
+declare -a FAMILIES=(APMGSRN CoordNet fV-SRN MC-INR MoE-INR RMDSRN SIREN VarExpert)
 
 # Each NeuralExpert reconstruction loads the matching manager checkpoint.
 for size in "${SIZES[@]}"; do

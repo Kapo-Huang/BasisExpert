@@ -1,9 +1,12 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
+
+from scripts import evaluate_neural_expert_config as neural_eval
 
 from var_expert_inr.apmgsrn.model import APMGSRN
 from var_expert_inr.evaluation.standalone import (
@@ -102,6 +105,72 @@ class StandaloneAdapterContractTestCase(unittest.TestCase):
                 device=torch.device("cpu"),
             )
             self.assertEqual(frames[("GT", 1)].shape, (2, 2, 2))
+
+            raw["DATA"]["dataset_name"] = "combustion_40nh3_1"
+            combustion_frames = _decode_neural_expert_frames(
+                checkpoint,
+                raw,
+                timesteps=(0,),
+                targets=("Temperature",),
+                indexers=[slice(0, 8), slice(8, 16)],
+                shape_tzyx=(2, 2, 2, 2),
+                coords=None,
+                repo_root=root,
+                config_path=root / "config.yaml",
+                device=torch.device("cpu"),
+            )
+            self.assertEqual(combustion_frames[("Temperature", 0)].shape, (2, 2, 2))
+
+    def test_neural_expert_config_evaluator_selects_full_single_target_psnr(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "config.yaml"
+            config_path.write_text("placeholder: true\n", encoding="utf-8")
+            metrics_path = root / "evaluations" / "metrics.json"
+            cfg = {
+                "experiment_root": str(root / "runs"),
+                "exp_id": "neural-expert-combustion-Temperature",
+                "DATA": {"target": "Temperature"},
+                "TRAINING": {"segmentation_mode": False},
+            }
+            evaluation_result = {
+                "metrics": {"status": "complete", "aggregate": {"psnr": 42.25}},
+                "metrics_path": metrics_path,
+            }
+            with mock.patch.object(neural_eval, "load_config", return_value=cfg), mock.patch.object(
+                neural_eval, "evaluate_run", return_value=evaluation_result
+            ) as evaluate_mock:
+                record = neural_eval.evaluate_config(config_path, device="cpu")
+
+            expected_run = (root / "runs" / cfg["exp_id"]).resolve()
+            evaluate_mock.assert_called_once_with(
+                expected_run,
+                metrics="psnr",
+                timesteps="all",
+                targets="Temperature",
+                source="auto",
+                device="cpu",
+            )
+            self.assertEqual(record["target"], "Temperature")
+            self.assertEqual(record["psnr"], 42.25)
+            self.assertEqual(record["run_dir"], expected_run)
+
+    def test_neural_expert_config_evaluator_rejects_nonfinite_psnr(self):
+        cfg = {
+            "experiment_root": ".",
+            "exp_id": "run",
+            "DATA": {"target": "Temperature"},
+            "TRAINING": {"segmentation_mode": False},
+        }
+        result = {
+            "metrics": {"status": "complete", "aggregate": {"psnr": float("nan")}},
+            "metrics_path": "metrics.json",
+        }
+        with mock.patch.object(neural_eval, "load_config", return_value=cfg), mock.patch.object(
+            neural_eval, "evaluate_run", return_value=result
+        ):
+            with self.assertRaisesRegex(RuntimeError, "non-finite PSNR"):
+                neural_eval.evaluate_config("config.yaml")
 
 
 if __name__ == "__main__":

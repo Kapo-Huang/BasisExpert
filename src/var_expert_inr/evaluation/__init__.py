@@ -7,7 +7,14 @@ from .selection import (
     parse_timestep_selection,
 )
 from .adapters import DecodeSession, RunAdapter, SUPPORTED_ADAPTERS
-from .service import evaluate_run
+
+
+def evaluate_run(*args, **kwargs):
+    # Import lazily so the training engine can import evaluation.metrics without
+    # service.py immediately importing the partially initialized engine again.
+    from .service import evaluate_run as _evaluate_run
+
+    return _evaluate_run(*args, **kwargs)
 
 __all__ = [
     "QualityAccumulator",

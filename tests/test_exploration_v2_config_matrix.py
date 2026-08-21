@@ -7,7 +7,6 @@ import yaml
 from var_expert_inr.config import load_experiment_config
 from var_expert_inr.config.schema import ModelConfig
 from var_expert_inr.data.base import DatasetMeta
-from var_expert_inr.dc_inr.config import load_config as load_dc_config
 from var_expert_inr.mc_inr.config import load_config as load_mc_config
 from var_expert_inr.mc_inr.data import TargetLayoutEntry
 from var_expert_inr.mc_inr.model import MCINR
@@ -29,7 +28,7 @@ class ExplorationV2ConfigMatrixTestCase(unittest.TestCase):
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_count_unique_ids_roots_and_probes(self):
-        self.assertEqual(len(self.paths), 68)
+        self.assertEqual(len(self.paths), 53)
         exp_ids = set()
         for path in self.paths:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -42,12 +41,6 @@ class ExplorationV2ConfigMatrixTestCase(unittest.TestCase):
     def test_profile_coverage(self):
         mc_profiles = {path.name for path in (self.root / "MC-INR" / "Size163").iterdir()}
         self.assertEqual(mc_profiles, {"depth3_4", "depth5_6", "depth7_8"})
-
-        dc_profiles = {path.name for path in (self.root / "DC-INR" / "Size163").iterdir()}
-        self.assertEqual(dc_profiles, {"eps0p01", "eps0p05", "eps0p10"})
-        for profile in dc_profiles:
-            paths = list((self.root / "DC-INR" / "Size163" / profile).glob("*.yaml"))
-            self.assertEqual({path.stem.split("__")[1] for path in paths}, TARGETS)
 
         neural_root = self.root / "NeuralExpert" / "Size326"
         self.assertEqual({path.name for path in neural_root.iterdir()}, {"depth1", "depth2", "depth3"})
@@ -63,7 +56,6 @@ class ExplorationV2ConfigMatrixTestCase(unittest.TestCase):
     def test_every_config_loads_with_its_runner(self):
         loaders = {
             "MC-INR": load_mc_config,
-            "DC-INR": load_dc_config,
             "NeuralExpert": load_neural_config,
         }
         for path in self.paths:
@@ -123,11 +115,6 @@ class ExplorationV2ConfigMatrixTestCase(unittest.TestCase):
             actual = sum(parameter.numel() for parameter in model.parameters()) * 2 / (1024**2)
             self.assertLessEqual(abs(actual - MULTI_SIZE163_MIB) / MULTI_SIZE163_MIB, 0.05, config_path)
 
-        expected_dc_budget = MULTI_SIZE163_MIB / len(TARGETS)
-        for config_path in (self.root / "DC-INR" / "Size163").rglob("*.yaml"):
-            payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            self.assertAlmostEqual(payload["compression"]["target_size_mib"], expected_dc_budget)
-
     def test_neural_manager_paths_match_main_configs(self):
         neural_root = self.root / "NeuralExpert" / "Size326"
         mains = [path for path in neural_root.rglob("*.yaml") if "managerpretrain" not in path.stem]
@@ -137,6 +124,14 @@ class ExplorationV2ConfigMatrixTestCase(unittest.TestCase):
             self.assertTrue(manager_path.exists(), manager_path)
             main = yaml.safe_load(main_path.read_text(encoding="utf-8"))
             manager = yaml.safe_load(manager_path.read_text(encoding="utf-8"))
+            self.assertEqual(main["TRAINING"]["n_points"], 16000, main_path)
+            self.assertEqual(main["TRAINING"]["num_epochs"], 60000, main_path)
+            self.assertEqual(main["TRAINING"]["log_every"], 6000, main_path)
+            self.assertEqual(main["TRAINING"]["save_every"], 60000, main_path)
+            self.assertEqual(manager["TRAINING"]["n_points"], 16000, manager_path)
+            self.assertEqual(manager["TRAINING"]["num_epochs"], 2500, manager_path)
+            self.assertEqual(manager["TRAINING"]["log_every"], 100, manager_path)
+            self.assertEqual(manager["TRAINING"]["save_every"], 2500, manager_path)
             self.assertEqual(main["MODEL"]["manager_pt_path"], manager["MODEL"]["manager_pt_path"])
 
 

@@ -8,8 +8,6 @@ SINGLE_TARGET_SELECTOR_MODELS = {
     "siren",
     "coordnet",
     "moe_inr",
-    "compact_ngp",
-    "fa_tr_inr",
     "instant_ngp",
 }
 

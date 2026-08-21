@@ -7,13 +7,7 @@ from ..data.base import DatasetMeta
 from .var_expert.shared_enc_inr import build_shared_enc_inr_from_config
 from .var_expert.var_expert import build_var_expert_from_config
 from .common import ModelAdapter, require_single_target, view_specs_from_meta
-from .sota.compact_ngp import build_compact_ngp_from_config
 from .sota.coordnet import build_coordnet_from_config
-from .sota.fa_tr_inr import (
-    DEFAULT_FREQUENCY_COORDINATES,
-    DEFAULT_TENSOR_RING_RANKS,
-    build_fa_tr_inr_from_config,
-)
 from .sota.instant_ngp import (
     INSTANT_NGP_BASE_RESOLUTION,
     INSTANT_NGP_FEATURES_PER_LEVEL,
@@ -23,6 +17,16 @@ from .sota.instant_ngp import (
     INSTANT_NGP_LEVELS,
     INSTANT_NGP_LOG2_HASHMAP_SIZE,
     build_instant_ngp_from_config,
+)
+from .sota.instant_vnr import (
+    INSTANT_VNR_BASE_RESOLUTION,
+    INSTANT_VNR_FEATURES_PER_LEVEL,
+    INSTANT_VNR_HIDDEN_FEATURES,
+    INSTANT_VNR_HIDDEN_LAYERS,
+    INSTANT_VNR_LEVELS,
+    INSTANT_VNR_LOG2_HASHMAP_SIZE,
+    INSTANT_VNR_PER_LEVEL_SCALE,
+    build_instant_vnr_from_config,
 )
 from .sota.moe_inr import build_moe_inr_from_config, resolve_moe_dimensions
 from .sota.mvnet import (
@@ -136,16 +140,12 @@ def _build_moe_inr(cfg: dict, meta: DatasetMeta):
     return build_moe_inr_from_config(cfg)
 
 
-def _build_compact_ngp(cfg: dict, meta: DatasetMeta):
-    return build_compact_ngp_from_config(cfg)
-
-
-def _build_fa_tr_inr(cfg: dict, meta: DatasetMeta):
-    return build_fa_tr_inr_from_config(cfg)
-
-
 def _build_instant_ngp(cfg: dict, meta: DatasetMeta):
     return build_instant_ngp_from_config(cfg)
+
+
+def _build_instant_vnr(cfg: dict, meta: DatasetMeta):
+    return build_instant_vnr_from_config(cfg)
 
 
 def _build_mvnet(cfg: dict, meta: DatasetMeta):
@@ -235,81 +235,6 @@ def _materialize_moe_inr(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, An
     return materialized
 
 
-def _materialize_compact_ngp(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
-    allowed = {
-        "in_features",
-        "out_features",
-        "num_levels",
-        "features_per_level",
-        "feature_table_size",
-        "index_table_size",
-        "num_probes",
-        "base_resolution",
-        "max_resolution",
-        "hidden_features",
-        "hidden_layers",
-    }
-    _reject_unknown_model_keys(cfg, allowed, "compact_ngp")
-    return {
-        "in_features": _resolve_in_features(cfg, meta, "compact_ngp"),
-        "out_features": _resolve_single_target_out_features(cfg, meta, "compact_ngp"),
-        "num_levels": int(cfg.get("num_levels", 16)),
-        "features_per_level": int(cfg.get("features_per_level", 2)),
-        "feature_table_size": int(cfg.get("feature_table_size", 1024)),
-        "index_table_size": int(cfg.get("index_table_size", 65536)),
-        "num_probes": int(cfg.get("num_probes", 4)),
-        "base_resolution": int(cfg.get("base_resolution", 16)),
-        "max_resolution": int(cfg.get("max_resolution", 2048)),
-        "hidden_features": int(cfg.get("hidden_features", 64)),
-        "hidden_layers": int(cfg.get("hidden_layers", 2)),
-    }
-
-
-def _materialize_fa_tr_inr(
-    cfg: dict[str, Any],
-    meta: DatasetMeta,
-) -> dict[str, Any]:
-    allowed = {
-        "in_features",
-        "out_features",
-        "frequency_coordinates",
-        "omega",
-        "factor_mlp_depth",
-        "factor_hidden_width",
-        "integration_mlp_depth",
-        "tensor_ring_ranks",
-    }
-    _reject_unknown_model_keys(cfg, allowed, "fa_tr_inr")
-    if meta.kind != "volume":
-        raise ValueError("fa_tr_inr only supports volume datasets")
-    return {
-        "in_features": _resolve_in_features(cfg, meta, "fa_tr_inr"),
-        "out_features": _resolve_single_target_out_features(
-            cfg, meta, "fa_tr_inr"
-        ),
-        "frequency_coordinates": [
-            float(value)
-            for value in cfg.get(
-                "frequency_coordinates",
-                DEFAULT_FREQUENCY_COORDINATES,
-            )
-        ],
-        "omega": float(cfg.get("omega", 19.0)),
-        "factor_mlp_depth": int(cfg.get("factor_mlp_depth", 4)),
-        "factor_hidden_width": int(cfg.get("factor_hidden_width", 128)),
-        "integration_mlp_depth": int(
-            cfg.get("integration_mlp_depth", 2)
-        ),
-        "tensor_ring_ranks": [
-            int(rank)
-            for rank in cfg.get(
-                "tensor_ring_ranks",
-                DEFAULT_TENSOR_RING_RANKS,
-            )
-        ],
-    }
-
-
 def _materialize_instant_ngp(
     cfg: dict[str, Any],
     meta: DatasetMeta,
@@ -351,6 +276,82 @@ def _materialize_instant_ngp(
         ),
         **fixed_values,
     }
+
+
+def _materialize_instant_vnr(
+    cfg: dict[str, Any],
+    meta: DatasetMeta,
+) -> dict[str, Any]:
+    allowed = {
+        "in_features",
+        "out_features",
+        "n_levels",
+        "n_features_per_level",
+        "base_resolution",
+        "per_level_scale",
+        "log2_hashmap_size",
+        "hidden_features",
+        "hidden_layers",
+    }
+    _reject_unknown_model_keys(cfg, allowed, "instant_vnr")
+    if meta.kind != "volume" or meta.volume_shape is None:
+        raise ValueError("instant_vnr only supports volume datasets")
+
+    in_features = _resolve_in_features(cfg, meta, "instant_vnr")
+    if in_features != 4:
+        raise ValueError(f"instant_vnr requires in_features=4, got {in_features}")
+    target_dim = require_single_target(meta, "instant_vnr")
+    if target_dim != 1:
+        raise ValueError(
+            f"instant_vnr requires a scalar target, got target_dim={target_dim}"
+        )
+    out_features = int(cfg.get("out_features", 1))
+    if out_features != 1:
+        raise ValueError(f"instant_vnr requires out_features=1, got {out_features}")
+
+    materialized = {
+        "in_features": in_features,
+        "out_features": out_features,
+        "n_levels": int(cfg.get("n_levels", INSTANT_VNR_LEVELS)),
+        "n_features_per_level": int(
+            cfg.get("n_features_per_level", INSTANT_VNR_FEATURES_PER_LEVEL)
+        ),
+        "base_resolution": int(
+            cfg.get("base_resolution", INSTANT_VNR_BASE_RESOLUTION)
+        ),
+        "per_level_scale": float(
+            cfg.get("per_level_scale", INSTANT_VNR_PER_LEVEL_SCALE)
+        ),
+        "log2_hashmap_size": int(
+            cfg.get("log2_hashmap_size", INSTANT_VNR_LOG2_HASHMAP_SIZE)
+        ),
+        "hidden_features": int(
+            cfg.get("hidden_features", INSTANT_VNR_HIDDEN_FEATURES)
+        ),
+        "hidden_layers": int(
+            cfg.get("hidden_layers", INSTANT_VNR_HIDDEN_LAYERS)
+        ),
+    }
+    positive_keys = {
+        "n_levels",
+        "n_features_per_level",
+        "base_resolution",
+        "log2_hashmap_size",
+        "hidden_features",
+        "hidden_layers",
+    }
+    invalid = [key for key in positive_keys if int(materialized[key]) <= 0]
+    if invalid:
+        raise ValueError(
+            "instant_vnr requires positive values for: " + ", ".join(sorted(invalid))
+        )
+    if materialized["n_levels"] < 2:
+        raise ValueError("instant_vnr requires n_levels >= 2")
+    if materialized["base_resolution"] < 2:
+        raise ValueError("instant_vnr requires base_resolution >= 2")
+    if materialized["per_level_scale"] <= 1.0:
+        raise ValueError("instant_vnr requires per_level_scale > 1")
+    return materialized
 
 
 def _materialize_mvnet(
@@ -569,9 +570,8 @@ MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "siren": _build_siren,
     "coordnet": _build_coordnet,
     "moe_inr": _build_moe_inr,
-    "compact_ngp": _build_compact_ngp,
-    "fa_tr_inr": _build_fa_tr_inr,
     "instant_ngp": _build_instant_ngp,
+    "instant_vnr": _build_instant_vnr,
     "mvnet": _build_mvnet,
     "var_expert": _build_var_expert,
     "shared_enc_inr": _build_shared_enc_inr,
@@ -581,9 +581,8 @@ MODEL_CONFIG_MATERIALIZERS: dict[str, ModelConfigMaterializer] = {
     "siren": _materialize_siren,
     "coordnet": _materialize_coordnet,
     "moe_inr": _materialize_moe_inr,
-    "compact_ngp": _materialize_compact_ngp,
-    "fa_tr_inr": _materialize_fa_tr_inr,
     "instant_ngp": _materialize_instant_ngp,
+    "instant_vnr": _materialize_instant_vnr,
     "mvnet": _materialize_mvnet,
     "var_expert": _materialize_var_expert,
     "shared_enc_inr": _materialize_shared_enc_inr,

@@ -11,6 +11,7 @@ from .schema import (
     ExperimentConfig,
     GradientBalancerConfig,
     LogConfig,
+    MemoryLogConfig,
     ModelConfig,
     MultiAttrDWALossConfig,
     MultiAttrEMALossConfig,
@@ -126,6 +127,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     )
     psnr_log_payload = _ensure_mapping(log_payload.get("psnr"), label="log.psnr")
     timing_log_payload = _ensure_mapping(log_payload.get("timing"), label="log.timing")
+    memory_log_payload = _ensure_mapping(log_payload.get("memory"), label="log.memory")
 
     _reject_unknown_keys(pretrain_payload, _field_names(PretrainConfig), label="training.pretrain")
     _reject_unknown_keys(
@@ -140,6 +142,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     )
     _reject_unknown_keys(psnr_log_payload, _field_names(PSNRLogConfig), label="log.psnr")
     _reject_unknown_keys(timing_log_payload, _field_names(TimingLogConfig), label="log.timing")
+    _reject_unknown_keys(memory_log_payload, _field_names(MemoryLogConfig), label="log.memory")
 
     data_cfg = DataConfig(
         kind=data_payload["kind"],
@@ -198,6 +201,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         startup_timing=bool(log_payload.get("startup_timing", True)),
         psnr=PSNRLogConfig(**psnr_log_payload),
         timing=TimingLogConfig(**timing_log_payload),
+        memory=MemoryLogConfig(**memory_log_payload),
     )
     experiment = _resolve_target_placeholder(payload.get("experiment"), target=data_cfg.target, field_name="experiment")
     exp_id = _resolve_target_placeholder(payload.get("exp_id"), target=data_cfg.target, field_name="exp_id")

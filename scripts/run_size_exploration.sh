@@ -45,7 +45,7 @@ collect_group() {
 }
 
 for profile in depth1 depth2 depth3; do collect_group "NeuralExpert" "${profile}" manager; done
-for family in SIREN CoordNet MoE-INR VarExpert MC-INR APMGSRN DC-INR fV-SRN RMDSRN; do
+for family in SIREN CoordNet MoE-INR VarExpert MC-INR APMGSRN fV-SRN RMDSRN; do
     while IFS= read -r profile_dir; do
         collect_group "${family}" "$(basename "${profile_dir}")"
     done < <(find "${CONFIG_ROOT}/${family}/Size163" -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
@@ -57,8 +57,8 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne 141 ]]; then
-    printf 'Expected 141 exploration configs, found %d. Regenerate with scripts/generate_size_exploration_configs.py.\n' "${total}" >&2
+if [[ "${total}" -ne 126 ]]; then
+    printf 'Expected 126 exploration configs, found %d. Regenerate with scripts/generate_size_exploration_configs.py.\n' "${total}" >&2
     exit 2
 fi
 

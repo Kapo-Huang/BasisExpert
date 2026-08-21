@@ -9,9 +9,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs"
-FORMAL_CONFIG_COUNT = 517
-MAIN_CONFIG_COUNT = 282
-RD_CURVE_CONFIG_COUNT = 235
+FORMAL_CONFIG_COUNT = 458
+MAIN_CONFIG_COUNT = 248
+RD_CURVE_CONFIG_COUNT = 210
 REPO_ROOT_TOKEN = "${REPO_ROOT}"
 SIZES = {
     "Size082": 0.82,
@@ -134,7 +134,6 @@ VAR_SIZE_PROFILES = {
 }
 NEURAL_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 48, "Size1304": 67}
 MC_SIZE_DIMS = {"Size082": 30, "Size163": 43, "Size326": 62, "Size652": 88, "Size1304": 125}
-DC_SIZE_DBSCAN_EPS = {"GT": 0.10, "H_plus": 0.10, "H2": 0.05, "He": 0.05, "PD": 0.10}
 APMG_SIZE = {
     "Size082": {"feature_grid_shape": [7, 7, 7], "n_grids": 1, "n_features": 1, "nodes_per_layer": 16, "n_layers": 2},
     "Size163": {"feature_grid_shape": [5, 5, 5], "n_grids": 6, "n_features": 1, "nodes_per_layer": 16, "n_layers": 3},
@@ -290,75 +289,6 @@ def common_training() -> dict:
     }
 
 
-def compact_ngp_model() -> dict:
-    return {
-        "name": "compact_ngp",
-        "in_features": 4,
-        "out_features": 1,
-        "num_levels": 16,
-        "features_per_level": 2,
-        "feature_table_size": 1024,
-        "index_table_size": 65536,
-        "num_probes": 4,
-        "base_resolution": 16,
-        "max_resolution": 2048,
-        "hidden_features": 64,
-        "hidden_layers": 2,
-    }
-
-
-def compact_ngp_training() -> dict:
-    payload = common_training()
-    payload.update(
-        {
-            "lr": 1.0e-2,
-            "beta_1": 0.9,
-            "beta_2": 0.99,
-            "epsilon": 1.0e-15,
-            "weight_decay": 1.0e-6,
-        }
-    )
-    return payload
-
-
-def generate_compact_ngp() -> int:
-    count = 0
-    for target in DATASETS["ionization"]["targets"]:
-        payload = {
-            "experiment": f"ionization_compact-ngp_{target}",
-            "exp_id": f"compact-ngp-ionization-{target}",
-            "experiment_root": repo_path("runs"),
-            "data": unified_data("ionization", False, target),
-            "model": compact_ngp_model(),
-            "training": compact_ngp_training(),
-            "evaluation": evaluation(),
-            "log": log_config(),
-        }
-        dump(CONFIGS / "CompactNGP" / f"ionization__{target}.yaml", payload)
-        count += 1
-    for target in COMBUSTION_SCALAR_TARGETS:
-        payload = {
-            "experiment": f"{COMBUSTION_DATASET['name']}_compact-ngp_{target}",
-            "exp_id": f"compact-ngp-{COMBUSTION_DATASET['name']}-{target}",
-            "experiment_root": repo_path("runs"),
-            "data": combustion_data(
-                target,
-                include_vector=False,
-                four_coordinates=True,
-            ),
-            "model": compact_ngp_model(),
-            "training": compact_ngp_training(),
-            "evaluation": evaluation(),
-            "log": log_config(),
-        }
-        dump(
-            CONFIGS / "CompactNGP" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
-            payload,
-        )
-        count += 1
-    return count
-
-
 def instant_ngp_model() -> dict:
     return {
         "name": "instant_ngp",
@@ -446,6 +376,92 @@ def generate_instant_ngp() -> int:
     return count
 
 
+def instant_vnr_model() -> dict:
+    return {
+        "name": "instant_vnr",
+        "in_features": 4,
+        "out_features": 1,
+        "n_levels": 8,
+        "n_features_per_level": 8,
+        "base_resolution": 16,
+        "per_level_scale": 2.0,
+        "log2_hashmap_size": 19,
+        "hidden_features": 64,
+        "hidden_layers": 4,
+    }
+
+
+def instant_vnr_training() -> dict:
+    payload = common_training()
+    payload.update(
+        {
+            "gradient_accumulation_steps": 4,
+            "lr": 5.0e-3,
+            "beta_1": 0.9,
+            "beta_2": 0.999,
+            "epsilon": 1.0e-15,
+            "weight_decay": 1.0e-6,
+            "loss_type": "l1",
+            "scheduler": {
+                "enabled": True,
+                "interval": "optimizer_step",
+                "step_size": 1000,
+                "decay_start": 2000,
+                "gamma": 0.99,
+            },
+            "pretrain": {"enabled": False},
+        }
+    )
+    return payload
+
+
+def generate_instant_vnr() -> int:
+    count = 0
+    all_targets = targets_for("ionization", False)
+    for target in DATASETS["ionization"]["targets"]:
+        data = {
+            "kind": "volume",
+            "dataset_name": "ionization",
+            "split": "train",
+            "volume_shape": deepcopy(ION_SHAPE),
+            "targets": {target: all_targets[target]},
+        }
+        payload = {
+            "experiment": f"ionization_instant_vnr_{target}",
+            "exp_id": f"instant-vnr-ionization-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": data,
+            "model": instant_vnr_model(),
+            "training": instant_vnr_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(CONFIGS / "InstantVNR" / f"ionization__{target}.yaml", payload)
+        count += 1
+    for target in COMBUSTION_SCALAR_TARGETS:
+        payload = {
+            "experiment": f"{COMBUSTION_DATASET['name']}_instant_vnr_{target}",
+            "exp_id": f"instant-vnr-{COMBUSTION_DATASET['name']}-{target}",
+            "experiment_root": repo_path("runs"),
+            "data": combustion_data(
+                target,
+                include_vector=False,
+                four_coordinates=True,
+                selected_only=True,
+            ),
+            "model": instant_vnr_model(),
+            "training": instant_vnr_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(
+            CONFIGS / "InstantVNR" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+            payload,
+        )
+        count += 1
+    return count
+
+
 def mvnet_model(num_variables: int) -> dict:
     return {
         "name": "mvnet",
@@ -527,80 +543,6 @@ def generate_mvnet() -> int:
     }
     dump(CONFIGS / "MVNet" / f"{COMBUSTION_DATASET['name']}.yaml", payload)
     count += 1
-    return count
-
-
-def fa_tr_inr_model() -> dict:
-    return {
-        "name": "fa_tr_inr",
-        "in_features": 4,
-        "out_features": 1,
-        "frequency_coordinates": [1.0, 2.0, 3.0],
-        "omega": 19.0,
-        "factor_mlp_depth": 4,
-        "factor_hidden_width": 128,
-        "integration_mlp_depth": 2,
-        "tensor_ring_ranks": [22, 88, 3, 3, 5],
-    }
-
-
-def fa_tr_inr_training() -> dict:
-    payload = common_training()
-    payload.update(
-        {
-            "lr": 1.0e-4,
-            "beta_1": 0.9,
-            "beta_2": 0.999,
-            "epsilon": 1.0e-8,
-            "weight_decay": 0.0,
-            "scheduler": {
-                "enabled": False,
-                "step_size": 0,
-                "gamma": 1.0,
-            },
-        }
-    )
-    return payload
-
-
-def generate_fa_tr_inr() -> int:
-    count = 0
-    for target in DATASETS["ionization"]["targets"]:
-        payload = {
-            "experiment": f"ionization_fa-tr-inr_{target}",
-            "exp_id": f"fa-tr-inr-ionization-{target}",
-            "experiment_root": repo_path("runs"),
-            "data": unified_data("ionization", False, target),
-            "model": fa_tr_inr_model(),
-            "training": fa_tr_inr_training(),
-            "evaluation": evaluation(),
-            "log": log_config(),
-        }
-        dump(
-            CONFIGS / "FA-TR-INR" / f"ionization__{target}.yaml",
-            payload,
-        )
-        count += 1
-    for target in COMBUSTION_SCALAR_TARGETS:
-        payload = {
-            "experiment": f"{COMBUSTION_DATASET['name']}_fa-tr-inr_{target}",
-            "exp_id": f"fa-tr-inr-{COMBUSTION_DATASET['name']}-{target}",
-            "experiment_root": repo_path("runs"),
-            "data": combustion_data(
-                target,
-                include_vector=False,
-                four_coordinates=True,
-            ),
-            "model": fa_tr_inr_model(),
-            "training": fa_tr_inr_training(),
-            "evaluation": evaluation(),
-            "log": log_config(),
-        }
-        dump(
-            CONFIGS / "FA-TR-INR" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
-            payload,
-        )
-        count += 1
     return count
 
 
@@ -931,7 +873,7 @@ def neural_payload(dataset: str, target: str, nested: bool, manager_pretrain: bo
     training = {
         "n_points": 16000, "lr": 3.0e-5, "lr_gamma": 0.9999,
         "lr_scheduler": "ExponentialLR",
-        "num_epochs": 30000 if manager_pretrain else 900000,
+        "num_epochs": 30000 if manager_pretrain else 60000,
         "batch_size": 1, "num_workers": 0, "grad_clip_norm": 10.0,
         "save_every": 500, "segmentation_mode": manager_pretrain,
         "log_every": 100,
@@ -1067,54 +1009,6 @@ def apmg_payload(
             "time_indices": "all", "seed": 42, "early_stopping": False,
         },
         "EVALUATION": {"run_after_training": False},
-    }
-
-
-def dc_payload(
-    target: str,
-    nested: bool,
-    size: str | None,
-    dataset: str = "ionization",
-) -> dict:
-    tag = f"-{size.lower()}" if size else ""
-    compression = {"max_initial_neurons": 2048, "min_initial_neurons": 4}
-    if size:
-        compression["target_size_mib"] = SINGLE_TARGET_SIZES[size]
-    else:
-        compression["target_cr"] = 20.0
-    candidate_shapes = (
-        [
-            {"sx": 32, "sy": 32, "sz": 1},
-            {"sx": 64, "sy": 16, "sz": 1},
-            {"sx": 16, "sy": 64, "sz": 1},
-        ]
-        if dataset == COMBUSTION_DATASET["name"]
-        else [
-            {"sx": 150, "sy": 8, "sz": 124}, {"sx": 150, "sy": 124, "sz": 8},
-            {"sx": 300, "sy": 4, "sz": 124}, {"sx": 300, "sy": 124, "sz": 4},
-        ]
-    )
-    return {
-        "experiment": f"dc_inr_{dataset}{tag}_{target}",
-        "exp_id": f"dc-inr-{dataset}{tag}-{target}",
-        "experiment_root": repo_path("runs/dc_inr"),
-        "data": volume_data(target, nested, dataset=dataset),
-        "model": {"name": "dc_inr"},
-        "partition": {
-            "candidate_block_shapes": candidate_shapes,
-            "dbscan_eps": 1.0e-2, "dbscan_min_samples": 1,
-            "entropy_bins": 256, "distance_matrix_max_bytes": 1073741824,
-        },
-        "compression": compression,
-        "training": {
-            "epochs": 300, "total_steps": 900000, "batch_size": 16000,
-            "lr": 1.0e-4, "beta_1": 0.9, "beta_2": 0.999,
-            "points_per_timestep": 160, "prediction_batch_size": 16000,
-            "lr_milestones": [450000, 675000], "lr_gamma": 0.5,
-            "log_every": 100, "seed": 42, "device": "cuda",
-        },
-        "evaluation": evaluation(),
-        "log": log_config(),
     }
 
 
@@ -1282,7 +1176,7 @@ def rm_payload(
 def generate_volume_only() -> int:
     count = 0
     builders = {
-        "APMGSRN": apmg_payload, "DC-INR": dc_payload,
+        "APMGSRN": apmg_payload,
         "fV-SRN": fv_payload, "RMDSRN": rm_payload,
     }
     for family, builder in builders.items():
@@ -1298,8 +1192,6 @@ def generate_volume_only() -> int:
         for size in SIZES:
             for target in DATASETS["ionization"]["targets"]:
                 payload = builder(target, True, size)
-                if family == "DC-INR":
-                    payload["partition"]["dbscan_eps"] = DC_SIZE_DBSCAN_EPS[target]
                 dump(CONFIGS / family / size / f"ionization__{target}.yaml", payload)
                 count += 1
     return count
@@ -1311,10 +1203,9 @@ def main() -> None:
     CONFIGS.mkdir(parents=True)
     counts = {
         "unified_single": generate_unified_single(),
-        "compact_ngp": generate_compact_ngp(),
         "instant_ngp": generate_instant_ngp(),
+        "instant_vnr": generate_instant_vnr(),
         "mvnet": generate_mvnet(),
-        "fa_tr_inr": generate_fa_tr_inr(),
         "var_expert": generate_var_expert(),
         "mc_inr": generate_mc(),
         "neural_expert": generate_neural(),

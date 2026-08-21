@@ -8,7 +8,6 @@ from generate_config_matrix import (
     DATASETS,
     REPO_ROOT_TOKEN,
     SINGLE_TARGET_SIZES,
-    dc_payload,
     dump,
     evaluation,
     log_config,
@@ -46,11 +45,6 @@ MC_PROFILES = {
     "depth5_6": {"hidden_features": 33, "gfe_layers": 5, "lfe_layers": 6},
     "depth7_8": {"hidden_features": 28, "gfe_layers": 7, "lfe_layers": 8},
 }
-DC_EPS_PROFILES = {
-    "eps0p01": 0.01,
-    "eps0p05": 0.05,
-    "eps0p10": 0.10,
-}
 VAR_BASE_DIMS = {8: 22, 9: 21, 10: 20}
 
 
@@ -79,20 +73,6 @@ def generate_mc_inr() -> int:
     return count
 
 
-def generate_dc_inr() -> int:
-    count = 0
-    for profile, eps in DC_EPS_PROFILES.items():
-        for target in TARGETS:
-            payload = dc_payload(target, True, MULTI_SIZE)
-            payload["partition"]["dbscan_eps"] = float(eps)
-            payload["compression"]["max_initial_neurons"] = 512
-            payload["training"].update({"total_steps": 75_000, "log_every": 7_500})
-            payload = _tag(payload, "DC-INR", MULTI_SIZE, profile, target)
-            dump(CONFIG_ROOT / "DC-INR" / MULTI_SIZE / profile / f"ionization__{target}.yaml", payload)
-            count += 1
-    return count
-
-
 def generate_neural_expert() -> int:
     count = 0
     for profile, values in NEURAL_PROFILES.items():
@@ -114,8 +94,8 @@ def generate_neural_expert() -> int:
                 model["decoder_n_hidden_layers"] = values["depth"]
                 model["manager_n_hidden_layers"] = values["depth"]
                 model["manager_pt_path"] = manager_path
-                payload["TRAINING"]["num_epochs"] = 2_500 if pretrain else 75_000
-                payload["TRAINING"]["log_every"] = 100 if pretrain else 7_500
+                payload["TRAINING"]["num_epochs"] = 2_500 if pretrain else 60_000
+                payload["TRAINING"]["log_every"] = 100 if pretrain else 6_000
                 payload["TRAINING"]["save_every"] = payload["TRAINING"]["num_epochs"]
                 payload = _tag(payload, "NeuralExpert", SINGLE_SIZE, profile, target)
                 if pretrain:
@@ -174,13 +154,12 @@ def main() -> None:
     CONFIG_ROOT.mkdir(parents=True)
     counts = {
         "mc_inr": generate_mc_inr(),
-        "dc_inr": generate_dc_inr(),
         "neural_expert": generate_neural_expert(),
         "var_expert": generate_var_expert(),
     }
     total = sum(counts.values())
-    if total != 68:
-        raise RuntimeError(f"Expected 68 exploration-v2 configs, generated {total}: {counts}")
+    if total != 53:
+        raise RuntimeError(f"Expected 53 exploration-v2 configs, generated {total}: {counts}")
     print(
         "Generated exploration-v2 with "
         f"{total} configs (single target {SINGLE_SIZE}={SINGLE_TARGET_SIZES[SINGLE_SIZE]:.3f}MiB, "

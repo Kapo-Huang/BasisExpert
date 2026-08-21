@@ -13,6 +13,7 @@ dependencies = [
   "pyyaml",
   "torch",
   "scikit-learn",
+  "psutil>=5.9",
 ]
 
 [project.optional-dependencies]
@@ -20,7 +21,6 @@ evaluation = [
   "Pillow>=9",
   "scikit-image>=0.20",
   "lpips>=0.1.4",
-  "psutil>=5.9",
   "pyvista>=0.43",
   "vtk>=9",
 ]
