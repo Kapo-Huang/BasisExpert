@@ -10,17 +10,17 @@ output roots are changed.
 ## Generate configs
 
 ```bash
-python scripts/generate_exploration_v3_configs.py
+python scripts/exploration/generate_rd_curve_smoke.py
 ```
 
-This rebuilds the isolated `configs_exploration_v3/` directory. It does not
+This rebuilds the isolated `configs/exploration/rd_curve_smoke/` directory. It does not
 modify the formal `configs/` directory.
 
 ## Run
 
 ```bash
 conda activate compression
-MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v3.sh
+MAX_PARALLEL_JOBS=5 bash scripts/exploration/run_rd_curve_smoke.sh
 ```
 
 The runner executes NeuralExpert manager-pretraining configs before the
@@ -30,14 +30,14 @@ Size. Adjust `MAX_PARALLEL_JOBS` to fit available GPUs/resources.
 To inspect all 210 commands without training:
 
 ```bash
-DRY_RUN=1 MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v3.sh
+DRY_RUN=1 MAX_PARALLEL_JOBS=5 bash scripts/exploration/run_rd_curve_smoke.sh
 ```
 
 To resume an interrupted batch, reuse the run token printed in the batch log
 directory name:
 
 ```bash
-RUN_TOKEN=YYYYMMDD_HHMMSS MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v3.sh
+RUN_TOKEN=YYYYMMDD_HHMMSS MAX_PARALLEL_JOBS=5 bash scripts/exploration/run_rd_curve_smoke.sh
 ```
 
 Successful entries already recorded in that token's `status.tsv` are skipped.
@@ -57,7 +57,7 @@ or final PSNR improves less than 0.1 dB from the first probe. Thresholds can be
 changed without regenerating configs:
 
 ```bash
-COLLAPSE_THRESHOLD_DB=0.5 MINIMUM_GAIN_DB=0.2 bash scripts/run_exploration_v3.sh
+COLLAPSE_THRESHOLD_DB=0.5 MINIMUM_GAIN_DB=0.2 bash scripts/exploration/run_rd_curve_smoke.sh
 ```
 
 Use `STRICT_VALIDATION=0` only when an attention report is desired without a

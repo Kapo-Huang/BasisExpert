@@ -20,20 +20,20 @@ Every run uses seed 42, 50 epoch-equivalents, and fixed probes of at most
 Generate the checked-in configs:
 
 ```bash
-python scripts/generate_exploration_v5_configs.py
+python scripts/exploration/generate_optimizer_tuning.py
 ```
 
 Run them in the `compression` environment:
 
 ```bash
-MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v5.sh
+MAX_PARALLEL_JOBS=5 bash scripts/exploration/run_optimizer_tuning.sh
 ```
 
 The default physical GPU is `cuda:0`. Select another GPU with the `DEVICE`
 environment variable:
 
 ```bash
-DEVICE=cuda:1 MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v5.sh
+DEVICE=cuda:1 MAX_PARALLEL_JOBS=5 bash scripts/exploration/run_optimizer_tuning.sh
 ```
 
 The runner validates the `cuda:N` form and maps the selected physical GPU

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "katrina_wet.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "tools" / "katrina_wet.py"
 SPEC = importlib.util.spec_from_file_location("standalone_katrina_wet", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 katrina_wet = importlib.util.module_from_spec(SPEC)

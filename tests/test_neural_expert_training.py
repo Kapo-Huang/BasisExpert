@@ -1,11 +1,11 @@
-﻿import tempfile
+import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
 import yaml
 
-from var_expert_inr.neural_expert.cli import run_train
+from var_expert_inr.methods.neural_expert.cli import run_train
 
 
 class NeuralExpertTrainingTestCase(unittest.TestCase):

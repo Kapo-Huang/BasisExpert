@@ -1,11 +1,11 @@
-﻿import tempfile
+import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
 
-from var_expert_inr.neural_expert.ionization.datasets import IonizationINRDataset
-from var_expert_inr.neural_expert.mesh.datasets import MeshAttributeDataset
+from var_expert_inr.methods.neural_expert.ionization.datasets import IonizationINRDataset
+from var_expert_inr.methods.neural_expert.mesh.datasets import MeshAttributeDataset
 
 
 class NeuralExpertDatasetTestCase(unittest.TestCase):

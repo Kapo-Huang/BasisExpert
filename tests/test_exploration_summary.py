@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "summarize_size_exploration.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "ablation" / "summarize_architecture.py"
 SPEC = importlib.util.spec_from_file_location("summarize_size_exploration", SCRIPT_PATH)
 SUMMARY = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -18,7 +18,7 @@ class ExplorationSummaryTestCase(unittest.TestCase):
     def test_summary_uses_latest_status_and_reports_nonfinite_trajectory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            config_root = root / "configs_exploration"
+            config_root = root / "configs/ablation/architecture"
             config_path = config_root / "SIREN" / "Size163" / "depth3" / "ionization__GT.yaml"
             config_path.parent.mkdir(parents=True)
             config_path.write_text(

@@ -209,11 +209,11 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
 def run_train(config_path: str | Path, *, resume_path: str | Path | None = None) -> dict:
     configured_method = _configured_method(config_path)
     if configured_method == "ecnr":
-        from .ecnr.runner import run_train as run_ecnr_train
+        from .methods.ecnr.runner import run_train as run_ecnr_train
 
         return run_ecnr_train(config_path, resume=resume_path)
     if configured_method == "miner":
-        from .miner.runner import run_train as run_miner_train
+        from .methods.miner.runner import run_train as run_miner_train
 
         return run_miner_train(config_path, resume=resume_path)
     if resume_path is not None:
@@ -278,7 +278,7 @@ def run_predict(
 ) -> dict:
     configured_method = _configured_method(config_path)
     if configured_method == "ecnr":
-        from .ecnr.runner import run_predict as run_ecnr_predict
+        from .methods.ecnr.runner import run_predict as run_ecnr_predict
 
         return run_ecnr_predict(
             config_path,
@@ -288,7 +288,7 @@ def run_predict(
     if configured_method == "miner":
         if artifact_path is not None:
             raise ValueError("MINER does not define a compact artifact format")
-        from .miner.runner import run_predict as run_miner_predict
+        from .methods.miner.runner import run_predict as run_miner_predict
 
         return run_miner_predict(config_path, checkpoint=checkpoint_path)
     if artifact_path is not None:
@@ -315,7 +315,7 @@ def run_evaluate(
 ) -> dict:
     configured_method = _configured_method(config_path)
     if configured_method == "ecnr":
-        from .ecnr.runner import run_evaluate as run_ecnr_evaluate
+        from .methods.ecnr.runner import run_evaluate as run_ecnr_evaluate
 
         return run_ecnr_evaluate(
             config_path,
@@ -325,7 +325,7 @@ def run_evaluate(
     if configured_method == "miner":
         if artifact_path is not None:
             raise ValueError("MINER does not define a compact artifact format")
-        from .miner.runner import run_evaluate as run_miner_evaluate
+        from .methods.miner.runner import run_evaluate as run_miner_evaluate
 
         return run_miner_evaluate(config_path, checkpoint=checkpoint_path)
     if artifact_path is not None:

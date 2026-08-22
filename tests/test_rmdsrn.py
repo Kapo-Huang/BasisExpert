@@ -9,15 +9,15 @@ import numpy as np
 import torch
 import yaml
 
-from var_expert_inr.rmdsrn.config import load_config
-from var_expert_inr.rmdsrn.data import TemporalFrameSampler, TemporalVolume, sample_voxel_batch
-from var_expert_inr.rmdsrn.losses import (
+from var_expert_inr.methods.rmdsrn.config import load_config
+from var_expert_inr.methods.rmdsrn.data import TemporalFrameSampler, TemporalVolume, sample_voxel_batch
+from var_expert_inr.methods.rmdsrn.losses import (
     exponential_variance_weight,
     rmdsrn_loss,
     variance_regularization_loss,
 )
-from var_expert_inr.rmdsrn.model import RMDSRN
-from var_expert_inr.rmdsrn.runner import run_evaluate, run_train
+from var_expert_inr.methods.rmdsrn.model import RMDSRN
+from var_expert_inr.methods.rmdsrn.runner import run_evaluate, run_train
 
 
 class RMDSRNTestCase(unittest.TestCase):

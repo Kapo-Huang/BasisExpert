@@ -11,7 +11,7 @@ res10 architecture across every Size tier.
 - residual depth: `num_res=10`
 - learning rates: `1e-5`, `5e-6`
 - training length: 50 epochs
-- total: 5 Sizes × 3 targets × 2 learning rates = 30 configs
+- total: 5 Sizes 鑴?3 targets 鑴?2 learning rates = 30 configs
 
 The generator copies each matching formal CoordNet config, preserving its
 Size-specific width, data definition, batch budget, and scheduler. It changes
@@ -23,27 +23,27 @@ final checkpoints are retained.
 ## Generate
 
 ```bash
-python scripts/generate_exploration_coordnet_configs.py
+python scripts/sensitivity/generate_coordnet_learning_rate.py
 ```
 
 Generated configs are written to:
 
 ```text
-configs_exploration_CoordNet/CoordNet/<Size>/<lr-profile>/ionization__<target>.yaml
+configs/sensitivity/coordnet_learning_rate/CoordNet/<Size>/<lr-profile>/ionization__<target>.yaml
 ```
 
 ## Run
 
 ```bash
 conda activate compression
-MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_coordnet.sh
+MAX_PARALLEL_JOBS=5 bash scripts/sensitivity/run_coordnet_learning_rate.sh
 ```
 
 The runner supports a dry run and resumable run tokens:
 
 ```bash
-DRY_RUN=1 bash scripts/run_exploration_coordnet.sh
-RUN_TOKEN=YYYYMMDD_HHMMSS bash scripts/run_exploration_coordnet.sh
+DRY_RUN=1 bash scripts/sensitivity/run_coordnet_learning_rate.sh
+RUN_TOKEN=YYYYMMDD_HHMMSS bash scripts/sensitivity/run_coordnet_learning_rate.sh
 ```
 
 Outputs are isolated under:

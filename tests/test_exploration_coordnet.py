@@ -8,8 +8,8 @@ from unittest import mock
 
 import yaml
 
-from scripts import generate_exploration_coordnet_configs as generator
-from scripts import summarize_exploration_coordnet as summarizer
+from scripts.sensitivity import generate_coordnet_learning_rate as generator
+from scripts.sensitivity import summarize_coordnet_learning_rate as summarizer
 from var_expert_inr.config import load_experiment_config
 
 
@@ -17,7 +17,7 @@ class ExplorationCoordNetConfigMatrixTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.repo_root = Path(__file__).resolve().parents[1]
-        cls.root = cls.repo_root / "configs_exploration_CoordNet"
+        cls.root = cls.repo_root / "configs/sensitivity/coordnet_learning_rate"
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_matrix_coverage_and_unique_identity(self):
@@ -42,11 +42,11 @@ class ExplorationCoordNetConfigMatrixTestCase(unittest.TestCase):
 
     def test_generator_rebuilds_only_isolated_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            generated_root = Path(tmpdir) / "configs_exploration_CoordNet"
+            generated_root = Path(tmpdir) / "configs/sensitivity/coordnet_learning_rate"
             with mock.patch.object(generator, "CONFIG_ROOT", generated_root):
                 count = generator.generate()
             self.assertEqual(count, generator.EXPECTED_TOTAL)
-            self.assertEqual(len(list(generated_root.rglob("*.yaml"))), 30)
+            self.assertEqual(len(list(generated_root.rglob("*.yaml"))), 24)
 
     def test_payloads_preserve_formal_width_and_scheduler(self):
         for path in self.paths:
@@ -86,7 +86,7 @@ class ExplorationCoordNetSummaryTestCase(unittest.TestCase):
     def test_summary_flags_collapse_and_ranks_clean_learning_rate(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            config_root = repo / "configs_exploration_CoordNet"
+            config_root = repo / "configs/sensitivity/coordnet_learning_rate"
             run_root = repo / "runs" / "exploration_CoordNet"
             status = repo / "batch" / "status.tsv"
             summary = repo / "batch" / "exploration_summary.tsv"

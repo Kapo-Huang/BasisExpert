@@ -33,4 +33,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "var_expert_inr.evaluation" = ["profiles/*.yaml"]
-"var_expert_inr.miner" = ["LICENSE.MINER"]
+"var_expert_inr.methods.miner" = ["LICENSE.MINER"]

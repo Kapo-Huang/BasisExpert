@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "organize_runs_summary.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "tools" / "organize_runs_summary.py"
 SPEC = importlib.util.spec_from_file_location("organize_runs_summary", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 organizer = importlib.util.module_from_spec(SPEC)
@@ -200,12 +200,12 @@ class EndToEndTests(unittest.TestCase):
             (repo / "runs" / "exploration_v3").mkdir(exist_ok=True)
 
             batch = repo / "batch_logs" / "exploration_v2" / "20260102_000000"
-            dc_config = "configs_exploration_v2/DC-INR/Size163/test/ionization__GT.yaml"
-            siren_config = "configs_exploration_v2/SIREN/Size163/test/ionization__GT.yaml"
-            failed_config = "configs_exploration_v2/SIREN/Size163/test/ionization__PD.yaml"
-            dc_log = "configs_exploration_v2__DC-INR__Size163__test__ionization__GT.log"
-            siren_log = "configs_exploration_v2__SIREN__Size163__test__ionization__GT.log"
-            failed_log = "configs_exploration_v2__SIREN__Size163__test__ionization__PD.log"
+            dc_config = "configs/sensitivity/routing_and_depth/DC-INR/Size163/test/ionization__GT.yaml"
+            siren_config = "configs/sensitivity/routing_and_depth/SIREN/Size163/test/ionization__GT.yaml"
+            failed_config = "configs/sensitivity/routing_and_depth/SIREN/Size163/test/ionization__PD.yaml"
+            dc_log = "configs__sensitivity__routing_and_depth__DC-INR__Size163__test__ionization__GT.log"
+            siren_log = "configs__sensitivity__routing_and_depth__SIREN__Size163__test__ionization__GT.log"
+            failed_log = "configs__sensitivity__routing_and_depth__SIREN__Size163__test__ionization__PD.log"
             _write(batch / "logs" / dc_log, "Exploration PSNR progress=50/50 aggregate=5.0\n")
             _write(batch / "logs" / siren_log, "Exploration PSNR progress=50/50 aggregate=NaN\n")
             _write(batch / "logs" / failed_log, "Exploration PSNR progress=45/50 aggregate=30\n")

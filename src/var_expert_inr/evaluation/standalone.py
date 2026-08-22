@@ -124,7 +124,7 @@ def _decode_miner_frames(
     shape_tzyx: tuple[int, int, int, int],
     device: torch.device,
 ) -> dict[tuple[str, int], np.ndarray]:
-    from ..miner.runner import decode_checkpoint
+    from ..methods.miner.runner import decode_checkpoint
 
     if len(targets) != 1:
         raise ValueError("MINER checkpoints contain one scalar target per run")
@@ -165,7 +165,7 @@ def _decode_apmgsrn_frames(
     shape_tzyx: tuple[int, int, int, int],
     device: torch.device,
 ) -> dict[tuple[str, int], np.ndarray]:
-    from ..apmgsrn.model import APMGSRN
+    from ..methods.apmgsrn.model import APMGSRN
 
     if len(targets) != 1:
         raise ValueError("APMGSRN checkpoints contain one target per run")
@@ -248,16 +248,16 @@ def _decode_neural_expert_frames(
     model_name = str((raw.get("MODEL") or {}).get("model_name", ""))
     if dataset_name in {"ionization", "combustion_40nh3_1"}:
         if model_name == "inr_moe_ionization":
-            from ..neural_expert.ionization.inr_moe import INR_MoE as ModelClass
+            from ..methods.neural_expert.ionization.inr_moe import INR_MoE as ModelClass
         elif model_name == "inr_ionization":
-            from ..neural_expert.ionization.inr import INR as ModelClass
+            from ..methods.neural_expert.ionization.inr import INR as ModelClass
         else:
             raise ValueError(f"Unsupported NeuralExpert volume model: {model_name!r}")
     else:
         if model_name == "inr_moe_mesh":
-            from ..neural_expert.mesh.inr_moe import INR_MoE as ModelClass
+            from ..methods.neural_expert.mesh.inr_moe import INR_MoE as ModelClass
         elif model_name == "inr_mesh":
-            from ..neural_expert.mesh.inr import INR as ModelClass
+            from ..methods.neural_expert.mesh.inr import INR as ModelClass
         else:
             raise ValueError(f"Unsupported NeuralExpert mesh model: {model_name!r}")
     model = ModelClass(raw)
@@ -313,16 +313,16 @@ def _decode_neural_expert_frames(
 
 def _invoke_predict(subsystem: str, config_path: Path, source_kind: str, source_path: Path, target: str | None):
     if subsystem == "mc_inr":
-        from ..mc_inr.runner import run_predict
+        from ..methods.mc_inr.runner import run_predict
         return run_predict(config_path, checkpoint_path=source_path if source_kind == "checkpoint" else None)
     if subsystem == "fv_srn":
-        from ..fv_srn.runner import run_predict
+        from ..methods.fv_srn.runner import run_predict
         return run_predict(config_path, target=target, artifact=source_path if source_kind == "artifact" else None, checkpoint=source_path if source_kind == "checkpoint" else None)
     if subsystem == "rmdsrn":
-        from ..rmdsrn.runner import run_predict
+        from ..methods.rmdsrn.runner import run_predict
         return run_predict(config_path, target=target, artifact=source_path if source_kind == "artifact" else None, checkpoint=source_path if source_kind == "checkpoint" else None)
     if subsystem == "ecnr":
-        from ..ecnr.runner import run_predict
+        from ..methods.ecnr.runner import run_predict
         return run_predict(config_path, target=target, artifact=source_path if source_kind == "artifact" else None, checkpoint=source_path if source_kind == "checkpoint" else None)
     raise RuntimeError(
         f"{subsystem} has no standalone decode API; evaluate it from an exported prediction array"

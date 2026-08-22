@@ -1,9 +1,9 @@
 # Exploration v2
 
-This follow-up matrix preserves the first exploration under `configs_exploration/`
+This follow-up matrix preserves the first exploration under `configs/ablation/architecture/`
 and writes the new configs and runs to isolated locations:
 
-- configs: `configs_exploration_v2/`
+- configs: `configs/sensitivity/routing_and_depth/`
 - runs: `runs/exploration_v2/`
 - batch logs: `batch_logs/exploration_v2/<run-token>/`
 
@@ -32,8 +32,8 @@ Size163 multi-variable budget.
 Generate and run:
 
 ```bash
-python scripts/generate_exploration_v2_configs.py
-MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v2.sh
+python scripts/sensitivity/generate_routing_and_depth.py
+MAX_PARALLEL_JOBS=5 bash scripts/sensitivity/run_routing_and_depth.sh
 ```
 
 The runner executes NeuralExpert managers first, then fixed MC-INR,

@@ -7,11 +7,11 @@ import numpy as np
 import yaml
 
 from var_expert_inr.data import build_dataset
-from var_expert_inr.mc_inr.checkpoint import load_mc_checkpoint
-from var_expert_inr.mc_inr.cli import run_evaluate, run_predict, run_train
-from var_expert_inr.mc_inr.config import load_config
-from var_expert_inr.mc_inr.data import target_layout_from_dataset
-from var_expert_inr.mc_inr.runner import (
+from var_expert_inr.methods.mc_inr.checkpoint import load_mc_checkpoint
+from var_expert_inr.methods.mc_inr.cli import run_evaluate, run_predict, run_train
+from var_expert_inr.methods.mc_inr.config import load_config
+from var_expert_inr.methods.mc_inr.data import target_layout_from_dataset
+from var_expert_inr.methods.mc_inr.runner import (
     _load_cached_assignments,
     _save_cached_assignments,
     _stage_epoch_batches,

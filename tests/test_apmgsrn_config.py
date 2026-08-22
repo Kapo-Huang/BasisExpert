@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from var_expert_inr.apmgsrn.config import experiment_dir_from_config, load_config, run_dir_from_config
+from var_expert_inr.methods.apmgsrn.config import experiment_dir_from_config, load_config, run_dir_from_config
 
 
 class APMGSRNConfigTestCase(unittest.TestCase):

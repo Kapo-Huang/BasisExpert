@@ -1,4 +1,4 @@
-﻿import os
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,10 +26,10 @@ class ConfigLoadingTestCase(unittest.TestCase):
     def test_repo_bathymetry_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
         config_paths = [
-            repo_root / "configs" / "VarExpert" / "bathymetry.yaml",
-            repo_root / "configs" / "MoE-INR" / "bathymetry__SALT.yaml",
-            repo_root / "configs" / "CoordNet" / "bathymetry__SALT.yaml",
-            repo_root / "configs" / "SIREN" / "bathymetry__SALT.yaml",
+            repo_root / "configs" / "main" / "VarExpert" / "bathymetry.yaml",
+            repo_root / "configs" / "main" / "MoE-INR" / "bathymetry__SALT.yaml",
+            repo_root / "configs" / "main" / "CoordNet" / "bathymetry__SALT.yaml",
+            repo_root / "configs" / "main" / "SIREN" / "bathymetry__SALT.yaml",
         ]
 
         loaded_configs = [load_experiment_config(path) for path in config_paths]
@@ -46,7 +46,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
     def test_combustion_config_uses_xyt_coordinates(self):
         repo_root = Path(__file__).resolve().parents[1]
         loaded = load_experiment_config(
-            repo_root / "configs" / "VarExpert" / "combustion_40NH3_1.yaml"
+            repo_root / "configs" / "main" / "VarExpert" / "combustion_40NH3_1.yaml"
         )
         self.assertEqual(loaded.data.coordinate_axes, ("x", "y", "t"))
         self.assertEqual(loaded.model.params["in_features"], 3)
@@ -59,16 +59,17 @@ class ConfigLoadingTestCase(unittest.TestCase):
 
         config_paths = sorted(
             [
-                *configs_root.joinpath("VarExpert").rglob("*.yaml"),
-                *configs_root.joinpath("MoE-INR").rglob("*.yaml"),
-                *configs_root.joinpath("CoordNet").rglob("*.yaml"),
-                *configs_root.joinpath("SIREN").rglob("*.yaml"),
-                *configs_root.joinpath("STSR-INR").rglob("*.yaml"),
+                *(
+                    path
+                    for category in ("main", "rd_curve")
+                    for family in ("VarExpert", "MoE-INR", "CoordNet", "SIREN", "STSR-INR")
+                    for path in configs_root.joinpath(category, family).rglob("*.yaml")
+                ),
             ]
         )
         self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization__GT.yaml" for path in config_paths))
-        self.assertFalse((configs_root / "VarExpert" / "ionization_e4_k3.yaml").exists())
-        self.assertFalse(any(configs_root.joinpath("VarExpert").glob("exp_data_ionization_var_expert_*.yaml")))
+        self.assertFalse((configs_root / "main" / "VarExpert" / "ionization_e4_k3.yaml").exists())
+        self.assertFalse(any(configs_root.joinpath("main", "VarExpert").glob("exp_data_ionization_var_expert_*.yaml")))
 
         for path in config_paths:
             loaded = load_experiment_config(path)
@@ -77,7 +78,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
 
     def test_repo_root_placeholder_resolves_from_non_repo_cwd(self):
         repo_root = Path(__file__).resolve().parents[1]
-        config_path = repo_root / "configs" / "VarExpert" / "Size1304" / "ionization.yaml"
+        config_path = repo_root / "configs" / "rd_curve" / "VarExpert" / "Size652" / "ionization.yaml"
         previous_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as tmpdir:
             os.chdir(tmpdir)
@@ -88,7 +89,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
         self.assertEqual(Path(loaded.experiment_root), repo_root / "runs")
         self.assertEqual(
             Path(loaded.training.pretrain.assignments_cache_path),
-            repo_root / "data" / "cache" / "ionization_voxel_assignments_9.npy",
+            repo_root / "data" / "cache" / "ionization_voxel_assignments_8.npy",
         )
         self.assertEqual(
             Path(loaded.data.targets["GT"]),

@@ -4,11 +4,11 @@ from typing import Any, Callable
 
 from ..config.schema import ModelConfig
 from ..data.base import DatasetMeta
-from .var_expert.shared_enc_inr import build_shared_enc_inr_from_config
-from .var_expert.var_expert import build_var_expert_from_config
+from .proposed.shared_enc_inr import build_shared_enc_inr_from_config
+from .proposed.var_expert import build_var_expert_from_config
 from .common import ModelAdapter, require_single_target, view_specs_from_meta
-from .sota.coordnet import build_coordnet_from_config
-from .sota.instant_ngp import (
+from .baselines.coordnet import build_coordnet_from_config
+from .baselines.instant_ngp import (
     INSTANT_NGP_BASE_RESOLUTION,
     INSTANT_NGP_FEATURES_PER_LEVEL,
     INSTANT_NGP_FINEST_RESOLUTION,
@@ -18,7 +18,7 @@ from .sota.instant_ngp import (
     INSTANT_NGP_LOG2_HASHMAP_SIZE,
     build_instant_ngp_from_config,
 )
-from .sota.instant_vnr import (
+from .baselines.instant_vnr import (
     INSTANT_VNR_BASE_RESOLUTION,
     INSTANT_VNR_FEATURES_PER_LEVEL,
     INSTANT_VNR_HIDDEN_FEATURES,
@@ -28,8 +28,8 @@ from .sota.instant_vnr import (
     INSTANT_VNR_PER_LEVEL_SCALE,
     build_instant_vnr_from_config,
 )
-from .sota.moe_inr import build_moe_inr_from_config, resolve_moe_dimensions
-from .sota.mvnet import (
+from .baselines.moe_inr import build_moe_inr_from_config, resolve_moe_dimensions
+from .baselines.mvnet import (
     MVNET_BIAS,
     MVNET_HIDDEN_FEATURES,
     MVNET_IN_FEATURES,
@@ -37,8 +37,8 @@ from .sota.mvnet import (
     MVNET_RESIDUAL_BLOCKS,
     build_mvnet_from_config,
 )
-from .sota.siren import build_siren_from_config
-from .sota.stsr_inr import build_stsr_inr_from_config
+from .baselines.siren import build_siren_from_config
+from .baselines.stsr_inr import build_stsr_inr_from_config
 
 
 ModelBuilder = Callable[[dict[str, Any], DatasetMeta], object]

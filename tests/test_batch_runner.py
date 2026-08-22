@@ -7,18 +7,18 @@ from pathlib import Path
 
 
 HELPER = Path(__file__).resolve().parents[1] / "scripts" / "lib" / "batch_runner.sh"
-RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_all_configs.sh"
-MOE_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.sh"
-MOE_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ionization_main.list"
-COMBINED_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.sh"
-COMBINED_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.list"
-V4_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v4.sh"
-V5_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v5.sh"
-V6_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v6.sh"
+RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "main" / "run_all.sh"
+MOE_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "main" / "run_moe_non_ionization.sh"
+MOE_LIST = Path(__file__).resolve().parents[1] / "scripts" / "main" / "moe_non_ionization.list"
+COMBINED_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "main" / "run_neural_expert_non_ionization.sh"
+COMBINED_LIST = Path(__file__).resolve().parents[1] / "scripts" / "main" / "neural_expert_non_ionization.list"
+V4_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "ablation" / "run_depth_and_regularization.sh"
+V5_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "exploration" / "run_optimizer_tuning.sh"
+V6_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "exploration" / "run_ecnr_tuning.sh"
 COORDNET_MVNET_STSR_RUNNER = (
     Path(__file__).resolve().parents[1]
     / "scripts"
-    / "run_coordnet_combustion_mvnet_katrina_stsr_redsea.sh"
+    / "main" / "run_selected_datasets.sh"
 )
 
 
@@ -119,8 +119,8 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             selection = root / "selected.list"
             selection.write_text(
                 "# Only these two configs should run.\n"
-                "configs/SIREN/Size082/ionization__GT.yaml\n"
-                "configs/VarExpert/combustion_40NH3_1.yaml\n",
+                "configs/rd_curve/CoordNet/Size082/ionization__GT.yaml\n"
+                "configs/main/VarExpert/combustion_40NH3_1.yaml\n",
                 encoding="utf-8",
                 newline="\n",
             )
@@ -148,9 +148,9 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 2 of 476 configs", output)
-            main_position = output.index("configs/VarExpert/combustion_40NH3_1.yaml")
-            size_position = output.index("configs/SIREN/Size082/ionization__GT.yaml")
+            self.assertIn("Selected 2 of 354 configs", output)
+            main_position = output.index("configs/main/VarExpert/combustion_40NH3_1.yaml")
+            size_position = output.index("configs/rd_curve/CoordNet/Size082/ionization__GT.yaml")
             self.assertLess(main_position, size_position)
             self.assertIn("Completed 2 configs; failures=0", output)
 
@@ -181,7 +181,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 22 of 476 configs", output)
+            self.assertIn("Selected 22 of 354 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 22)
             bathymetry = output.index("main:MoE-INR:bathymetry:all")
             combustion = output.index("main:MoE-INR:combustion_40NH3_1:all")
@@ -220,7 +220,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             output = completed.stdout
 
             self.assertIn("SIREN + NeuralExpert non-Ionization matrix: 45 configs, max_parallel=5", output)
-            self.assertIn("Selected 45 of 476 configs", output)
+            self.assertIn("Selected 45 of 354 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 45)
             siren = output.index("main:SIREN:combustion_40NH3_1:all")
             bathymetry_manager = output.index("main:NeuralExpert:bathymetry:manager")
@@ -268,7 +268,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
                     for index, relative in enumerate(selected):
                         log_path = logs / f"config-{index}.log"
                         log_paths[relative] = log_path
-                        if relative.startswith("configs/SIREN/"):
+                        if relative.startswith("configs/main/SIREN/"):
                             content = "PSNR epoch 600/600: aggregate=42.00 time=1.0s\n"
                         elif relative.endswith("__managerpretrain.yaml"):
                             content = "Exported manager pretrain checkpoint to /fake/manager.pth\n"
@@ -280,7 +280,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
                         handle.write(f"{relative}\t{status}\t{exit_code}\t{log_path.as_posix()}\n")
 
                 if corruption == "missing_siren_psnr":
-                    relative = next(path for path in selected if path.startswith("configs/SIREN/"))
+                    relative = next(path for path in selected if path.startswith("configs/main/SIREN/"))
                     log_paths[relative].write_text("training ended without PSNR\n", encoding="utf-8")
                 if corruption == "missing_manager_export":
                     relative = next(path for path in selected if path.endswith("__managerpretrain.yaml"))
@@ -382,12 +382,9 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
                 env=environment,
             )
             output = completed.stdout
-            self.assertEqual(output.count("DRY_RUN:"), 81)
-            self.assertIn("RMDSRN corrected schedule (15 configs, max_parallel=5)", output)
-            self.assertIn("RMDSRN lambda ablations (12 configs, max_parallel=5)", output)
-            self.assertIn("CoordNet equal-budget depth (45 configs, max_parallel=5)", output)
-            self.assertIn("CoordNet causal controls (9 configs, max_parallel=5)", output)
-            self.assertIn("Completed 81 exploration-v4 configs; failures=0", output)
+            self.assertEqual(output.count("DRY_RUN:"), 30)
+            self.assertIn("CoordNet equal-budget depth (30 configs, max_parallel=5)", output)
+            self.assertIn("Completed 30 exploration-v4 configs; failures=0", output)
 
     def test_exploration_v5_dry_run_has_exact_matrix_and_method_dispatch(self):
         bash = self._bash()
@@ -432,7 +429,7 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
             output = completed.stdout
             self.assertIn("Selected device: cuda:0 (CUDA_VISIBLE_DEVICES=0)", output)
             self.assertEqual(output.count("DRY_RUN:"), 42)
-            self.assertEqual(output.count("var_expert_inr.fv_srn.cli"), 24)
+            self.assertEqual(output.count("var_expert_inr.methods.fv_srn.cli"), 24)
             self.assertEqual(output.count("var_expert_inr.cli"), 18)
             self.assertIn(
                 "fV-SRN structure and optimizer sweep (24 configs, max_parallel=5)",

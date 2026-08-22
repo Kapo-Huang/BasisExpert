@@ -11,11 +11,11 @@ from var_expert_inr.config.schema import ModelConfig, SchedulerConfig, VolumeSha
 from var_expert_inr.data.base import DatasetMeta
 from var_expert_inr.models import build_model
 from var_expert_inr.models.registry import materialize_model_config
-from var_expert_inr.models.sota.hash_grid import (
+from var_expert_inr.models.baselines.hash_grid import (
     MultiresolutionHashEncoding,
     coherent_prime_hash,
 )
-from var_expert_inr.models.sota.instant_vnr import InstantVNR
+from var_expert_inr.models.baselines.instant_vnr import InstantVNR
 from var_expert_inr.training.engine import build_training_scheduler
 
 

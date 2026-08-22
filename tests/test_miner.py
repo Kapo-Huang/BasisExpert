@@ -9,7 +9,7 @@ import torch
 import yaml
 
 from var_expert_inr.evaluation.service import evaluate_run
-from var_expert_inr.miner.blocks import (
+from var_expert_inr.methods.miner.blocks import (
     blockify,
     crop_padding,
     effective_scale_count,
@@ -17,9 +17,9 @@ from var_expert_inr.miner.blocks import (
     pad_to_scale_compatible,
     unblockify,
 )
-from var_expert_inr.miner.config import load_config
-from var_expert_inr.miner.model import BlockSiren, propagate_state_to_finer_grid
-from var_expert_inr.miner.runner import decode_checkpoint, run_train
+from var_expert_inr.methods.miner.config import load_config
+from var_expert_inr.methods.miner.model import BlockSiren, propagate_state_to_finer_grid
+from var_expert_inr.methods.miner.runner import decode_checkpoint, run_train
 
 
 class MinerCoreTestCase(unittest.TestCase):

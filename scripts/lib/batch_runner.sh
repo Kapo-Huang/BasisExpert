@@ -72,11 +72,11 @@ batch_append_status() {
 
 batch_module_for_config() {
     case "$1" in
-        */MC-INR/*) echo "var_expert_inr.mc_inr.cli" ;;
-        */NeuralExpert/*) echo "var_expert_inr.neural_expert.cli" ;;
-        */APMGSRN/*) echo "var_expert_inr.apmgsrn.cli" ;;
-        */fV-SRN/*) echo "var_expert_inr.fv_srn.cli" ;;
-        */RMDSRN/*) echo "var_expert_inr.rmdsrn.cli" ;;
+        */MC-INR/*) echo "var_expert_inr.methods.mc_inr.cli" ;;
+        */NeuralExpert/*) echo "var_expert_inr.methods.neural_expert.cli" ;;
+        */APMGSRN/*) echo "var_expert_inr.methods.apmgsrn.cli" ;;
+        */fV-SRN/*) echo "var_expert_inr.methods.fv_srn.cli" ;;
+        */RMDSRN/*) echo "var_expert_inr.methods.rmdsrn.cli" ;;
         *) echo "var_expert_inr.cli" ;;
     esac
 }

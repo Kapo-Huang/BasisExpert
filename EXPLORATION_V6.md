@@ -27,13 +27,13 @@ primary budget, while still exercising every production stage.
 Generate the checked-in configs:
 
 ```bash
-python scripts/generate_exploration_v6_configs.py
+python scripts/exploration/generate_ecnr_tuning.py
 ```
 
 Run the batch in the `compression` environment:
 
 ```bash
-bash scripts/run_exploration_v6.sh
+bash scripts/exploration/run_ecnr_tuning.sh
 ```
 
 ECNR processes full volumes and builds large temporary caches, so the default

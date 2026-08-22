@@ -5,7 +5,7 @@ import torch
 from var_expert_inr.config.schema import ModelConfig
 from var_expert_inr.data.base import DatasetMeta
 from var_expert_inr.models import build_model
-from var_expert_inr.models.sota.moe_inr import (
+from var_expert_inr.models.baselines.moe_inr import (
     MoEINR,
     SharedSirenEncoder,
     build_moe_inr_from_config,

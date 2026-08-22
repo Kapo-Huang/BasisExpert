@@ -8,11 +8,11 @@ import numpy as np
 import torch
 import yaml
 
-from var_expert_inr.fv_srn.config import load_config
-from var_expert_inr.fv_srn.data import TemporalVolume, build_sample_pool
-from var_expert_inr.fv_srn.model import SnakeAlt, TemporalFVSRN, nerf_fourier_matrix
-from var_expert_inr.fv_srn.quantization import dequantize_grid, quantize_grids
-from var_expert_inr.fv_srn.runner import run_evaluate, run_train
+from var_expert_inr.methods.fv_srn.config import load_config
+from var_expert_inr.methods.fv_srn.data import TemporalVolume, build_sample_pool
+from var_expert_inr.methods.fv_srn.model import SnakeAlt, TemporalFVSRN, nerf_fourier_matrix
+from var_expert_inr.methods.fv_srn.quantization import dequantize_grid, quantize_grids
+from var_expert_inr.methods.fv_srn.runner import run_evaluate, run_train
 
 
 class FVSRNTestCase(unittest.TestCase):

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from var_expert_inr.mc_inr.config import load_config
+from var_expert_inr.methods.mc_inr.config import load_config
 
 
 class MCINRConfigTestCase(unittest.TestCase):

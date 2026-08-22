@@ -12,7 +12,7 @@ from var_expert_inr.config.schema import (
 )
 from var_expert_inr.data.base import DatasetMeta
 from var_expert_inr.models.registry import materialize_model_config
-from var_expert_inr.models.sota.instant_ngp import (
+from var_expert_inr.models.baselines.instant_ngp import (
     INSTANT_NGP_DECODER_L2_WEIGHT,
     InstantNGP,
     MultiresolutionHashEncoding4D,

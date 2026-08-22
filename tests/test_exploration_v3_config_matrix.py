@@ -5,35 +5,33 @@ from unittest import mock
 
 import yaml
 
-from scripts import generate_exploration_v3_configs as generator
-from var_expert_inr.apmgsrn.config import load_config as load_apmg_config
+from scripts.exploration import generate_rd_curve_smoke as generator
+from var_expert_inr.methods.apmgsrn.config import load_config as load_apmg_config
 from var_expert_inr.config import load_experiment_config
-from var_expert_inr.fv_srn.config import load_config as load_fv_config
-from var_expert_inr.mc_inr.config import load_config as load_mc_config
-from var_expert_inr.neural_expert.config import load_config as load_neural_config
-from var_expert_inr.rmdsrn.config import load_config as load_rm_config
+from var_expert_inr.methods.fv_srn.config import load_config as load_fv_config
+from var_expert_inr.methods.mc_inr.config import load_config as load_mc_config
+from var_expert_inr.methods.neural_expert.config import load_config as load_neural_config
+from var_expert_inr.methods.rmdsrn.config import load_config as load_rm_config
+from var_expert_inr.methods.miner.config import load_config as load_miner_config
 
 
 EXPECTED_COUNTS = {
-    "APMGSRN": 25,
-    "CoordNet": 25,
-    "fV-SRN": 25,
-    "MC-INR": 5,
-    "MoE-INR": 25,
-    "NeuralExpert": 50,
-    "RMDSRN": 25,
-    "SIREN": 25,
-    "VarExpert": 5,
+    "CoordNet": 20,
+    "fV-SRN": 20,
+    "MINER": 20,
+    "MoE-INR": 20,
+    "STSR-INR": 4,
+    "VarExpert": 4,
 }
-SIZES = {"Size082", "Size163", "Size326", "Size652", "Size1304"}
+SIZES = {"Size082", "Size163", "Size326", "Size652"}
 
 
 class ExplorationV3ConfigMatrixTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.repo_root = Path(__file__).resolve().parents[1]
-        cls.formal_root = cls.repo_root / "configs"
-        cls.root = cls.repo_root / "configs_exploration_v3"
+        cls.formal_root = cls.repo_root / "configs" / "rd_curve"
+        cls.root = cls.repo_root / "configs/exploration/rd_curve_smoke"
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_formal_size_mirror(self):
@@ -52,7 +50,7 @@ class ExplorationV3ConfigMatrixTestCase(unittest.TestCase):
 
     def test_generator_rebuilds_in_isolated_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            generated_root = Path(tmpdir) / "configs_exploration_v3"
+            generated_root = Path(tmpdir) / "configs/exploration/rd_curve_smoke"
             with mock.patch.object(generator, "CONFIG_ROOT", generated_root):
                 counts = generator.generate()
             self.assertEqual(counts, EXPECTED_COUNTS)
@@ -86,6 +84,7 @@ class ExplorationV3ConfigMatrixTestCase(unittest.TestCase):
             "fV-SRN": load_fv_config,
             "NeuralExpert": load_neural_config,
             "RMDSRN": load_rm_config,
+            "MINER": load_miner_config,
         }
         for path in self.paths:
             family = path.relative_to(self.root).parts[0]
@@ -118,23 +117,9 @@ class ExplorationV3ConfigMatrixTestCase(unittest.TestCase):
                 self.assertEqual(payload["training"]["epochs"], 50, path)
             elif family == "RMDSRN":
                 self.assertEqual(payload["training"]["steps"], 75_000, path)
-
-    def test_neural_manager_dependencies_are_isolated_and_paired(self):
-        for size in SIZES:
-            size_root = self.root / "NeuralExpert" / size
-            mains = sorted(path for path in size_root.glob("*.yaml") if "managerpretrain" not in path.stem)
-            managers = sorted(path for path in size_root.glob("*__managerpretrain.yaml"))
-            self.assertEqual(len(mains), 5)
-            self.assertEqual(len(managers), 5)
-            for main_path in mains:
-                manager_path = main_path.with_name(f"{main_path.stem}__managerpretrain.yaml")
-                self.assertTrue(manager_path.exists(), manager_path)
-                main = yaml.safe_load(main_path.read_text(encoding="utf-8"))
-                manager = yaml.safe_load(manager_path.read_text(encoding="utf-8"))
-                expected_prefix = f"${{REPO_ROOT}}/runs/exploration_v3/neural_expert/pretrained_managers/ionization/{size.lower()}/"
-                self.assertEqual(main["MODEL"]["manager_pt_path"], manager["MODEL"]["manager_pt_path"])
-                self.assertTrue(main["MODEL"]["manager_pt_path"].startswith(expected_prefix))
-
+            elif family == "MINER":
+                self.assertEqual(payload["training"]["epochs_per_scale"], 50, path)
+                self.assertEqual(payload["training"]["time_indices"], [0], path)
 
 if __name__ == "__main__":
     unittest.main()

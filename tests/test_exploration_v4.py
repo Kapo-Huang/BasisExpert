@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import csv
-import json
-import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,19 +8,16 @@ from unittest import mock
 
 import yaml
 
-from scripts import generate_exploration_v4_configs as generator
-from scripts import summarize_exploration_v4 as summarizer
+from scripts.ablation import generate_depth_and_regularization as generator
+from scripts.ablation import summarize_depth_and_regularization as summarizer
 from var_expert_inr.config import load_experiment_config
-from var_expert_inr.config.schema import ExplorationProbeConfig, TrainingConfig
-from var_expert_inr.models.sota.coordnet import CoordNet
-from var_expert_inr.rmdsrn.config import load_config as load_rmdsrn_config
-from var_expert_inr.rmdsrn.losses import exponential_variance_weight
+from var_expert_inr.config.schema import TrainingConfig
+from var_expert_inr.models.baselines.coordnet import CoordNet
 
 
 EXPECTED_WIDTHS = {
     "Size326": {2: 58, 3: 50, 5: 42, 7: 36, 10: 31},
     "Size652": {2: 80, 3: 70, 5: 58, 7: 50, 10: 43},
-    "Size1304": {2: 113, 3: 99, 5: 82, 7: 71, 10: 61},
 }
 
 
@@ -35,12 +30,12 @@ class ExplorationV4ConfigMatrixTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.repo_root = Path(__file__).resolve().parents[1]
-        cls.root = cls.repo_root / "configs_exploration_v4"
+        cls.root = cls.repo_root / "configs/ablation/depth_and_regularization"
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_matrix_coverage_and_unique_identity(self):
-        self.assertEqual(len(self.paths), 81)
-        counts = {"CoordNet": 0, "RMDSRN": 0}
+        self.assertEqual(len(self.paths), 30)
+        counts = {"CoordNet": 0}
         exp_ids: set[str] = set()
         destinations: set[Path] = set()
         coverage: set[tuple[str, str, str, str]] = set()
@@ -57,16 +52,16 @@ class ExplorationV4ConfigMatrixTestCase(unittest.TestCase):
             exp_ids.add(payload["exp_id"])
             destinations.add(path)
             coverage.add((family, size, profile, target))
-        self.assertEqual(counts, {"CoordNet": 54, "RMDSRN": 27})
-        self.assertEqual(len(coverage), 81)
+        self.assertEqual(counts, {"CoordNet": 30})
+        self.assertEqual(len(coverage), 30)
 
     def test_generator_rebuilds_only_an_isolated_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            generated_root = Path(tmpdir) / "configs_exploration_v4"
+            generated_root = Path(tmpdir) / "configs/ablation/depth_and_regularization"
             with mock.patch.object(generator, "CONFIG_ROOT", generated_root):
                 counts = generator.generate()
-            self.assertEqual(counts, {"CoordNet": 54, "RMDSRN": 27})
-            self.assertEqual(len(list(generated_root.rglob("*.yaml"))), 81)
+            self.assertEqual(counts, {"CoordNet": 30})
+            self.assertEqual(len(list(generated_root.rglob("*.yaml"))), 30)
 
     def test_coordnet_formula_matches_real_models_and_budget(self):
         self.assertEqual(generator.coordnet_widths(), EXPECTED_WIDTHS)
@@ -78,10 +73,10 @@ class ExplorationV4ConfigMatrixTestCase(unittest.TestCase):
                 self.assertEqual(actual, generator.coordnet_param_count(width, depth))
                 self.assertLessEqual(abs(actual - target_params) / target_params, 0.021)
 
-    def test_coordnet_depth_and_control_profiles_are_causal(self):
+    def test_coordnet_depth_profiles_are_causal(self):
         for size, widths in EXPECTED_WIDTHS.items():
             formal = yaml.safe_load(
-                (self.repo_root / "configs" / "CoordNet" / size / "ionization__GT.yaml").read_text(
+                (self.repo_root / "configs" / "rd_curve" / "CoordNet" / size / "ionization__GT.yaml").read_text(
                     encoding="utf-8"
                 )
             )
@@ -94,88 +89,19 @@ class ExplorationV4ConfigMatrixTestCase(unittest.TestCase):
                     )
                     self.assertEqual(payload["model"]["num_res"], depth)
                     self.assertEqual(payload["model"]["init_features"], width)
-                    self.assertEqual(payload["training"]["lr"], 5.0e-5)
+                    self.assertEqual(payload["training"]["lr"], 1.0e-5)
                     self.assertEqual(payload["training"]["scheduler"], formal["training"]["scheduler"])
                     self.assertNotIn("grad_clip_norm", payload["training"])
 
-        expected = {
-            "res10_scaled_lr": (10, 61, 1.25e-5, 0.0),
-            "res10_clip": (10, 61, 5.0e-5, 1.0),
-            "res5_scaled_lr_clip": (5, 82, 1.25e-5, 1.0),
-        }
-        for profile, (depth, width, lr, clip) in expected.items():
-            for target in generator.COORD_TARGETS:
-                payload = yaml.safe_load(
-                    (self.root / "CoordNet" / "Size1304" / profile / f"ionization__{target}.yaml").read_text(
-                        encoding="utf-8"
-                    )
-                )
-                self.assertEqual(payload["model"]["num_res"], depth)
-                self.assertEqual(payload["model"]["init_features"], width)
-                self.assertEqual(payload["training"]["lr"], lr)
-                self.assertEqual(payload["training"].get("grad_clip_norm", 0.0), clip)
-
-    def test_rmdsrn_profiles_and_schedule_values(self):
-        counts: dict[str, int] = {}
-        for path in sorted((self.root / "RMDSRN").rglob("*.yaml")):
-            size, profile = path.relative_to(self.root / "RMDSRN").parts[:2]
-            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-            counts[profile] = counts.get(profile, 0) + 1
-            training = payload["training"]
-            self.assertEqual(training["steps"], 75_000)
-            self.assertEqual(training["lr_schedule_steps"], 900_000)
-            self.assertEqual(training["lambda_schedule_steps"], 900_000)
-            self.assertTrue(payload["exploration_probe"]["retain_best_checkpoint"])
-            if profile != "schedule900k_lambda10":
-                self.assertIn(size, {"Size082", "Size1304"})
-        self.assertEqual(
-            counts,
-            {"schedule900k_lambda0": 6, "schedule900k_lambda1": 6, "schedule900k_lambda10": 15},
-        )
-
-        final_lambda = exponential_variance_weight(
-            75_000,
-            900_000,
-            minimum=0.0,
-            maximum=10.0,
-            growth_rate=500.0,
-        )
-        final_lr = 1.0e-7 + (0.005 - 1.0e-7) * (
-            1.0 + math.cos(math.pi * 75_000 / 900_000)
-        ) / 2.0
-        self.assertAlmostEqual(final_lambda, 0.01359664, places=8)
-        self.assertAlmostEqual(final_lr, 0.00491482, places=8)
-
-    def test_all_configs_load_and_old_defaults_remain_implicit(self):
+    def test_all_configs_load_and_defaults_remain_valid(self):
         for path in self.paths:
-            family = path.relative_to(self.root).parts[0]
-            loaded = load_rmdsrn_config(path) if family == "RMDSRN" else load_experiment_config(path)
-            probe = loaded["exploration_probe"] if family == "RMDSRN" else loaded.exploration_probe
-            enabled = probe["enabled"] if isinstance(probe, dict) else probe.enabled
-            self.assertTrue(enabled, path)
-
-        old_path = self.repo_root / "configs_exploration_v3" / "RMDSRN" / "Size082" / "ionization__GT.yaml"
-        old = load_rmdsrn_config(old_path)
-        self.assertNotIn("lr_schedule_steps", old["training"])
-        self.assertNotIn("lambda_schedule_steps", old["training"])
-        self.assertNotIn("grad_clip_norm", old["training"])
-        self.assertFalse(ExplorationProbeConfig().retain_best_checkpoint)
+            loaded = load_experiment_config(path)
+            self.assertTrue(loaded.exploration_probe.enabled, path)
         self.assertEqual(TrainingConfig().grad_clip_norm, 0.0)
 
-    def test_invalid_clipping_and_short_schedules_are_rejected(self):
+    def test_invalid_clipping_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "grad_clip_norm"):
             TrainingConfig(grad_clip_norm=-1.0)
-
-        source = self.root / "RMDSRN" / "Size082" / "schedule900k_lambda10" / "ionization__GT.yaml"
-        payload = yaml.safe_load(source.read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "invalid.yaml"
-            for field, value in (("grad_clip_norm", -1.0), ("lr_schedule_steps", 74_999), ("lambda_schedule_steps", 1)):
-                invalid = json.loads(json.dumps(payload))
-                invalid["training"][field] = value
-                path.write_text(yaml.safe_dump(invalid, sort_keys=False), encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, field):
-                    load_rmdsrn_config(path)
 
 
 class ExplorationV4SummaryTestCase(unittest.TestCase):
@@ -195,7 +121,7 @@ class ExplorationV4SummaryTestCase(unittest.TestCase):
     def test_failure_missing_metric_and_profile_aggregation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            config_root = repo / "configs_exploration_v4"
+            config_root = repo / "configs/ablation/depth_and_regularization"
             run_root = repo / "runs" / "exploration_v4"
             status_path = repo / "batch" / "status.tsv"
             output = repo / "batch" / "summary.tsv"

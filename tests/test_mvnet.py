@@ -20,7 +20,7 @@ from var_expert_inr.config.schema import (
 from var_expert_inr.data import build_dataset
 from var_expert_inr.data.base import DatasetMeta
 from var_expert_inr.models import build_model, materialize_model_config
-from var_expert_inr.models.sota.mvnet import (
+from var_expert_inr.models.baselines.mvnet import (
     MVNet4D,
     ResidualSineBlock,
     SineLayer,

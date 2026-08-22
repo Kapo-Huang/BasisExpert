@@ -1,0 +1,52 @@
+experiment: miner_ionization_size082_PD
+exp_id: miner-ionization-size082-PD
+experiment_root: ${REPO_ROOT}/runs/miner
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  target: PD
+  targets:
+    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
+    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
+    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
+model:
+  name: miner
+  scales: 4
+  block_size: 40
+  hidden_features: 3
+  hidden_layers: 2
+  omega_0: 30.0
+  coordinate_type: local
+  propagation: coarse_to_fine
+  carry_start_scale: 2
+  coarse_feature_multiplier: 4
+training:
+  epochs_per_scale: 2000
+  lr: 0.001
+  beta_1: 0.9
+  beta_2: 0.999
+  block_mse_threshold: 0.0002
+  scale_convergence_delta: 2.0e-06
+  global_mse_threshold: 0.0
+  lr_decay: 0.999
+  max_active_blocks_per_step: 2048
+  time_indices: all
+  seed: 42
+  device: cuda
+  log_every: 25
+evaluation:
+  save_predictions: false
+  run_after_training: false
+  default_model: checkpoint
+log:
+  effective_config: true
+  startup_timing: true
+  epoch_summary: true

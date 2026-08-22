@@ -24,16 +24,16 @@ the first 75,000 steps of its formal 900,000-step schedules.
 ## Generate
 
 ```bash
-python scripts/generate_exploration_v4_configs.py
+python scripts/ablation/generate_depth_and_regularization.py
 ```
 
-This recreates only `configs_exploration_v4/`.
+This recreates only `configs/ablation/depth_and_regularization/`.
 
 ## Run
 
 ```bash
 conda activate compression
-MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v4.sh
+MAX_PARALLEL_JOBS=5 bash scripts/ablation/run_depth_and_regularization.sh
 ```
 
 Five-way parallelism is the default. The runner uses a bounded queue within

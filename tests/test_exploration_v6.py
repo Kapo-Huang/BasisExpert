@@ -8,15 +8,15 @@ from pathlib import Path
 
 import yaml
 
-from scripts import generate_exploration_v6_configs as generator
-from scripts import summarize_exploration_v6 as summarizer
-from var_expert_inr.ecnr.config import load_config
+from scripts.exploration import generate_ecnr_tuning as generator
+from scripts.exploration import summarize_ecnr_tuning as summarizer
+from var_expert_inr.methods.ecnr.config import load_config
 
 
 class ExplorationV6ConfigMatrixTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(__file__).resolve().parents[1] / "configs_exploration_v6"
+        cls.root = Path(__file__).resolve().parents[1] / "configs/exploration/ecnr_tuning"
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_matrix_and_complete_ecnr_smoke_budget(self):
@@ -51,7 +51,7 @@ class ExplorationV6SummaryTestCase(unittest.TestCase):
     def test_profile_ranking_uses_paired_control_psnr(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            config_root = repo / "configs_exploration_v6"
+            config_root = repo / "configs/exploration/ecnr_tuning"
             run_root = repo / "runs" / "exploration_v6"
             status = repo / "status.tsv"
             status_rows = ["config\tstatus\texit_code\tlog"]

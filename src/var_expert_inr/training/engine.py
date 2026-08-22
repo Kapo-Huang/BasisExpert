@@ -13,11 +13,11 @@ from torch.utils.data import DataLoader, Subset, random_split
 
 from ..config.schema import LogConfig
 from ..evaluation.metrics import PSNRAccumulator
-from ..models.sota.instant_ngp import (
+from ..models.baselines.instant_ngp import (
     INSTANT_NGP_DECODER_L2_WEIGHT,
     InstantNGP,
 )
-from ..models.sota.mvnet import MVNet4D
+from ..models.baselines.mvnet import MVNet4D
 from ..pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ..utils.checkpoint import save_checkpoint
 from ..utils.memory import TrainingMemoryTracker, write_training_memory

@@ -9,7 +9,7 @@ from unittest import mock
 import numpy as np
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "combustion.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "tools" / "combustion.py"
 SPEC = importlib.util.spec_from_file_location("standalone_combustion", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 combustion = importlib.util.module_from_spec(SPEC)

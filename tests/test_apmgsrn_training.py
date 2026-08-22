@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from var_expert_inr.apmgsrn.cli import run_train
+from var_expert_inr.methods.apmgsrn.cli import run_train
 
 
 class APMGSRNTrainingTestCase(unittest.TestCase):

@@ -4,7 +4,7 @@ import numpy as np
 
 from var_expert_inr.config.schema import VolumeShape
 from var_expert_inr.data.base import DatasetMeta
-from var_expert_inr.mc_inr.data import (
+from var_expert_inr.methods.mc_inr.data import (
     cluster_ids_for_rows,
     sample_volume_rows_from_cluster,
     sample_volume_rows_global,

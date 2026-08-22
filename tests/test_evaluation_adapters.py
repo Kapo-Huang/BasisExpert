@@ -8,15 +8,15 @@ from unittest import mock
 import numpy as np
 import torch
 
-from scripts import evaluate_neural_expert_config as neural_eval
+from scripts.tools import evaluate_neural_expert_config as neural_eval
 
-from var_expert_inr.apmgsrn.model import APMGSRN
+from var_expert_inr.methods.apmgsrn.model import APMGSRN
 from var_expert_inr.evaluation.standalone import (
     _decode_apmgsrn_frames,
     _decode_neural_expert_frames,
 )
-from var_expert_inr.neural_expert.ionization.inr import INR
-from var_expert_inr.neural_expert.ionization.inr_moe import INR_MoE
+from var_expert_inr.methods.neural_expert.ionization.inr import INR
+from var_expert_inr.methods.neural_expert.ionization.inr_moe import INR_MoE
 
 
 class StandaloneAdapterContractTestCase(unittest.TestCase):

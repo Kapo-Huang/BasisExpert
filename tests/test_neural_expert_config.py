@@ -1,17 +1,19 @@
-﻿import tempfile
+import tempfile
 import unittest
 from pathlib import Path
 
 import yaml
 
-from var_expert_inr.neural_expert.config import load_config
+from var_expert_inr.methods.neural_expert.config import load_config
 
 
 class NeuralExpertConfigTestCase(unittest.TestCase):
     def test_repo_configs_load(self):
         repo_root = Path(__file__).resolve().parents[1]
-        config_paths = sorted((repo_root / "configs" / "NeuralExpert").rglob("*.yaml"))
-        self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization__GT.yaml" for path in config_paths))
+        config_paths = sorted(
+            (repo_root / "configs" / "main" / "NeuralExpert").rglob("*.yaml")
+        )
+        self.assertTrue(any(path.name == "ionization__GT.yaml" for path in config_paths))
         for path in config_paths:
             cfg = load_config(path)
             self.assertIn("DATA", cfg)

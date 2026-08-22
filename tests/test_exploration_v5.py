@@ -8,18 +8,18 @@ from unittest import mock
 
 import yaml
 
-from scripts import generate_exploration_v5_configs as generator
-from scripts import summarize_exploration_v5 as summarizer
+from scripts.exploration import generate_optimizer_tuning as generator
+from scripts.exploration import summarize_optimizer_tuning as summarizer
 from var_expert_inr.config import load_experiment_config
-from var_expert_inr.fv_srn.config import load_config as load_fv_config
-from var_expert_inr.fv_srn.model import TemporalFVSRN
+from var_expert_inr.methods.fv_srn.config import load_config as load_fv_config
+from var_expert_inr.methods.fv_srn.model import TemporalFVSRN
 
 
 class ExplorationV5ConfigMatrixTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.repo_root = Path(__file__).resolve().parents[1]
-        cls.root = cls.repo_root / "configs_exploration_v5"
+        cls.root = cls.repo_root / "configs/exploration/optimizer_tuning"
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_matrix_coverage_and_unique_identity(self):
@@ -45,7 +45,7 @@ class ExplorationV5ConfigMatrixTestCase(unittest.TestCase):
 
     def test_generator_rebuilds_only_isolated_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            generated_root = Path(tmpdir) / "configs_exploration_v5"
+            generated_root = Path(tmpdir) / "configs/exploration/optimizer_tuning"
             sentinel = Path(tmpdir) / "formal-sentinel.yaml"
             sentinel.write_text("keep: true\n", encoding="utf-8")
             with mock.patch.object(generator, "CONFIG_ROOT", generated_root):
@@ -155,7 +155,7 @@ class ExplorationV5SummaryTestCase(unittest.TestCase):
     ) -> None:
         config = (
             repo
-            / "configs_exploration_v5"
+            / "configs/exploration/optimizer_tuning"
             / family
             / structure
             / profile
@@ -275,7 +275,7 @@ class ExplorationV5SummaryTestCase(unittest.TestCase):
             profiles = repo / "batch" / "profiles.tsv"
             attention = repo / "batch" / "attention.txt"
             result = summarizer.build_summary(
-                config_root=repo / "configs_exploration_v5",
+                config_root=repo / "configs/exploration/optimizer_tuning",
                 status_path=status_path,
                 output_path=output,
                 profile_output_path=profiles,

@@ -13,27 +13,27 @@ import yaml
 from var_expert_inr.cli import run_evaluate as unified_run_evaluate
 from var_expert_inr.cli import run_predict as unified_run_predict
 from var_expert_inr.cli import run_train as unified_run_train
-from var_expert_inr.ecnr.artifact import load_artifact
-from var_expert_inr.ecnr.blocks import (
+from var_expert_inr.methods.ecnr.artifact import load_artifact
+from var_expert_inr.methods.ecnr.blocks import (
     attach_clustering,
     build_training_targets,
     prepare_scale_blocks,
     reconstruct_from_normalized_blocks,
 )
-from var_expert_inr.ecnr.clustering import balanced_kmeans
-from var_expert_inr.ecnr.cnn import BoundaryCNN, forward_tiled
-from var_expert_inr.ecnr.config import load_config
-from var_expert_inr.ecnr.huffman import decode as huffman_decode
-from var_expert_inr.ecnr.huffman import encode as huffman_encode
-from var_expert_inr.ecnr.model import PackedSiren, local_coordinate_grid
-from var_expert_inr.ecnr.pruning import (
+from var_expert_inr.methods.ecnr.clustering import balanced_kmeans
+from var_expert_inr.methods.ecnr.cnn import BoundaryCNN, forward_tiled
+from var_expert_inr.methods.ecnr.config import load_config
+from var_expert_inr.methods.ecnr.huffman import decode as huffman_decode
+from var_expert_inr.methods.ecnr.huffman import encode as huffman_encode
+from var_expert_inr.methods.ecnr.model import PackedSiren, local_coordinate_grid
+from var_expert_inr.methods.ecnr.pruning import (
     BIAS_CANDIDATES,
     WEIGHT_CANDIDATES,
     apply_cumulative_pruning,
     family_sparsity,
     initial_pruning_masks,
 )
-from var_expert_inr.ecnr.pyramid import (
+from var_expert_inr.methods.ecnr.pyramid import (
     build_three_scale_pyramid,
     retained_time_positions,
     upsample_to_scale,
@@ -148,7 +148,9 @@ class ECNRTestCase(unittest.TestCase):
 
     def test_formal_config_has_equal_primary_budget(self):
         root = Path(__file__).resolve().parents[1]
-        cfg = load_config(root / "configs" / "ECNR" / "ionization__GT.yaml")
+        cfg = load_config(
+            root / "configs" / "main" / "ECNR" / "ionization__GT.yaml"
+        )
         training = cfg["training"]
         self.assertEqual(
             3 * training["epochs_per_scale"] * training["batch_size"] * training["batches_per_epoch_budget"],

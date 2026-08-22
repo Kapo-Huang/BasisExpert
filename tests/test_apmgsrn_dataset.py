@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from var_expert_inr.apmgsrn.dataset import IonizationTargetReader, IonizationTimestepDataset
+from var_expert_inr.methods.apmgsrn.dataset import IonizationTargetReader, IonizationTimestepDataset
 
 
 class APMGSRNDatasetTestCase(unittest.TestCase):

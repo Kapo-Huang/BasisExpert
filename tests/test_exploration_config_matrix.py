@@ -4,21 +4,21 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from var_expert_inr.apmgsrn.model import APMGSRN
-from var_expert_inr.apmgsrn.config import load_config as load_apmg_config
+from var_expert_inr.methods.apmgsrn.model import APMGSRN
+from var_expert_inr.methods.apmgsrn.config import load_config as load_apmg_config
 from var_expert_inr.config import load_experiment_config
 from var_expert_inr.config.schema import ModelConfig
 from var_expert_inr.data.base import DatasetMeta
-from var_expert_inr.fv_srn.model import TemporalFVSRN
-from var_expert_inr.fv_srn.config import load_config as load_fv_config
-from var_expert_inr.mc_inr.config import load_config as load_mc_config
-from var_expert_inr.mc_inr.data import TargetLayoutEntry
-from var_expert_inr.mc_inr.model import MCINR
+from var_expert_inr.methods.fv_srn.model import TemporalFVSRN
+from var_expert_inr.methods.fv_srn.config import load_config as load_fv_config
+from var_expert_inr.methods.mc_inr.config import load_config as load_mc_config
+from var_expert_inr.methods.mc_inr.data import TargetLayoutEntry
+from var_expert_inr.methods.mc_inr.model import MCINR
 from var_expert_inr.models import build_model
-from var_expert_inr.neural_expert.ionization.model_registry import build_model as build_neural_model
-from var_expert_inr.neural_expert.config import load_config as load_neural_config
-from var_expert_inr.rmdsrn.config import load_config as load_rm_config
-from var_expert_inr.rmdsrn.model import RMDSRN
+from var_expert_inr.methods.neural_expert.ionization.model_registry import build_model as build_neural_model
+from var_expert_inr.methods.neural_expert.config import load_config as load_neural_config
+from var_expert_inr.methods.rmdsrn.config import load_config as load_rm_config
+from var_expert_inr.methods.rmdsrn.model import RMDSRN
 
 
 TARGETS = {"GT", "H_plus", "H2", "He", "PD"}
@@ -30,7 +30,7 @@ class ExplorationConfigMatrixTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.repo_root = Path(__file__).resolve().parents[1]
-        cls.root = cls.repo_root / "configs_exploration"
+        cls.root = cls.repo_root / "configs/ablation/architecture"
         cls.paths = sorted(cls.root.rglob("*.yaml"))
 
     def test_exact_count_root_and_probe(self):
