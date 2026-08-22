@@ -38,6 +38,7 @@ from .sota.mvnet import (
     build_mvnet_from_config,
 )
 from .sota.siren import build_siren_from_config
+from .sota.stsr_inr import build_stsr_inr_from_config
 
 
 ModelBuilder = Callable[[dict[str, Any], DatasetMeta], object]
@@ -150,6 +151,10 @@ def _build_instant_vnr(cfg: dict, meta: DatasetMeta):
 
 def _build_mvnet(cfg: dict, meta: DatasetMeta):
     return build_mvnet_from_config(cfg)
+
+
+def _build_stsr_inr(cfg: dict, meta: DatasetMeta):
+    return build_stsr_inr_from_config(cfg, view_specs_from_meta(meta))
 
 
 def _build_var_expert(cfg: dict, meta: DatasetMeta):
@@ -433,6 +438,50 @@ def _materialize_mvnet(
     }
 
 
+def _materialize_stsr_inr(
+    cfg: dict[str, Any],
+    meta: DatasetMeta,
+) -> dict[str, Any]:
+    _reject_unknown_model_keys(
+        cfg,
+        {
+            "in_features",
+            "init_features",
+            "num_res",
+            "omega_0",
+            "embedding_dims",
+            "outermost_linear",
+            "use_global_latent",
+        },
+        "stsr_inr",
+    )
+    if not meta.is_multitarget:
+        raise ValueError("stsr_inr requires a multi-target dataset")
+    materialized = {
+        "in_features": _resolve_in_features(cfg, meta, "stsr_inr"),
+        "init_features": int(cfg.get("init_features", 64)),
+        "num_res": int(cfg.get("num_res", 5)),
+        "omega_0": float(cfg.get("omega_0", 5.0)),
+        "embedding_dims": int(cfg.get("embedding_dims", 256)),
+        "outermost_linear": _coerce_bool(
+            cfg.get("outermost_linear", True),
+            key="stsr_inr.outermost_linear",
+        ),
+        "use_global_latent": _coerce_bool(
+            cfg.get("use_global_latent", True),
+            key="stsr_inr.use_global_latent",
+        ),
+    }
+    for key in ("in_features", "init_features", "num_res", "embedding_dims"):
+        if int(materialized[key]) <= 0:
+            raise ValueError(f"stsr_inr requires {key} > 0")
+    if float(materialized["omega_0"]) <= 0.0:
+        raise ValueError("stsr_inr requires omega_0 > 0")
+    if not materialized["use_global_latent"]:
+        raise ValueError("stsr_inr requires use_global_latent=true")
+    return materialized
+
+
 def _materialize_var_expert(cfg: dict[str, Any], meta: DatasetMeta) -> dict[str, Any]:
     _reject_unknown_model_keys(cfg, VAR_EXPERT_ALLOWED_KEYS, "var_expert")
     base_dim = cfg.get("base_dim")
@@ -573,6 +622,7 @@ MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "instant_ngp": _build_instant_ngp,
     "instant_vnr": _build_instant_vnr,
     "mvnet": _build_mvnet,
+    "stsr_inr": _build_stsr_inr,
     "var_expert": _build_var_expert,
     "shared_enc_inr": _build_shared_enc_inr,
 }
@@ -584,6 +634,7 @@ MODEL_CONFIG_MATERIALIZERS: dict[str, ModelConfigMaterializer] = {
     "instant_ngp": _materialize_instant_ngp,
     "instant_vnr": _materialize_instant_vnr,
     "mvnet": _materialize_mvnet,
+    "stsr_inr": _materialize_stsr_inr,
     "var_expert": _materialize_var_expert,
     "shared_enc_inr": _materialize_shared_enc_inr,
 }

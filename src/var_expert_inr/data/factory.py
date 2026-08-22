@@ -35,6 +35,7 @@ def build_dataset(data_cfg: DataConfig, *, model_name: str | None = None):
     if data_cfg.kind == "node":
         return NodeFieldDataset(
             coords_path=str(data_cfg.coords_path),
+            coordinate_stats_path=data_cfg.coordinate_stats_path,
             target_path=target_path,
             targets=selected_targets,
         )

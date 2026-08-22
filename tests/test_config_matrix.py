@@ -36,6 +36,7 @@ SIZES = {
 }
 MOE_RERUN_LIST = "run_moe_non_ionization_main.list"
 COMBINED_RUN_LIST = "run_neural_expert_non_ionization_main.list"
+COORDNET_MVNET_STSR_RUN_LIST = "run_coordnet_combustion_mvnet_katrina_stsr_redsea.list"
 
 
 class ConfigMatrixTestCase(unittest.TestCase):
@@ -53,12 +54,12 @@ class ConfigMatrixTestCase(unittest.TestCase):
         ]
         return [line for line in selected if line]
 
-    def test_matrix_contains_exactly_458_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 458)
+    def test_matrix_contains_exactly_459_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 459)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
-    def test_generator_preserves_combustion_and_generates_458_configs(self):
+    def test_generator_preserves_combustion_and_generates_459_configs(self):
         committed_path = self.config_root / "VarExpert" / "combustion_40NH3_1.yaml"
         committed_payload = yaml.safe_load(committed_path.read_text(encoding="utf-8"))
         committed_moe = {
@@ -84,7 +85,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 for path in (generated_root / "MoE-INR").rglob("*.yaml")
             }
 
-        self.assertEqual(len(generated_paths), 458)
+        self.assertEqual(len(generated_paths), 459)
         self.assertEqual(generated_payload, committed_payload)
         self.assertEqual(generated_moe, committed_moe)
 
@@ -92,7 +93,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         selected = self.read_run_list("run_all_configs.list")
         expected = {path.relative_to(self.repo_root).as_posix() for path in self.paths}
 
-        self.assertEqual(len(selected), 458)
+        self.assertEqual(len(selected), 459)
         self.assertEqual(set(selected), expected)
 
     def test_main_and_rd_curve_lists_partition_the_complete_matrix(self):
@@ -101,7 +102,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         rd_curve_configs = self.read_run_list("run_rd_curve_configs.list")
         size_marker = "/Size"
 
-        self.assertEqual(len(main_configs), 248)
+        self.assertEqual(len(main_configs), 249)
         self.assertEqual(len(rd_curve_configs), 210)
         self.assertTrue(all(size_marker not in path for path in main_configs))
         self.assertTrue(all(size_marker in path for path in rd_curve_configs))
@@ -180,6 +181,34 @@ class ConfigMatrixTestCase(unittest.TestCase):
             self.assertEqual(manager["TRAINING"]["n_points"], 16000, manager_path)
             self.assertEqual(manager["TRAINING"]["num_epochs"], 30000, manager_path)
             self.assertEqual(main["MODEL"]["manager_pt_path"], manager["MODEL"]["manager_pt_path"])
+
+    def test_coordnet_mvnet_stsr_list_and_redsea_config(self):
+        selected = self.read_run_list(COORDNET_MVNET_STSR_RUN_LIST)
+        coordnet = {
+            f"configs/CoordNet/{COMBUSTION_DATASET}__{target}.yaml"
+            for target in COMBUSTION_TARGETS
+        }
+        expected = coordnet | {
+            "configs/MVNet/katrina.yaml",
+            "configs/STSR-INR/redsea.yaml",
+        }
+        self.assertEqual(len(selected), 15)
+        self.assertEqual(set(selected), expected)
+
+        payload = yaml.safe_load(
+            (self.config_root / "STSR-INR" / "redsea.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(payload["data"]["dataset_name"], "redsea")
+        self.assertEqual(
+            list(payload["data"]["targets"]),
+            ["fort63", "fort64", "fort73", "speed", "v"],
+        )
+        self.assertEqual(payload["model"]["name"], "stsr_inr")
+        self.assertEqual(payload["training"]["epochs"], 60)
+        self.assertEqual(payload["training"]["batch_size"], 8192)
+        self.assertEqual(payload["training"]["sampler"], "uniform_random")
 
     def test_single_target_default_and_size_coverage(self):
         for family in ("SIREN", "CoordNet", "MoE-INR", "NeuralExpert"):
@@ -414,15 +443,16 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     self.fail(f"Generated config contains ambiguous relative path at {path}:{value_path}: {value}")
                 if self._looks_like_generated_path(value_path, value):
                     self.assertTrue(
-                        value.startswith("${REPO_ROOT}/"),
-                        f"Expected repo-root path at {path}:{value_path}, got {value!r}",
+                        value.startswith("${REPO_ROOT}/")
+                        or value.startswith("${DATASETS_ROOT}/"),
+                        f"Expected a declared root token at {path}:{value_path}, got {value!r}",
                     )
 
     def test_generated_configs_disable_training_predictions_and_step_windows(self):
         for path in self.paths:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             family = path.relative_to(self.config_root).parts[0]
-            if family in {"VarExpert", "MVNet", "SIREN", "CoordNet", "MoE-INR", "InstantNGP", "InstantVNR", "MC-INR", "fV-SRN", "ECNR"}:
+            if family in {"VarExpert", "MVNet", "SIREN", "CoordNet", "MoE-INR", "InstantNGP", "InstantVNR", "MC-INR", "fV-SRN", "ECNR", "STSR-INR"}:
                 self.assertFalse(payload["evaluation"]["save_predictions"], path)
             if family in {"fV-SRN", "RMDSRN"}:
                 self.assertFalse(payload["evaluation"]["run_after_training"], path)
@@ -477,6 +507,20 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     )["MODEL"]
                     self.assertEqual(neural_model["decoder_n_hidden_layers"], 1)
                     self.assertEqual(neural_model["manager_n_hidden_layers"], 1)
+
+    def test_apmgsrn_exploration_winner_drives_main_configs(self):
+        expected_model = {
+            "feature_grid_shape": [4, 4, 4],
+            "n_features": 14,
+            "n_grids": 1,
+            "nodes_per_layer": 16,
+            "n_layers": 3,
+            "requires_padded_feats": True,
+        }
+        for path in (self.config_root / "APMGSRN").glob("*.yaml"):
+            model = yaml.safe_load(path.read_text(encoding="utf-8"))["MODEL"]
+            for key, value in expected_model.items():
+                self.assertEqual(model[key], value, path)
 
     def test_instant_ngp_uses_fixed_model_optimizer_and_single_target(self):
         expected_targets = DATASET_TARGETS["ionization"] | COMBUSTION_SCALAR_TARGETS
@@ -640,6 +684,12 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     * training["epochs"]
                 )
                 self.assertEqual(total, 921_600_000, path)
+                continue
+            if family == "STSR-INR":
+                training = payload["training"]
+                self.assertEqual(training["epochs"], 60, path)
+                self.assertEqual(training["batch_size"], 8192, path)
+                self.assertNotIn("batches_per_epoch_budget", training)
                 continue
             if family == "ECNR":
                 training = payload["training"]

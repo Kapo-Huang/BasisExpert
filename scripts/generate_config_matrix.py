@@ -9,10 +9,11 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs"
-FORMAL_CONFIG_COUNT = 458
-MAIN_CONFIG_COUNT = 248
+FORMAL_CONFIG_COUNT = 459
+MAIN_CONFIG_COUNT = 249
 RD_CURVE_CONFIG_COUNT = 210
 REPO_ROOT_TOKEN = "${REPO_ROOT}"
+DATASETS_ROOT_TOKEN = "${DATASETS_ROOT}"
 SIZES = {
     "Size082": 0.82,
     "Size163": 1.63,
@@ -67,6 +68,7 @@ COMBUSTION_DATASET = {
 COMBUSTION_SCALAR_TARGETS = [
     target for target in COMBUSTION_DATASET["targets"] if target != "Velocity"
 ]
+REDSEA_TARGETS = ["fort63", "fort64", "fort73", "speed", "v"]
 COMBUSTION_KEYFRAMES = [
     0,
     182,
@@ -134,6 +136,13 @@ VAR_SIZE_PROFILES = {
 }
 NEURAL_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 48, "Size1304": 67}
 MC_SIZE_DIMS = {"Size082": 30, "Size163": 43, "Size326": 62, "Size652": 88, "Size1304": 125}
+APMG_MAIN_MODEL = {
+    "feature_grid_shape": [4, 4, 4],
+    "n_grids": 1,
+    "n_features": 14,
+    "nodes_per_layer": 16,
+    "n_layers": 3,
+}
 APMG_SIZE = {
     "Size082": {"feature_grid_shape": [7, 7, 7], "n_grids": 1, "n_features": 1, "nodes_per_layer": 16, "n_layers": 2},
     "Size163": {"feature_grid_shape": [5, 5, 5], "n_grids": 6, "n_features": 1, "nodes_per_layer": 16, "n_layers": 3},
@@ -544,6 +553,57 @@ def generate_mvnet() -> int:
     dump(CONFIGS / "MVNet" / f"{COMBUSTION_DATASET['name']}.yaml", payload)
     count += 1
     return count
+
+
+def generate_stsr_inr() -> int:
+    redsea_root = f"{DATASETS_ROOT_TOKEN}/Ocean/train"
+    payload = {
+        "experiment": "redsea_stsr_inr",
+        "exp_id": "stsr-inr-redsea",
+        "experiment_root": repo_path("runs"),
+        "data": {
+            "kind": "node",
+            "dataset_name": "redsea",
+            "split": "train",
+            "coords_path": f"{redsea_root}/source_XYZT.npy",
+            "coordinate_stats_path": f"{redsea_root}/target_stats_multi_normalized.npz",
+            "targets": {
+                target: f"{redsea_root}/target_{target}_normalized.npy"
+                for target in REDSEA_TARGETS
+            },
+        },
+        "model": {
+            "name": "stsr_inr",
+            "in_features": 4,
+            "init_features": 64,
+            "num_res": 5,
+            "omega_0": 5.0,
+            "embedding_dims": 256,
+            "outermost_linear": True,
+            "use_global_latent": True,
+        },
+        "training": {
+            "epochs": 60,
+            "batch_size": 8192,
+            "pred_batch_size": 8192,
+            "num_workers": 0,
+            "lr": 5.0e-5,
+            "val_split": 0.0,
+            "log_every": 1,
+            "log_psnr_every": 10,
+            "psnr_sample_ratio": 0.1,
+            "save_every": 10,
+            "early_stop_patience": 0,
+            "loss_type": "mse",
+            "seed": 42,
+            "sampler": "uniform_random",
+            "pretrain": {"enabled": False},
+        },
+        "evaluation": evaluation(),
+        "log": log_config(),
+    }
+    dump(CONFIGS / "STSR-INR" / "redsea.yaml", payload)
+    return 1
 
 
 def evaluation() -> dict:
@@ -974,10 +1034,7 @@ def apmg_payload(
     size: str | None,
     dataset: str = "ionization",
 ) -> dict:
-    sizing = APMG_SIZE[size] if size else {
-        "feature_grid_shape": [8, 8, 8], "n_grids": 64, "n_features": 2,
-        "nodes_per_layer": 64, "n_layers": 2,
-    }
+    sizing = APMG_SIZE[size] if size else APMG_MAIN_MODEL
     tag = f"-{size.lower()}" if size else ""
     data = volume_data(target, nested, dataset=dataset)
     return {
@@ -993,7 +1050,7 @@ def apmg_payload(
             "n_layers": sizing["n_layers"],
             "use_bias": False, "use_tcnn_if_available": True,
             "grid_initialization": "default",
-            "requires_padded_feats": True if size else None,
+            "requires_padded_feats": True,
         },
         "DATA": {
             "dataset_name": dataset, "target": target,
@@ -1206,6 +1263,7 @@ def main() -> None:
         "instant_ngp": generate_instant_ngp(),
         "instant_vnr": generate_instant_vnr(),
         "mvnet": generate_mvnet(),
+        "stsr_inr": generate_stsr_inr(),
         "var_expert": generate_var_expert(),
         "mc_inr": generate_mc(),
         "neural_expert": generate_neural(),

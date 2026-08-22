@@ -228,6 +228,7 @@ configs/SIREN/katrina__fort64.yaml
 configs/SIREN/katrina__fort73.yaml
 configs/SIREN/katrina__speed.yaml
 configs/SIREN/katrina__v.yaml
+configs/STSR-INR/redsea.yaml
 configs/VarExpert/bathymetry.yaml
 configs/VarExpert/combustion_40NH3_1.yaml
 configs/VarExpert/ionization.yaml

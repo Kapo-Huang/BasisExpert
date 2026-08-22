@@ -1,0 +1,20 @@
+# CoordNet: all 13 Combustion targets.
+configs/CoordNet/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/CoordNet/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/CoordNet/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/CoordNet/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/CoordNet/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/CoordNet/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/CoordNet/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/CoordNet/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/CoordNet/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/CoordNet/combustion_40NH3_1__Pressure.yaml
+configs/CoordNet/combustion_40NH3_1__Temperature.yaml
+configs/CoordNet/combustion_40NH3_1__Velocity.yaml
+configs/CoordNet/combustion_40NH3_1__Velocity_Magnitude.yaml
+
+# MVNet: one joint Katrina config.
+configs/MVNet/katrina.yaml
+
+# STSR-INR: one joint RedSea config.
+configs/STSR-INR/redsea.yaml

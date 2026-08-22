@@ -83,14 +83,15 @@ python -m var_expert_inr.apmgsrn.cli evaluate --run runs/<run> --timesteps 0:10
 python -m var_expert_inr.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
 ```
 
-The checked-in formal experiment matrix contains 458 configs. Every model family
-has a main Combustion (`40NH3_1`) experiment. SIREN, CoordNet, and MoE-INR cover
+The checked-in formal experiment matrix contains 459 configs. The established
+matrix families have main Combustion (`40NH3_1`) experiments, while STSR-INR
+adds a joint RedSea experiment. SIREN, CoordNet, and MoE-INR cover
 all 13 exported fields, including the three-component `Velocity` target. Models
 whose published implementation requires scalar outputs cover the other 12 fields;
 MVNet jointly models those 12 scalar fields, while MC-INR and VarExpert jointly
 model all 13 fields. Ionization additionally has `Size082`, `Size163`, `Size326`,
 `Size652`, and `Size1304` variants plus a VarExpert DWA loss-balancing config.
-All primary training stages except MVNet and NeuralExpert consume 14.4 billion physical samples. NeuralExpert uses 960 million sampled points (60,000 optimizer steps at 16,000 points per step).
+All primary training stages except MVNet, NeuralExpert, and STSR-INR consume 14.4 billion physical samples. NeuralExpert uses 960 million sampled points (60,000 optimizer steps at 16,000 points per step).
 InstantVNR accumulates four 16,000-sample batches into an approximately
 paper-sized 64,000-sample optimizer update; other unified baselines retain their
 configured update batches. MVNet uses its method-specific 300 epochs,
@@ -121,7 +122,7 @@ CONFIG_LIST_FILE=scripts/my_configs.list bash scripts/run_all_configs.sh
 Two ready-made subsets are also provided:
 
 ```bash
-# Main experiments only: 248 configs without Size tiers
+# Main experiments only: 249 configs without Size tiers
 CONFIG_LIST_FILE=scripts/run_main_configs.list bash scripts/run_all_configs.sh
 
 # RD-Curve experiments only: 210 Size-tier configs
@@ -155,6 +156,21 @@ bash scripts/run_neural_expert_non_ionization_main.sh
 DRY_RUN=1 bash scripts/run_neural_expert_non_ionization_main.sh
 BATCH_LOG_ROOT=batch_logs/<existing-batch> bash scripts/run_neural_expert_non_ionization_main.sh
 MAX_PARALLEL_JOBS=5 CONDA_ENV=compression bash scripts/run_neural_expert_non_ionization_main.sh
+```
+
+The CoordNet-Combustion + MVNet-Katrina + STSR-INR-RedSea entrypoint contains
+15 configs: the 13 independent CoordNet Combustion targets, one joint MVNet
+Katrina config, and one joint five-attribute STSR-INR RedSea config. Stages run
+in that order, with at most five concurrent jobs by default. RedSea data is read
+from the sibling `Datasets/Ocean/train` directory; set `DATASETS_ROOT` when the
+datasets directory lives elsewhere.
+
+```bash
+bash scripts/run_coordnet_combustion_mvnet_katrina_stsr_redsea.sh
+DRY_RUN=1 bash scripts/run_coordnet_combustion_mvnet_katrina_stsr_redsea.sh
+BATCH_LOG_ROOT=batch_logs/<existing-batch> bash scripts/run_coordnet_combustion_mvnet_katrina_stsr_redsea.sh
+MAX_PARALLEL_JOBS=5 CONDA_ENV=compression bash scripts/run_coordnet_combustion_mvnet_katrina_stsr_redsea.sh
+DATASETS_ROOT=/path/to/Datasets bash scripts/run_coordnet_combustion_mvnet_katrina_stsr_redsea.sh
 ```
 
 Size-structure exploration is generated and run independently of the formal

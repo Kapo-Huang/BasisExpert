@@ -205,6 +205,7 @@ append_serial_main_family "VarExpert"
 append_serial_main_family "MVNet"
 append_attribute_main_groups "SIREN" "all"
 append_attribute_main_groups "CoordNet" "all"
+append_serial_main_family "STSR-INR"
 append_attribute_main_groups "MoE-INR" "all"
 append_volume_main_group "InstantNGP"
 append_volume_main_group "InstantVNR"
@@ -245,8 +246,8 @@ wait_for_all_pids() {
 }
 
 matrix_total="$(group_config_count)"
-if [[ "${matrix_total}" -ne 458 ]]; then
-    printf 'Expected 458 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
+if [[ "${matrix_total}" -ne 459 ]]; then
+    printf 'Expected 459 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
     exit 2
 fi
 load_config_selection || exit $?

@@ -1,7 +1,7 @@
 # Formal training selection: one repository-relative YAML path per line.
 # Comment out or delete entries to run only a subset.
 # Execution order and parallel grouping remain defined by run_all_configs.sh.
-# Active entries must be unique and belong to the 458-config formal matrix.
+# Active entries must be unique and belong to the 459-config formal matrix.
 
 configs/APMGSRN/combustion_40NH3_1__Absolute_Pressure.yaml
 configs/APMGSRN/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
@@ -409,6 +409,7 @@ configs/SIREN/Size652/ionization__H2.yaml
 configs/SIREN/Size652/ionization__H_plus.yaml
 configs/SIREN/Size652/ionization__He.yaml
 configs/SIREN/Size652/ionization__PD.yaml
+configs/STSR-INR/redsea.yaml
 configs/VarExpert/bathymetry.yaml
 configs/VarExpert/combustion_40NH3_1.yaml
 configs/VarExpert/ionization.yaml

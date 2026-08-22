@@ -60,6 +60,34 @@ class DataLoadingTestCase(unittest.TestCase):
         batch = dataset.fetch_batch([1, 3])
         self.assertEqual(sorted(batch.targets.keys()), ["a", "b"])
 
+    def test_node_coordinates_can_use_saved_mean_and_std(self):
+        coords = np.array(
+            [[10.0, 20.0], [12.0, 24.0], [14.0, 28.0]],
+            dtype=np.float32,
+        )
+        target = np.array([[-1.0], [0.0], [1.0]], dtype=np.float32)
+        coords_path = self.root / "raw_coords.npy"
+        target_path = self.root / "target.npy"
+        stats_path = self.root / "stats.npz"
+        np.save(coords_path, coords)
+        np.save(target_path, target)
+        np.savez(
+            stats_path,
+            x_mean=np.array([[12.0, 24.0]], dtype=np.float32),
+            x_std=np.array([[2.0, 4.0]], dtype=np.float32),
+        )
+
+        dataset = NodeFieldDataset(
+            coords_path=str(coords_path),
+            coordinate_stats_path=str(stats_path),
+            target_path=str(target_path),
+        )
+        batch = dataset.fetch_batch([0, 1, 2])
+        np.testing.assert_allclose(
+            batch.coords.numpy(),
+            np.array([[-1.0, -1.0], [0.0, 0.0], [1.0, 1.0]], dtype=np.float32),
+        )
+
     def test_volume_single_target_fetches_expected_values(self):
         volume = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(2, 1, 2, 2)
         volume_path = self.root / "volume.npy"

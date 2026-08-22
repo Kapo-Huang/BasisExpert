@@ -63,6 +63,7 @@ class ConfigLoadingTestCase(unittest.TestCase):
                 *configs_root.joinpath("MoE-INR").rglob("*.yaml"),
                 *configs_root.joinpath("CoordNet").rglob("*.yaml"),
                 *configs_root.joinpath("SIREN").rglob("*.yaml"),
+                *configs_root.joinpath("STSR-INR").rglob("*.yaml"),
             ]
         )
         self.assertTrue(any(path.parts[-2] == "Size163" and path.name == "ionization__GT.yaml" for path in config_paths))

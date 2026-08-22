@@ -1,5 +1,7 @@
 ﻿import unittest
 
+import torch
+
 from var_expert_inr.config.schema import ModelConfig
 from var_expert_inr.data.base import DatasetMeta
 from var_expert_inr.models import build_model, materialize_model_config
@@ -66,6 +68,33 @@ class ModelRegistryTestCase(unittest.TestCase):
                 ModelConfig(name="light_basis_expert", params={"in_features": 4, "num_experts": 2, "base_dim": 2}),
                 meta,
             )
+
+    def test_build_stsr_inr_multitarget_model(self):
+        meta = DatasetMeta(
+            kind="node",
+            n_samples=8,
+            input_dim=4,
+            target_names=("scalar", "vector"),
+            target_dims={"scalar": 1, "vector": 3},
+            volume_shape=None,
+        )
+        model = build_model(
+            ModelConfig(
+                name="stsr_inr",
+                params={
+                    "in_features": 4,
+                    "init_features": 4,
+                    "num_res": 1,
+                    "embedding_dims": 16,
+                    "omega_0": 5.0,
+                },
+            ),
+            meta,
+        )
+        outputs = model(torch.randn(5, 4))
+        self.assertEqual(type(model.backbone).__name__, "STSRINR")
+        self.assertEqual(tuple(outputs["scalar"].shape), (5, 1))
+        self.assertEqual(tuple(outputs["vector"].shape), (5, 3))
 
     def test_unknown_model_key_is_rejected(self):
         meta = DatasetMeta(

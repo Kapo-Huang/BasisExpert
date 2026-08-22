@@ -239,6 +239,7 @@ class DataConfig:
     dataset_name: str | None = None
     split: str = "train"
     coords_path: str | None = None
+    coordinate_stats_path: str | None = None
     target_path: str | None = None
     targets: dict[str, str] | None = None
     target: str | None = None
@@ -280,6 +281,8 @@ class DataConfig:
             if self.coordinate_axes is not None:
                 raise ValueError("node datasets must not define coordinate_axes")
         else:
+            if self.coordinate_stats_path is not None:
+                raise ValueError("volume datasets must not define coordinate_stats_path")
             if self.target_path is None and not self.targets:
                 raise ValueError("volume datasets require target_path or targets")
             if self.target_path is not None and self.targets:

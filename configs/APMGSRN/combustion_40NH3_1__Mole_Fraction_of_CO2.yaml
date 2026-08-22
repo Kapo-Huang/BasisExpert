@@ -6,17 +6,17 @@ MODEL:
   n_dims: 3
   n_outputs: 1
   feature_grid_shape:
-  - 8
-  - 8
-  - 8
-  n_features: 2
-  n_grids: 64
-  nodes_per_layer: 64
-  n_layers: 2
+  - 4
+  - 4
+  - 4
+  n_features: 14
+  n_grids: 1
+  nodes_per_layer: 16
+  n_layers: 3
   use_bias: false
   use_tcnn_if_available: true
   grid_initialization: default
-  requires_padded_feats: null
+  requires_padded_feats: true
 DATA:
   dataset_name: combustion_40NH3_1
   target: Mole_Fraction_of_CO2

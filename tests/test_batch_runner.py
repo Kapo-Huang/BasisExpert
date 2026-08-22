@@ -13,6 +13,11 @@ MOE_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ioniza
 COMBINED_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.sh"
 COMBINED_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.list"
 V4_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v4.sh"
+COORDNET_MVNET_STSR_RUNNER = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "run_coordnet_combustion_mvnet_katrina_stsr_redsea.sh"
+)
 
 
 class BatchRunnerTestCase(unittest.TestCase):
@@ -141,7 +146,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 2 of 458 configs", output)
+            self.assertIn("Selected 2 of 459 configs", output)
             main_position = output.index("configs/VarExpert/combustion_40NH3_1.yaml")
             size_position = output.index("configs/SIREN/Size082/ionization__GT.yaml")
             self.assertLess(main_position, size_position)
@@ -174,7 +179,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 22 of 458 configs", output)
+            self.assertIn("Selected 22 of 459 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 22)
             bathymetry = output.index("main:MoE-INR:bathymetry:all")
             combustion = output.index("main:MoE-INR:combustion_40NH3_1:all")
@@ -213,7 +218,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             output = completed.stdout
 
             self.assertIn("SIREN + NeuralExpert non-Ionization matrix: 45 configs, max_parallel=5", output)
-            self.assertIn("Selected 45 of 458 configs", output)
+            self.assertIn("Selected 45 of 459 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 45)
             siren = output.index("main:SIREN:combustion_40NH3_1:all")
             bathymetry_manager = output.index("main:NeuralExpert:bathymetry:manager")
@@ -381,6 +386,40 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
             self.assertIn("CoordNet equal-budget depth (45 configs, max_parallel=5)", output)
             self.assertIn("CoordNet causal controls (9 configs, max_parallel=5)", output)
             self.assertIn("Completed 81 exploration-v4 configs; failures=0", output)
+
+    def test_coordnet_mvnet_stsr_dry_run_has_exact_stages(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                    "RUN_TOKEN": "test-coordnet-mvnet-stsr",
+                }
+            )
+            environment.pop("MAX_PARALLEL_JOBS", None)
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+            completed = subprocess.run(
+                [bash, COORDNET_MVNET_STSR_RUNNER.as_posix()],
+                cwd=COORDNET_MVNET_STSR_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            output = completed.stdout
+            self.assertEqual(output.count("DRY_RUN:"), 15)
+            self.assertIn("CoordNet Combustion (13 configs, max_parallel=5)", output)
+            self.assertIn("MVNet Katrina (1 config, max_parallel=5)", output)
+            self.assertIn("STSR-INR RedSea (1 config, max_parallel=5)", output)
+            self.assertIn("Completed 15 configs; failures=0", output)
 
     def test_moe_runner_validates_terminal_status_and_final_psnr(self):
         bash = self._bash()

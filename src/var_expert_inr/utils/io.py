@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import yaml
 
 
 REPO_ROOT_PLACEHOLDER = "${REPO_ROOT}"
+DATASETS_ROOT_PLACEHOLDER = "${DATASETS_ROOT}"
 
 
 def find_repo_root(start: str | Path | None = None) -> Path:
@@ -78,6 +80,19 @@ def resolve_path(path_value: str | None, *, base_dir: str | Path | None = None) 
     ):
         suffix = text[len(REPO_ROOT_PLACEHOLDER) :].lstrip("/\\")
         return str((find_repo_root(base_dir) / suffix).resolve())
+    if (
+        text == DATASETS_ROOT_PLACEHOLDER
+        or text.startswith(f"{DATASETS_ROOT_PLACEHOLDER}/")
+        or text.startswith(f"{DATASETS_ROOT_PLACEHOLDER}\\")
+    ):
+        suffix = text[len(DATASETS_ROOT_PLACEHOLDER) :].lstrip("/\\")
+        configured_root = os.environ.get("DATASETS_ROOT")
+        datasets_root = (
+            Path(configured_root)
+            if configured_root
+            else find_repo_root(base_dir).parent.parent / "Datasets"
+        )
+        return str((datasets_root / suffix).resolve())
     path = Path(text)
     if path.is_absolute():
         return str(path)

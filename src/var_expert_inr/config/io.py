@@ -73,6 +73,10 @@ def _parse_volume_shape(payload: dict[str, Any] | None) -> VolumeShape | None:
 def _resolve_data_paths(data: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     payload = dict(data)
     payload["coords_path"] = resolve_path(payload.get("coords_path"), base_dir=base_dir)
+    payload["coordinate_stats_path"] = resolve_path(
+        payload.get("coordinate_stats_path"),
+        base_dir=base_dir,
+    )
     payload["target_path"] = resolve_path(payload.get("target_path"), base_dir=base_dir)
     payload["targets"] = resolve_mapping_paths(payload.get("targets"), base_dir=base_dir)
     return payload
@@ -149,6 +153,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         dataset_name=data_payload.get("dataset_name"),
         split=str(data_payload.get("split", "train")),
         coords_path=data_payload.get("coords_path"),
+        coordinate_stats_path=data_payload.get("coordinate_stats_path"),
         target_path=data_payload.get("target_path"),
         targets=data_payload.get("targets"),
         target=data_payload.get("target"),
