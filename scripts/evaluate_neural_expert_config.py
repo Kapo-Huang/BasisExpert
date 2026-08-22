@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
 from pathlib import Path
+
+# This file is invoked directly by the batch runner. In that mode Python adds the
+# scripts directory, rather than the repository or its src tree, to sys.path.
+_SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
 
 from var_expert_inr.evaluation.service import evaluate_run
 from var_expert_inr.neural_expert.config import load_config, run_dir_from_config

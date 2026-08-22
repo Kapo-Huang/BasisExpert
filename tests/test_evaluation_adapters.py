@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +19,20 @@ from var_expert_inr.neural_expert.ionization.inr import INR
 
 
 class StandaloneAdapterContractTestCase(unittest.TestCase):
+    def test_neural_expert_evaluator_bootstraps_src_when_invoked_directly(self):
+        script = Path(neural_eval.__file__).resolve()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            completed = subprocess.run(
+                [sys.executable, "-I", str(script), "--help"],
+                cwd=tmpdir,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Evaluate one completed NeuralExpert main config", completed.stdout)
+
     def test_apmgsrn_selected_checkpoint_decodes_one_frame(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "timesteps"
