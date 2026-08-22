@@ -35,7 +35,12 @@ def get_thread_limits(default_threads: int = 1) -> tuple[int, int]:
 def configure_threading_env(default_threads: int = 1) -> tuple[int, int]:
     intra_threads, interop_threads = get_thread_limits(default_threads=default_threads)
     for key in _THREAD_ENV_KEYS:
-        os.environ.setdefault(key, str(intra_threads))
+        raw_value = os.environ.get(key)
+        try:
+            parsed_value = int(str(raw_value).strip())
+        except (TypeError, ValueError):
+            parsed_value = 0
+        os.environ[key] = str(parsed_value if parsed_value > 0 else intra_threads)
     return intra_threads, interop_threads
 
 
