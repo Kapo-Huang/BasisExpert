@@ -13,6 +13,7 @@ STATUS_FILE="${LOG_ROOT}/status.tsv"
 FAILURE_FILE="${LOG_ROOT}/failed.txt"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-5}"
+DEVICE="${DEVICE:-cuda:0}"
 STRICT_VALIDATION="${STRICT_VALIDATION:-1}"
 COLLAPSE_THRESHOLD_DB="${COLLAPSE_THRESHOLD_DB:-1.0}"
 MINIMUM_GAIN_DB="${MINIMUM_GAIN_DB:-0.1}"
@@ -24,10 +25,16 @@ if [[ ! "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAX_PARALLEL_JOBS must be a positive integer, got %s.\n' "${MAX_PARALLEL_JOBS}" >&2
     exit 2
 fi
+if [[ ! "${DEVICE}" =~ ^cuda:[0-9]+$ ]]; then
+    printf 'DEVICE must use cuda:N form, for example cuda:0 or cuda:1; got %s.\n' "${DEVICE}" >&2
+    exit 2
+fi
 if [[ "${STRICT_VALIDATION}" != "0" && "${STRICT_VALIDATION}" != "1" ]]; then
     printf 'STRICT_VALIDATION must be 0 or 1, got %s.\n' "${STRICT_VALIDATION}" >&2
     exit 2
 fi
+export CUDA_VISIBLE_DEVICES="${DEVICE#cuda:}"
+printf 'Selected device: %s (CUDA_VISIBLE_DEVICES=%s)\n' "${DEVICE}" "${CUDA_VISIBLE_DEVICES}"
 if ! batch_init_status; then exit 2; fi
 
 mapfile -t FV_CONFIGS < <(

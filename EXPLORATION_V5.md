@@ -26,6 +26,16 @@ Run them in the `compression` environment:
 MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v5.sh
 ```
 
+The default physical GPU is `cuda:0`. Select another GPU with the `DEVICE`
+environment variable:
+
+```bash
+DEVICE=cuda:1 MAX_PARALLEL_JOBS=5 bash scripts/run_exploration_v5.sh
+```
+
+The runner validates the `cuda:N` form and maps the selected physical GPU
+through `CUDA_VISIBLE_DEVICES`, so both fV-SRN and InstantVNR use the same card.
+
 Set `DRY_RUN=1` to inspect all commands. Reuse `RUN_TOKEN` or set
 `BATCH_LOG_ROOT` to resume a batch; configs already marked `ok` are skipped.
 

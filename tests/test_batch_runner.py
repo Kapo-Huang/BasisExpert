@@ -410,6 +410,7 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
                 }
             )
             environment.pop("MAX_PARALLEL_JOBS", None)
+            environment.pop("DEVICE", None)
             if os.name == "nt":
                 git_root = Path(bash).parents[1]
                 environment["PATH"] = os.pathsep.join(
@@ -428,6 +429,7 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
                 env=environment,
             )
             output = completed.stdout
+            self.assertIn("Selected device: cuda:0 (CUDA_VISIBLE_DEVICES=0)", output)
             self.assertEqual(output.count("DRY_RUN:"), 42)
             self.assertEqual(output.count("var_expert_inr.fv_srn.cli"), 24)
             self.assertEqual(output.count("var_expert_inr.cli"), 18)
@@ -437,6 +439,54 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
             )
             self.assertIn("InstantVNR optimizer sweep (18 configs, max_parallel=5)", output)
             self.assertIn("Completed 42 exploration-v5 configs; failures=0", output)
+
+    def test_exploration_v5_device_selects_physical_cuda_index(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DEVICE": "cuda:1",
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                    "RUN_TOKEN": "test-v5-device",
+                }
+            )
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [
+                        str(git_root / "usr" / "bin"),
+                        str(git_root / "bin"),
+                        environment.get("PATH", ""),
+                    ]
+                )
+            completed = subprocess.run(
+                [bash, V5_RUNNER.as_posix()],
+                cwd=V5_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertIn(
+                "Selected device: cuda:1 (CUDA_VISIBLE_DEVICES=1)",
+                completed.stdout,
+            )
+
+            environment["DEVICE"] = "cpu"
+            invalid = subprocess.run(
+                [bash, V5_RUNNER.as_posix()],
+                cwd=V5_RUNNER.parents[1],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(invalid.returncode, 2)
+            self.assertIn("DEVICE must use cuda:N form", invalid.stderr)
 
     def test_coordnet_mvnet_stsr_dry_run_has_exact_stages(self):
         bash = self._bash()
