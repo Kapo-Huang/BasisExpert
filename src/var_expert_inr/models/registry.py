@@ -380,28 +380,16 @@ def _materialize_mvnet(
         )
     if len(meta.target_names) < 2:
         raise ValueError("mvnet requires at least two target variables")
-    nonscalar = {
-        name: int(meta.target_dims[name])
-        for name in meta.target_names
-        if int(meta.target_dims[name]) != 1
-    }
-    if nonscalar:
-        raise ValueError(
-            "mvnet requires scalar target variables, got "
-            + ", ".join(
-                f"{name}={dimension}"
-                for name, dimension in nonscalar.items()
-            )
-        )
-
-    expected_out_features = len(meta.target_names)
+    expected_out_features = sum(
+        int(meta.target_dims[name]) for name in meta.target_names
+    )
     out_features = int(
         cfg.get("out_features", expected_out_features)
     )
     if out_features != expected_out_features:
         raise ValueError(
             f"mvnet out_features={out_features} does not match "
-            f"target variable count={expected_out_features}"
+            f"total target channel count={expected_out_features}"
         )
     fixed_values = {
         "hidden_features": MVNET_HIDDEN_FEATURES,

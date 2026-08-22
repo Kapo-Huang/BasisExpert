@@ -11,7 +11,7 @@ data:
     Z: 248
     T: 100
   targets:
-    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
+    He: ${IONIZATION_ROOT}/target_He.npy
 model:
   name: instant_ngp
   in_features: 4

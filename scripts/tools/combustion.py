@@ -81,7 +81,7 @@ class CombustionArrowReader:
             except ImportError as exc:
                 raise RuntimeError(
                     "The standalone combustion script requires Hugging Face datasets. "
-                    "Run it with the compression conda environment."
+                    "Run it with a Python environment that provides the datasets package."
                 ) from exc
             dataset = load_from_disk(str(self.dataset_dir))
 

@@ -2,7 +2,7 @@
 
 # Shared status/retry primitives for the formal and exploration batch entrypoints.
 # The caller must define REPO_ROOT, LOG_ROOT, STATUS_FILE, FAILURE_FILE,
-# CONDA_ENV, and DRY_RUN before invoking these functions.
+# SERVER_ENV, CONDA_ENV, PYTHON_BIN, and DRY_RUN before invoking these functions.
 
 batch_init_status() {
     mkdir -p "${LOG_ROOT}/logs"
@@ -98,7 +98,8 @@ batch_run_one_config() {
     safe_name="${safe_name%.yaml}"
     log_path="${LOG_ROOT}/logs/${safe_name}.attempt-${attempt}.log"
     module="$(batch_module_for_config "${config}")"
-    local -a command=(conda run --no-capture-output -n "${CONDA_ENV}" python -m "${module}" train --config "${config}")
+    local -a command=()
+    server_python_command command -m "${module}" train --config "${config}"
 
     printf '[%d/%d] RUN attempt=%d previous=%s: %s\n' "${index}" "${total}" "${attempt}" "${status:-missing}" "${relative}"
     if [[ "${DRY_RUN}" == "1" ]]; then

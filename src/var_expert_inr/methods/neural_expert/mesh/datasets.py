@@ -201,7 +201,7 @@ class MeshAttributeDataset(Dataset):
         model_cfg = cfg["MODEL"]
         self.seed = int(cfg.get("seed", 0))
         self.dataset_name = str(data_cfg.get("dataset_name", "")).strip().lower()
-        if self.dataset_name not in {"bathymetry", "katrina", "linkage_p", "linkage_c"}:
+        if self.dataset_name not in {"redsea", "katrina", "linkage_p", "linkage_c"}:
             raise ValueError(f"Unsupported mesh dataset: {self.dataset_name}")
 
         self.attr_name = str(data_cfg.get("attr_name") or file_id or "").strip()

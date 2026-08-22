@@ -165,45 +165,69 @@ def _is_multitarget(targets) -> bool:
 def split_multitarget_prediction(
     predictions: torch.Tensor,
     target_names: tuple[str, ...],
+    target_dims: dict[str, int] | None = None,
 ) -> dict[str, torch.Tensor]:
     if predictions.ndim != 2:
         raise ValueError(
-            "Multi-target tensor predictions must have shape [B, V], "
+            "Multi-target tensor predictions must have shape [B, C], "
             f"got {tuple(predictions.shape)}"
         )
-    if predictions.shape[1] != len(target_names):
+    widths = {
+        name: int(target_dims[name]) if target_dims is not None else 1
+        for name in target_names
+    }
+    if any(width <= 0 for width in widths.values()):
+        raise ValueError(f"Target dimensions must be positive, got {widths}")
+    expected_columns = sum(widths.values())
+    if predictions.shape[1] != expected_columns:
         raise ValueError(
             "Prediction column count does not match target order: "
-            f"columns={predictions.shape[1]} targets={len(target_names)}"
+            f"columns={predictions.shape[1]} target_dims={widths}"
         )
-    return {
-        name: predictions[:, index : index + 1]
-        for index, name in enumerate(target_names)
-    }
+    result = {}
+    offset = 0
+    for name in target_names:
+        width = widths[name]
+        result[name] = predictions[:, offset : offset + width]
+        offset += width
+    return result
 
 
-def stack_scalar_targets(
+def stack_multitarget_targets(
     targets: dict[str, torch.Tensor],
     target_names: tuple[str, ...],
+    target_dims: dict[str, int] | None = None,
 ) -> torch.Tensor:
     columns = []
     for name in target_names:
         target = targets[name]
-        if target.ndim != 2 or target.shape[1] != 1:
+        expected_dim = int(target_dims[name]) if target_dims is not None else 1
+        if target.ndim != 2 or target.shape[1] != expected_dim:
             raise ValueError(
-                f"MVNet target {name!r} must have shape [B, 1], "
+                f"MVNet target {name!r} must have shape [B, {expected_dim}], "
                 f"got {tuple(target.shape)}"
             )
         columns.append(target)
     return torch.cat(columns, dim=-1)
 
 
+def stack_scalar_targets(
+    targets: dict[str, torch.Tensor],
+    target_names: tuple[str, ...],
+) -> torch.Tensor:
+    """Backward-compatible scalar-only wrapper."""
+    return stack_multitarget_targets(targets, target_names)
+
+
 def mvnet_joint_mse(
     predictions: torch.Tensor,
     targets: dict[str, torch.Tensor],
     target_names: tuple[str, ...],
+    target_dims: dict[str, int] | None = None,
 ) -> torch.Tensor:
-    target_matrix = stack_scalar_targets(targets, target_names)
+    target_matrix = stack_multitarget_targets(
+        targets, target_names, target_dims
+    )
     if predictions.shape != target_matrix.shape:
         raise ValueError(
             "MVNet prediction and target shapes must match: "
@@ -267,7 +291,14 @@ def _build_prediction_loader(dataset, *, batch_size: int, num_workers: int):
     )
 
 
-def _predict_batch(model, coords: torch.Tensor, target_names: tuple[str, ...], *, hard_topk: bool):
+def _predict_batch(
+    model,
+    coords: torch.Tensor,
+    target_names: tuple[str, ...],
+    *,
+    hard_topk: bool,
+    target_dims: dict[str, int] | None = None,
+):
     try:
         preds = model(coords, hard_topk=hard_topk)
     except TypeError:
@@ -275,11 +306,18 @@ def _predict_batch(model, coords: torch.Tensor, target_names: tuple[str, ...], *
     if isinstance(preds, dict):
         return preds
     if len(target_names) > 1:
-        return split_multitarget_prediction(preds, target_names)
+        return split_multitarget_prediction(preds, target_names, target_dims)
     return {target_names[0]: preds}
 
 
-def _predict_batch_with_aux(model, coords: torch.Tensor, target_names: tuple[str, ...], *, hard_topk: bool):
+def _predict_batch_with_aux(
+    model,
+    coords: torch.Tensor,
+    target_names: tuple[str, ...],
+    *,
+    hard_topk: bool,
+    target_dims: dict[str, int] | None = None,
+):
     try:
         output = model(coords, return_aux=True, hard_topk=hard_topk)
     except TypeError:
@@ -297,7 +335,7 @@ def _predict_batch_with_aux(model, coords: torch.Tensor, target_names: tuple[str
         preds = output
         aux = {}
     if not isinstance(preds, dict) and len(target_names) > 1:
-        preds = split_multitarget_prediction(preds, target_names)
+        preds = split_multitarget_prediction(preds, target_names, target_dims)
     elif not isinstance(preds, dict):
         preds = {target_names[0]: preds}
     return preds, aux
@@ -352,7 +390,13 @@ def _compute_streaming_psnr(
     with torch.no_grad():
         for batch in loader:
             coords = batch.coords.to(device, non_blocking=True)
-            preds = _predict_batch(model, coords, target_names, hard_topk=hard_topk)
+            preds = _predict_batch(
+                model,
+                coords,
+                target_names,
+                hard_topk=hard_topk,
+                target_dims=base_dataset.meta.target_dims,
+            )
             targets = _batch_target_dict(batch.targets, target_names)
             for name in target_names:
                 pred_np = preds[name].detach().cpu().numpy()
@@ -373,7 +417,13 @@ def predict_dataset(model, dataset, *, batch_size: int, device: torch.device, ha
     with torch.no_grad():
         for batch in loader:
             coords = batch.coords.to(device, non_blocking=True)
-            preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+            preds = _predict_batch(
+                model,
+                coords,
+                dataset.target_names(),
+                hard_topk=hard_topk,
+                target_dims=dataset.meta.target_dims,
+            )
             for name, tensor in preds.items():
                 collected[name].append(tensor.detach().cpu().numpy())
     return {name: np.concatenate(parts, axis=0) for name, parts in collected.items()}
@@ -922,10 +972,12 @@ def _train_model_impl(
                         raw_predictions,
                         targets,
                         dataset.target_names(),
+                        dataset.meta.target_dims,
                     )
                     preds = split_multitarget_prediction(
                         raw_predictions,
                         dataset.target_names(),
+                        dataset.meta.target_dims,
                     )
                     task_losses = {
                         name: F.mse_loss(
@@ -942,9 +994,16 @@ def _train_model_impl(
                         coords,
                         dataset.target_names(),
                         hard_topk=hard_topk,
+                        target_dims=dataset.meta.target_dims,
                     )
                 else:
-                    preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                    preds = _predict_batch(
+                        model,
+                        coords,
+                        dataset.target_names(),
+                        hard_topk=hard_topk,
+                        target_dims=dataset.meta.target_dims,
+                    )
                     aux = {}
                 if not is_mvnet:
                     total_loss, _, _, task_losses = reconstruction_loss_with_breakdown(
@@ -985,9 +1044,16 @@ def _train_model_impl(
                         coords,
                         dataset.target_names(),
                         hard_topk=hard_topk,
+                        target_dims=dataset.meta.target_dims,
                     )
                 else:
-                    preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                    preds = _predict_batch(
+                        model,
+                        coords,
+                        dataset.target_names(),
+                        hard_topk=hard_topk,
+                        target_dims=dataset.meta.target_dims,
+                    )
                     aux = {}
                 target_name = dataset.target_names()[0]
                 total_loss = pointwise_loss(preds[target_name], targets, cfg.loss_type)
@@ -1118,9 +1184,16 @@ def _train_model_impl(
                                 raw_predictions,
                                 targets,
                                 dataset.target_names(),
+                                dataset.meta.target_dims,
                             )
                         else:
-                            preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                            preds = _predict_batch(
+                                model,
+                                coords,
+                                dataset.target_names(),
+                                hard_topk=hard_topk,
+                                target_dims=dataset.meta.target_dims,
+                            )
                             loss, _, _, _ = reconstruction_loss_with_breakdown(
                                 preds,
                                 targets,
@@ -1128,7 +1201,13 @@ def _train_model_impl(
                             )
                     else:
                         targets = batch.targets.to(device, non_blocking=True)
-                        preds = _predict_batch(model, coords, dataset.target_names(), hard_topk=hard_topk)
+                        preds = _predict_batch(
+                            model,
+                            coords,
+                            dataset.target_names(),
+                            hard_topk=hard_topk,
+                            target_dims=dataset.meta.target_dims,
+                        )
                         loss = pointwise_loss(preds[dataset.target_names()[0]], targets, cfg.loss_type)
                     loss_sum += float(loss.item()) * coords.shape[0]
                     count += int(coords.shape[0])

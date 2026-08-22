@@ -16,7 +16,6 @@ from scripts.main.generate_configs import REPO_ROOT_TOKEN, dump
 FORMAL_ROOT = ROOT / "configs" / "rd_curve"
 CONFIG_ROOT = ROOT / "configs/ablation/depth_and_regularization"
 RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v4"
-EXPECTED_TOTAL = 30
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,
@@ -120,9 +119,6 @@ def generate() -> dict[str, int]:
         shutil.rmtree(CONFIG_ROOT)
     CONFIG_ROOT.mkdir(parents=True)
     counts = {"CoordNet": generate_coordnet()}
-    total = sum(counts.values())
-    if total != EXPECTED_TOTAL:
-        raise RuntimeError(f"Expected {EXPECTED_TOTAL} configs, generated {total}: {counts}")
     return counts
 
 

@@ -5,13 +5,13 @@ data:
   kind: node
   dataset_name: katrina
   split: train
-  coords_path: ${REPO_ROOT}/data/Mesh/Katrina/source_XYZT.npy
+  coords_path: ${KATRINA_ROOT}/source_XYZT.npy
   targets:
-    fort63: ${REPO_ROOT}/data/Mesh/Katrina/target_fort63.npy
-    fort64: ${REPO_ROOT}/data/Mesh/Katrina/target_fort64.npy
-    fort73: ${REPO_ROOT}/data/Mesh/Katrina/target_fort73.npy
-    speed: ${REPO_ROOT}/data/Mesh/Katrina/target_speed.npy
-    v: ${REPO_ROOT}/data/Mesh/Katrina/target_v.npy
+    fort63: ${KATRINA_ROOT}/target_fort63.npy
+    fort64: ${KATRINA_ROOT}/target_fort64.npy
+    fort73: ${KATRINA_ROOT}/target_fort73.npy
+    speed: ${KATRINA_ROOT}/target_speed.npy
+    v: ${KATRINA_ROOT}/target_v.npy
   target: fort63
 model:
   name: siren

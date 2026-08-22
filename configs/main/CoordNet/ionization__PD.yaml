@@ -11,11 +11,11 @@ data:
     Z: 248
     T: 100
   targets:
-    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
-    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
-    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
-    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
-    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+    GT: ${IONIZATION_ROOT}/target_GT.npy
+    H_plus: ${IONIZATION_ROOT}/target_H+.npy
+    H2: ${IONIZATION_ROOT}/target_H2.npy
+    He: ${IONIZATION_ROOT}/target_He.npy
+    PD: ${IONIZATION_ROOT}/target_PD.npy
   target: PD
 model:
   name: coordnet
@@ -27,7 +27,7 @@ training:
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
-  lr: 5.0e-05
+  lr: 1.0e-05
   val_split: 0.0
   log_every: 10
   log_psnr_every: 100

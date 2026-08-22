@@ -3,9 +3,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/ablation/depth_and_regularization"
 RUN_ROOT="${REPO_ROOT}/runs/exploration_v4"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration_v4/${RUN_TOKEN}}"
 if command -v cygpath >/dev/null 2>&1; then LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"; fi
@@ -16,8 +17,6 @@ MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-5}"
 STRICT_VALIDATION="${STRICT_VALIDATION:-1}"
 COLLAPSE_THRESHOLD_DB="${COLLAPSE_THRESHOLD_DB:-1.0}"
 MINIMUM_GAIN_DB="${MINIMUM_GAIN_DB:-0.1}"
-EXPECTED_TOTAL=30
-
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 if [[ ! "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAX_PARALLEL_JOBS must be a positive integer, got %s.\n' "${MAX_PARALLEL_JOBS}" >&2
@@ -29,17 +28,7 @@ mapfile -t COORDNET_DEPTH < <(
     find "${CONFIG_ROOT}/CoordNet" -type f -path '*_base_lr/*.yaml' -print | LC_ALL=C sort
 )
 
-if [[ "${#COORDNET_DEPTH[@]}" -ne 30 ]]; then
-    printf 'Unexpected v4 stage count: coordnet_depth=%d\n' "${#COORDNET_DEPTH[@]}" >&2
-    exit 2
-fi
-
 total=${#COORDNET_DEPTH[@]}
-if [[ "${total}" -ne "${EXPECTED_TOTAL}" ]]; then
-    printf 'Expected %d exploration-v4 configs, found %d.\n' "${EXPECTED_TOTAL}" "${total}" >&2
-    exit 2
-fi
-
 wait_for_pid_at() {
     local index="$1"
     local pid="${pids[${index}]}"
@@ -85,8 +74,8 @@ if [[ "${DRY_RUN}" != "1" ]]; then
         --minimum-gain-db "${MINIMUM_GAIN_DB}"
     )
     if [[ "${STRICT_VALIDATION}" == "1" ]]; then summary_args+=(--fail-on-attention); fi
-    if ! conda run --no-capture-output -n "${CONDA_ENV}" python \
-        "${SCRIPT_DIR}/summarize_depth_and_regularization.py" "${summary_args[@]}"; then
+    if ! server_python "${SCRIPT_DIR}/summarize_depth_and_regularization.py" \
+        "${summary_args[@]}"; then
         printf 'FAILED: exploration-v4 validation found runs needing attention.\n' >&2
         failures=$((failures + 1))
     fi

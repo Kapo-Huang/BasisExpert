@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from ...utils.exploration_probe import normalize_probe
 from ...utils.io import dump_yaml, load_yaml, resolve_path
 
 
@@ -242,6 +243,8 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
         "epoch_summary": True,
         **raw_log,
     }
+    if "exploration_probe" in cfg:
+        normalize_probe(_mapping(cfg.get("exploration_probe"), "exploration_probe"))
     cfg["experiment"] = str(cfg.get("experiment") or f"miner_{data['dataset_name']}_{data['target']}")
     cfg["exp_id"] = str(cfg.get("exp_id") or f"miner-{data['dataset_name']}-{data['target']}")
     cfg["experiment_root"] = str(

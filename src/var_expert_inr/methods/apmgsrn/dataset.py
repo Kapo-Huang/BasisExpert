@@ -149,7 +149,6 @@ class IonizationTargetReader:
         if self._dense_array is not None:
             return np.array(self._dense_array[time_index], dtype=np.float32, copy=True)
 
-        assert self._flat_array is not None
         values_per_timestep = int(np.prod(self.spatial_shape, dtype=np.int64))
         start = time_index * values_per_timestep
         stop = start + values_per_timestep

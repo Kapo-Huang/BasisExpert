@@ -4,13 +4,8 @@ __pycache__/
 *.pyo
 *.pyd
 *.so
-.pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.hypothesis/
-.coverage
-.coverage.*
-htmlcov/
 
 # Packaging and virtual environments
 build/

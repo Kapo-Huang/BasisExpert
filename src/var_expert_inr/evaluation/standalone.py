@@ -32,6 +32,7 @@ from .reporting import (
     write_metrics_csv,
 )
 from .selection import metrics_require_ground_truth, metrics_require_rendering, parse_timestep_selection
+from ..utils.io import resolve_path as resolve_config_path
 
 
 def identify_subsystem(raw: dict[str, Any]) -> str | None:
@@ -47,8 +48,10 @@ def identify_subsystem(raw: dict[str, Any]) -> str | None:
 
 def _resolve_path(value: str | Path, *, repo_root: Path, config_path: Path) -> Path:
     text = str(value).replace("${REPO_ROOT}", str(repo_root))
-    path = Path(text)
-    return (config_path.parent / path).resolve() if not path.is_absolute() else path.resolve()
+    resolved = resolve_config_path(text, base_dir=config_path.parent)
+    if resolved is None:
+        raise ValueError(f"Path value cannot be null: {value!r}")
+    return Path(resolved)
 
 
 def _data_section(raw: dict[str, Any]) -> dict[str, Any]:
@@ -293,7 +296,6 @@ def _decode_neural_expert_frames(
                         axis=1,
                     )
                 else:
-                    assert coords is not None
                     raw_coords = np.asarray(coords[indexer.start + local_start:indexer.start + local_stop], dtype=np.float32)
                 model_coords = (raw_coords - x_mean) / x_std if normalize_inputs else raw_coords
                 output = model(torch.from_numpy(model_coords).to(device).unsqueeze(0))
@@ -483,13 +485,11 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         with measurement:
             started = time.perf_counter()
             if subsystem == "apmgsrn":
-                assert shape_tzyx is not None
                 decoded_frames = _decode_apmgsrn_frames(
                     source_path, raw, timesteps=timesteps, targets=tuple(targets),
                     shape_tzyx=shape_tzyx, device=device,
                 )
             elif subsystem == "miner":
-                assert shape_tzyx is not None
                 decoded_frames = _decode_miner_frames(
                     source_path,
                     timesteps=timesteps,

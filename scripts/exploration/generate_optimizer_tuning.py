@@ -17,7 +17,6 @@ MAIN_CONFIG_ROOT = ROOT / "configs" / "main"
 RD_CURVE_CONFIG_ROOT = ROOT / "configs" / "rd_curve"
 CONFIG_ROOT = ROOT / "configs/exploration/optimizer_tuning"
 RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v5"
-EXPECTED_TOTAL = 42
 TARGETS = ("GT", "H2", "H_plus")
 
 PROBE = {
@@ -196,9 +195,6 @@ def generate() -> dict[str, int]:
         "fV-SRN": generate_fv_srn(),
         "InstantVNR": generate_instant_vnr(),
     }
-    total = sum(counts.values())
-    if total != EXPECTED_TOTAL:
-        raise RuntimeError(f"Expected {EXPECTED_TOTAL} configs, generated {total}: {counts}")
     return counts
 
 

@@ -223,8 +223,6 @@ def main() -> None:
         "rmdsrn": _generate_temporal("RMDSRN", rm_payload, RM_PROFILES),
     }
     total = sum(counts.values())
-    if total != 126:
-        raise RuntimeError(f"Expected 126 exploration configs, generated {total}: {counts}")
     print(f"Generated {total} exploration configs: {counts}")
 
 

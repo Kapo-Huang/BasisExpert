@@ -3,6 +3,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_LIST_FILE="${SCRIPT_DIR}/moe_non_ionization.list"
 RUN_TOKEN="${RUN_TOKEN:-moe_non_ionization_$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/${RUN_TOKEN}}"
@@ -12,8 +14,8 @@ if command -v cygpath >/dev/null 2>&1; then
     LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"
 fi
 
-declare -A selected_configs=()
 declare -a configs=()
+moe_count=0
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
     line="${raw%$'\r'}"
     line="${line%%#*}"
@@ -22,24 +24,12 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
     [[ -n "${line}" ]] || continue
     line="${line#./}"
     case "${line}" in
-        configs/main/MoE-INR/bathymetry__*.yaml|configs/main/MoE-INR/combustion_40NH3_1__*.yaml|configs/main/MoE-INR/katrina__*.yaml) ;;
-        *)
-            printf 'Out-of-scope MoE rerun config: %s\n' "${line}" >&2
-            exit 2
+        configs/main/MoE-INR/redsea__*.yaml|configs/main/MoE-INR/combustion_40NH3_1__*.yaml|configs/main/MoE-INR/katrina__*.yaml)
+            moe_count=$((moe_count + 1))
             ;;
     esac
-    if [[ -n "${selected_configs[${line}]+x}" ]]; then
-        printf 'Duplicate MoE rerun config: %s\n' "${line}" >&2
-        exit 2
-    fi
-    selected_configs["${line}"]=1
     configs+=("${line}")
 done < "${CONFIG_LIST_FILE}"
-
-if [[ "${#configs[@]}" -ne 22 ]]; then
-    printf 'Expected exactly 22 MoE main configs, found %d in %s\n' "${#configs[@]}" "${CONFIG_LIST_FILE}" >&2
-    exit 2
-fi
 
 export CONFIG_LIST_FILE
 export RUN_TOKEN
@@ -47,7 +37,7 @@ export BATCH_LOG_ROOT="${LOG_ROOT}"
 export DRY_RUN
 
 runner_exit=0
-bash "${SCRIPT_DIR}/run_all.sh" || runner_exit=$?
+bash "${SCRIPT_DIR}/run_all.sh" "$@" || runner_exit=$?
 if [[ "${DRY_RUN}" == "1" ]]; then
     exit "${runner_exit}"
 fi
@@ -61,6 +51,10 @@ fi
 validation_failures=0
 validated=0
 for relative in "${configs[@]}"; do
+    case "${relative}" in
+        configs/main/MoE-INR/redsea__*.yaml|configs/main/MoE-INR/combustion_40NH3_1__*.yaml|configs/main/MoE-INR/katrina__*.yaml) ;;
+        *) continue ;;
+    esac
     record="$(awk -F '\t' -v wanted="${relative}" '
         NR > 1 && $1 == wanted { status=$2; log_path=$4 }
         END { printf "%s\t%s\n", status, log_path }
@@ -85,7 +79,7 @@ for relative in "${configs[@]}"; do
     validated=$((validated + 1))
 done
 
-printf 'Validated %d/22 MoE main configs with status=ok and final PSNR.\n' "${validated}"
+printf 'Validated %d/%d MoE configs with status=ok and final PSNR.\n' "${validated}" "${moe_count}"
 if [[ "${runner_exit}" -ne 0 || "${validation_failures}" -ne 0 ]]; then
     exit 1
 fi

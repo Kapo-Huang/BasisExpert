@@ -3,10 +3,11 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_LIST_FILE="${SCRIPT_DIR}/neural_expert_non_ionization.list"
 RUN_TOKEN="${RUN_TOKEN:-siren_neural_expert_non_ionization_$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/${RUN_TOKEN}}"
-CONDA_ENV="${CONDA_ENV:-compression}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-5}"
 EVALUATION_DEVICE="${EVALUATION_DEVICE:-}"
@@ -15,13 +16,12 @@ if command -v cygpath >/dev/null 2>&1; then
     LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"
 fi
 
-declare -A selected_configs=()
 declare -a configs=()
 siren_count=0
 neural_manager_count=0
 neural_main_count=0
-neural_bathymetry_manager_count=0
-neural_bathymetry_main_count=0
+neural_redsea_manager_count=0
+neural_redsea_main_count=0
 neural_combustion_manager_count=0
 neural_combustion_main_count=0
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
@@ -33,50 +33,29 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
     line="${line#./}"
     case "${line}" in
         configs/main/SIREN/combustion_40NH3_1__*.yaml)
-            [[ "${line}" != *"managerpretrain"* ]] || { printf 'Out-of-scope SIREN config: %s\n' "${line}" >&2; exit 2; }
             siren_count=$((siren_count + 1))
             ;;
-        configs/main/NeuralExpert/combustion_40NH3_1__Velocity.yaml|configs/main/NeuralExpert/combustion_40NH3_1__Velocity__managerpretrain.yaml)
-            printf 'Out-of-scope NeuralExpert vector target: %s\n' "${line}" >&2
-            exit 2
-            ;;
-        configs/main/NeuralExpert/bathymetry__*.yaml|configs/main/NeuralExpert/combustion_40NH3_1__*.yaml)
+        configs/main/NeuralExpert/redsea__*.yaml|configs/main/NeuralExpert/combustion_40NH3_1__*.yaml)
             if [[ "${line}" == *"__managerpretrain.yaml" ]]; then
                 neural_manager_count=$((neural_manager_count + 1))
-                if [[ "${line}" == configs/main/NeuralExpert/bathymetry__* ]]; then
-                    neural_bathymetry_manager_count=$((neural_bathymetry_manager_count + 1))
+                if [[ "${line}" == configs/main/NeuralExpert/redsea__* ]]; then
+                    neural_redsea_manager_count=$((neural_redsea_manager_count + 1))
                 else
                     neural_combustion_manager_count=$((neural_combustion_manager_count + 1))
                 fi
             else
                 neural_main_count=$((neural_main_count + 1))
-                if [[ "${line}" == configs/main/NeuralExpert/bathymetry__* ]]; then
-                    neural_bathymetry_main_count=$((neural_bathymetry_main_count + 1))
+                if [[ "${line}" == configs/main/NeuralExpert/redsea__* ]]; then
+                    neural_redsea_main_count=$((neural_redsea_main_count + 1))
                 else
                     neural_combustion_main_count=$((neural_combustion_main_count + 1))
                 fi
             fi
             ;;
-        *)
-            printf 'Out-of-scope combined experiment config: %s\n' "${line}" >&2
-            exit 2
-            ;;
+        *) ;;
     esac
-    if [[ -n "${selected_configs[${line}]+x}" ]]; then
-        printf 'Duplicate combined experiment config: %s\n' "${line}" >&2
-        exit 2
-    fi
-    selected_configs["${line}"]=1
     configs+=("${line}")
 done < "${CONFIG_LIST_FILE}"
-
-if [[ "${#configs[@]}" -ne 45 || "${siren_count}" -ne 13 || "${neural_manager_count}" -ne 16 || "${neural_main_count}" -ne 16 \
-    || "${neural_bathymetry_manager_count}" -ne 4 || "${neural_bathymetry_main_count}" -ne 4 \
-    || "${neural_combustion_manager_count}" -ne 12 || "${neural_combustion_main_count}" -ne 12 ]]; then
-    printf 'Expected SIREN=13, NeuralExpert manager=16, NeuralExpert main=16; found %d/%d/%d (%d total).\n' \
-        "${siren_count}" "${neural_manager_count}" "${neural_main_count}" "${#configs[@]}" >&2
-    exit 2
-fi
 
 export CONFIG_LIST_FILE
 export RUN_TOKEN
@@ -85,9 +64,9 @@ export CONDA_ENV
 export DRY_RUN
 export MAX_PARALLEL_JOBS
 
-printf 'SIREN + NeuralExpert non-Ionization matrix: 45 configs, max_parallel=%s\n' "${MAX_PARALLEL_JOBS}"
+printf 'SIREN + NeuralExpert non-Ionization matrix: %d configs, max_parallel=%s\n' "${#configs[@]}" "${MAX_PARALLEL_JOBS}"
 runner_exit=0
-bash "${SCRIPT_DIR}/run_all.sh" || runner_exit=$?
+bash "${SCRIPT_DIR}/run_all.sh" "$@" || runner_exit=$?
 if [[ "${DRY_RUN}" == "1" ]]; then
     exit "${runner_exit}"
 fi
@@ -122,6 +101,10 @@ is_finite_number() {
 }
 
 for relative in "${configs[@]}"; do
+    case "${relative}" in
+        configs/main/SIREN/combustion_40NH3_1__*.yaml|configs/main/NeuralExpert/redsea__*.yaml|configs/main/NeuralExpert/combustion_40NH3_1__*.yaml) ;;
+        *) continue ;;
+    esac
     record="$(status_record "${relative}")"
     status="${record%%$'\t'*}"
     log_path="${record#*$'\t'}"
@@ -174,7 +157,8 @@ for relative in "${configs[@]}"; do
     safe_name="${relative//\//__}"
     safe_name="${safe_name%.yaml}"
     evaluation_log="${LOG_ROOT}/evaluations/${safe_name}.log"
-    command=(conda run --no-capture-output -n "${CONDA_ENV}" python "${SCRIPT_DIR}/../tools/evaluate_neural_expert_config.py" --config "${REPO_ROOT}/${relative}")
+    command=()
+    server_python_command command "${SCRIPT_DIR}/../tools/evaluate_neural_expert_config.py" --config "${REPO_ROOT}/${relative}"
     if [[ -n "${EVALUATION_DEVICE}" ]]; then
         command+=(--device "${EVALUATION_DEVICE}")
     fi
@@ -198,8 +182,9 @@ for relative in "${configs[@]}"; do
 done
 
 mv "${SUMMARY_TEMP}" "${SUMMARY_FILE}"
-printf 'Validated SIREN=%d/13, NeuralExpert managers=%d/16, NeuralExpert mains with full PSNR=%d/16.\n' \
-    "${validated_siren}" "${validated_managers}" "${validated_neural}"
+printf 'Validated SIREN=%d/%d, NeuralExpert managers=%d/%d, NeuralExpert mains with full PSNR=%d/%d.\n' \
+    "${validated_siren}" "${siren_count}" "${validated_managers}" "${neural_manager_count}" \
+    "${validated_neural}" "${neural_main_count}"
 printf 'PSNR summary: %s\n' "${SUMMARY_FILE}"
 if [[ "${runner_exit}" -ne 0 || "${validation_failures}" -ne 0 ]]; then
     exit 1

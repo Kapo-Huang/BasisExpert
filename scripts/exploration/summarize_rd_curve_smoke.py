@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 from pathlib import Path
 
@@ -46,11 +47,14 @@ def latest_metrics(run_root: Path, exp_id: str) -> Path | None:
     return max(candidates, key=lambda path: path.stat().st_mtime_ns) if candidates else None
 
 
-def read_trajectory(path: Path | None) -> tuple[dict[int, float], bool]:
+def read_trajectory(
+    path: Path | None,
+) -> tuple[dict[int, float], bool, list[dict[str, object]]]:
     if path is None:
-        return {}, False
+        return {}, False, []
     values: dict[int, list[float]] = {}
     has_nonfinite = False
+    stage_rows: list[dict[str, object]] = []
     with path.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle, delimiter="\t"):
             try:
@@ -63,10 +67,45 @@ def read_trajectory(path: Path | None) -> tuple[dict[int, float], bool]:
                 has_nonfinite = True
                 continue
             values.setdefault(progress, []).append(value)
+            try:
+                details = json.loads(row.get("details") or "{}")
+            except (TypeError, ValueError):
+                has_nonfinite = True
+                continue
+            if isinstance(details, dict) and {
+                "time_index",
+                "scale_index",
+                "effective_scales",
+            }.issubset(details):
+                stage_rows.append(details)
     return (
         {progress: sum(samples) / len(samples) for progress, samples in values.items() if samples},
         has_nonfinite,
+        stage_rows,
     )
+
+
+def native_stage_reason(stage_rows: list[dict[str, object]]) -> str | None:
+    if not stage_rows:
+        return "missing_scale_metadata"
+    observed: dict[int, set[int]] = {}
+    expected: dict[int, int] = {}
+    try:
+        for row in stage_rows:
+            time_index = int(row["time_index"])
+            scale_index = int(row["scale_index"])
+            effective_scales = int(row["effective_scales"])
+            if effective_scales <= 0 or not 0 <= scale_index < effective_scales:
+                return "invalid_scale_metadata"
+            if time_index in expected and expected[time_index] != effective_scales:
+                return "inconsistent_effective_scales"
+            expected[time_index] = effective_scales
+            observed.setdefault(time_index, set()).add(scale_index)
+    except (KeyError, TypeError, ValueError):
+        return "invalid_scale_metadata"
+    if any(observed[index] != set(range(count)) for index, count in expected.items()):
+        return "missing_scale_stages"
+    return None
 
 
 def build_summary(
@@ -79,6 +118,8 @@ def build_summary(
     run_root: Path,
     collapse_threshold_db: float,
     minimum_gain_db: float,
+    family_filter: str | None = None,
+    validation_mode: str = "standard",
 ) -> int:
     statuses = latest_statuses(status_path)
     rows: list[dict[str, object]] = []
@@ -87,11 +128,13 @@ def build_summary(
         relative_repo = config_path.relative_to(repo_root).as_posix()
         relative_config = config_path.relative_to(config_root)
         family, size = relative_config.parts[:2]
+        if family_filter is not None and family != family_filter:
+            continue
         payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         data = payload.get("data") or payload.get("DATA") or {}
         target = str(data.get("target") or "aggregate")
         metrics_path = latest_metrics(run_root, str(payload["exp_id"]))
-        trajectory, has_nonfinite = read_trajectory(metrics_path)
+        trajectory, has_nonfinite, stage_rows = read_trajectory(metrics_path)
         ordered = sorted(trajectory)
         initial = trajectory[ordered[0]] if ordered else None
         final = trajectory[ordered[-1]] if ordered else None
@@ -108,10 +151,15 @@ def build_summary(
             reasons.append("nonfinite_psnr")
         if not probe_complete:
             reasons.append("missing_progress_50")
-        if drop is not None and drop > collapse_threshold_db:
-            reasons.append(f"collapse={drop:.4f}dB")
-        if gain is not None and gain < minimum_gain_db:
-            reasons.append(f"gain={gain:.4f}dB")
+        if validation_mode == "native-stages" or family == "MINER":
+            stage_reason = native_stage_reason(stage_rows)
+            if stage_reason is not None:
+                reasons.append(stage_reason)
+        else:
+            if drop is not None and drop > collapse_threshold_db:
+                reasons.append(f"collapse={drop:.4f}dB")
+            if gain is not None and gain < minimum_gain_db:
+                reasons.append(f"gain={gain:.4f}dB")
         if not trajectory:
             reasons.append("missing_probe_metrics")
         if reasons:
@@ -156,6 +204,12 @@ def main() -> None:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--collapse-threshold-db", type=float, default=1.0)
     parser.add_argument("--minimum-gain-db", type=float, default=0.1)
+    parser.add_argument("--family", help="Summarize only one model family.")
+    parser.add_argument(
+        "--validation-mode",
+        choices=("standard", "native-stages"),
+        default="standard",
+    )
     parser.add_argument("--fail-on-attention", action="store_true")
     args = parser.parse_args()
     count = build_summary(
@@ -167,6 +221,8 @@ def main() -> None:
         run_root=args.run_root.resolve(),
         collapse_threshold_db=args.collapse_threshold_db,
         minimum_gain_db=args.minimum_gain_db,
+        family_filter=args.family,
+        validation_mode=args.validation_mode,
     )
     print(f"Wrote exploration-v3 summary to {args.output}; attention={count}")
     if args.fail_on_attention and count:

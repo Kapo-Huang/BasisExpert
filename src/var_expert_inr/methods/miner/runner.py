@@ -15,6 +15,12 @@ import torch.nn.functional as F
 from numpy.lib.format import open_memmap
 
 from ...evaluation.metrics import mae, mse, psnr, save_metrics
+from ...utils.exploration_probe import (
+    HEADER as EXPLORATION_PROBE_HEADER,
+    fixed_sample_indices,
+    normalize_probe,
+    psnr_from_arrays,
+)
 from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
@@ -82,6 +88,83 @@ def _save_checkpoint(path: str | Path, payload: dict[str, Any]) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, target)
+    return target
+
+
+def _scale_exploration_metrics(
+    cfg: dict[str, Any],
+    *,
+    target: torch.Tensor,
+    reconstruction: torch.Tensor,
+    time_index: int,
+    scale_index: int,
+    effective_scales: int,
+    elapsed_seconds: float,
+) -> dict[str, Any] | None:
+    probe = normalize_probe(cfg.get("exploration_probe"))
+    if not probe.enabled:
+        return None
+    target_values = target.detach().cpu().numpy().reshape(-1)
+    prediction_values = reconstruction.detach().cpu().numpy().reshape(-1)
+    indices = fixed_sample_indices(
+        int(target_values.size),
+        probe,
+        salt=int(time_index) * 1000 + int(scale_index),
+    )
+    progress = math.ceil(
+        int(probe.total_epoch_equivalents)
+        * (int(scale_index) + 1)
+        / max(int(effective_scales), 1)
+    )
+    return {
+        "time_index": int(time_index),
+        "scale_index": int(scale_index),
+        "effective_scales": int(effective_scales),
+        "progress": int(progress),
+        "psnr": psnr_from_arrays(target_values[indices], prediction_values[indices]),
+        "sample_count": int(indices.size),
+        "shape": [int(value) for value in target.shape],
+        "elapsed_seconds": float(elapsed_seconds),
+        "full_resolution": False,
+    }
+
+
+def _write_exploration_trajectory(
+    metrics_dir: Path,
+    entries: list[dict[str, Any]],
+    cfg: dict[str, Any],
+) -> Path | None:
+    probe = normalize_probe(cfg.get("exploration_probe"))
+    if not probe.enabled:
+        return None
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        metrics_path = Path(entry["metrics_path"])
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        rows.extend(list(payload.get("scale_metrics") or []))
+    rows.sort(key=lambda item: (int(item["time_index"]), int(item["scale_index"])))
+    target = metrics_dir / "exploration_psnr.tsv"
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    lines = [EXPLORATION_PROBE_HEADER]
+    for row in rows:
+        details = {
+            "time_index": int(row["time_index"]),
+            "scale_index": int(row["scale_index"]),
+            "effective_scales": int(row["effective_scales"]),
+            "shape": list(row["shape"]),
+            "full_resolution": bool(row.get("full_resolution", False)),
+        }
+        detail_text = json.dumps(
+            details, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        lines.append(
+            f"{int(row['progress'])}\t{int(probe.total_epoch_equivalents)}\t"
+            f"timestep:t{int(row['time_index']):04d}\t{float(row['psnr']):.8g}\t"
+            f"{int(row['sample_count'])}\t{float(row['elapsed_seconds']):.6f}\t"
+            f"{detail_text}\n"
+        )
+    temporary.write_text("".join(lines), encoding="utf-8")
+    temporary.replace(target)
     return target
 
 
@@ -384,6 +467,29 @@ def _train_timestep(
         if completed_scales
         else None
     )
+    probe = normalize_probe(cfg.get("exploration_probe"))
+    if probe.enabled:
+        for scale_index, scale_payload in enumerate(completed_scales):
+            if scale_payload.get("exploration_metrics") is not None:
+                continue
+            scale_reconstruction = _decode_scale_payloads(
+                completed_scales[: scale_index + 1],
+                device=device,
+                batch_blocks=int(cfg["training"]["max_active_blocks_per_step"]),
+            )
+            elapsed = sum(
+                float(item.get("training", {}).get("elapsed_seconds", 0.0))
+                for item in completed_scales[: scale_index + 1]
+            )
+            scale_payload["exploration_metrics"] = _scale_exploration_metrics(
+                cfg,
+                target=pyramid[scale_index],
+                reconstruction=scale_reconstruction,
+                time_index=time_index,
+                scale_index=scale_index,
+                effective_scales=effective_scales,
+                elapsed_seconds=elapsed,
+            )
     total_parameters = sum(int(item.get("parameter_count", 0)) for item in completed_scales)
     total_logical_samples = sum(int(item["training"]["logical_samples"]) for item in completed_scales)
     total_optimizer_steps = sum(int(item["training"]["optimizer_steps"]) for item in completed_scales)
@@ -487,6 +593,19 @@ def _train_timestep(
                 "training": training_info,
             })
             del model
+        scale_payload["exploration_metrics"] = _scale_exploration_metrics(
+            cfg,
+            target=target,
+            reconstruction=reconstruction,
+            time_index=time_index,
+            scale_index=scale_index,
+            effective_scales=effective_scales,
+            elapsed_seconds=sum(
+                float(item.get("training", {}).get("elapsed_seconds", 0.0))
+                for item in completed_scales
+            )
+            + float(scale_payload["training"].get("elapsed_seconds", 0.0)),
+        )
         completed_scales.append(scale_payload)
         carry_state = next_carry
         progress_payload = {
@@ -513,8 +632,27 @@ def _train_timestep(
             int(master.numel()),
             int(scale_payload["parameter_count"]),
         )
-    assert reconstruction is not None
+    if reconstruction is None:
+        raise ValueError("MINER produced no reconstruction")
     prediction = crop_padding(reconstruction.numpy(), tuple(frame.shape))
+    final_mse = mse(frame, prediction)
+    final_mae = mae(frame, prediction)
+    final_psnr = psnr(frame, prediction)
+    if probe.enabled and completed_scales[-1].get("exploration_metrics") is not None:
+        completed_scales[-1]["exploration_metrics"].update(
+            {
+                "progress": int(probe.total_epoch_equivalents),
+                "psnr": float(final_psnr),
+                "sample_count": int(frame.size),
+                "shape": [int(value) for value in frame.shape],
+                "full_resolution": True,
+            }
+        )
+    scale_metrics = [
+        dict(item["exploration_metrics"])
+        for item in completed_scales
+        if item.get("exploration_metrics") is not None
+    ]
     final_payload = {
         "format": CHECKPOINT_FORMAT,
         "status": "complete",
@@ -533,9 +671,9 @@ def _train_timestep(
     metrics_payload = {
         "time_index": int(time_index),
         "target": str(cfg["data"]["target"]),
-        "mse": mse(frame, prediction),
-        "mae": mae(frame, prediction),
-        "psnr": psnr(frame, prediction),
+        "mse": final_mse,
+        "mae": final_mae,
+        "psnr": final_psnr,
         "parameter_count": int(total_parameters),
         "fp16_size_bytes": int(total_parameters * 2),
         "checkpoint_bytes": int(checkpoint_path.stat().st_size),
@@ -543,6 +681,7 @@ def _train_timestep(
         "optimizer_steps": int(total_optimizer_steps),
         "elapsed_seconds": float(time.perf_counter() - started),
         "effective_scales": int(effective_scales),
+        "scale_metrics": scale_metrics,
     }
     metrics_path = _write_json(timestep_dir / "metrics.json", metrics_payload)
     return {
@@ -555,12 +694,22 @@ def _train_timestep(
     }
 
 
-def _completed_entry(entry: dict[str, Any] | None, config_hash: str) -> bool:
+def _completed_entry(
+    entry: dict[str, Any] | None,
+    config_hash: str,
+    *,
+    require_scale_metrics: bool = False,
+) -> bool:
     if not entry or entry.get("status") != "completed":
         return False
     if str(entry.get("config_hash")) != str(config_hash):
         raise ValueError("Existing MINER timestep was produced by a different config")
-    return all(Path(entry[key]).is_file() for key in ("checkpoint_path", "metrics_path"))
+    if not all(Path(entry[key]).is_file() for key in ("checkpoint_path", "metrics_path")):
+        return False
+    if not require_scale_metrics:
+        return True
+    payload = json.loads(Path(entry["metrics_path"]).read_text(encoding="utf-8"))
+    return len(payload.get("scale_metrics") or []) == int(payload.get("effective_scales", -1))
 
 
 def run_train(
@@ -610,7 +759,11 @@ def run_train(
         for time_index in cfg["training"]["time_indices"]:
             token = f"t{int(time_index):04d}"
             entry = manifest["timesteps"].get(token)
-            if _completed_entry(entry, config_hash):
+            if _completed_entry(
+                entry,
+                config_hash,
+                require_scale_metrics=normalize_probe(cfg.get("exploration_probe")).enabled,
+            ):
                 skipped.append(int(time_index))
                 continue
             timestep_dir = _timestep_dir(layout, int(time_index))
@@ -634,6 +787,9 @@ def run_train(
             _write_json(manifest_path, manifest)
             completed.append(int(time_index))
         entries = [manifest["timesteps"][f"t{int(index):04d}"] for index in cfg["training"]["time_indices"]]
+        exploration_metrics_path = _write_exploration_trajectory(
+            layout["metrics"], entries, cfg
+        )
         model_stats = {
             "target": cfg["data"]["target"],
             "timestep_count": len(entries),
@@ -654,6 +810,7 @@ def run_train(
             "checkpoint_path": layout["timesteps"],
             "manifest_path": manifest_path,
             "model_stats_path": model_stats_path,
+            "exploration_metrics_path": exploration_metrics_path,
             "prediction_path": prediction_path,
             "completed_timesteps": completed,
             "skipped_timesteps": skipped,

@@ -11,7 +11,7 @@ data:
     Z: 1
     T: 2001
   targets:
-    Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
+    Absolute_Pressure: ${COMBUSTION_ROOT}/target_Absolute_Pressure.npy
 model:
   name: instant_vnr
   in_features: 4

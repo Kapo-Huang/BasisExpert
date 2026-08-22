@@ -3,8 +3,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_LIST_FILE="${CONFIG_LIST_FILE:-${SCRIPT_DIR}/combustion_stsr_mvnet.list}"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-combustion_stsr_mvnet_$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/${RUN_TOKEN}}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -22,8 +23,6 @@ STAGE_PATTERNS=(
     'configs/main/STSR-INR/combustion_40NH3_1.yaml'
     'configs/main/MVNet/combustion_40NH3_1.yaml'
 )
-STAGE_EXPECTED=(1 1)
-
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 source "${SCRIPT_DIR}/../lib/combustion_batch_runner.sh"
 combustion_batch_main

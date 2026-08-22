@@ -2,8 +2,9 @@
 
 # Shared staged runner for the fixed Combustion experiment entrypoints.
 # The caller must define SCRIPT_DIR, REPO_ROOT, CONFIG_LIST_FILE, LOG_ROOT,
-# STATUS_FILE, FAILURE_FILE, CONDA_ENV, DRY_RUN, MAX_PARALLEL_JOBS,
-# STAGE_LABELS, STAGE_PATTERNS, and STAGE_EXPECTED.
+# STATUS_FILE, FAILURE_FILE, SERVER_ENV, CONDA_ENV, PYTHON_BIN, DRY_RUN,
+# MAX_PARALLEL_JOBS,
+# STAGE_LABELS and STAGE_PATTERNS.
 
 COMBUSTION_GROUP_DELIM=$'\034'
 
@@ -47,30 +48,17 @@ combustion_run_stage() {
 }
 
 combustion_batch_main() {
-    if [[ "${#STAGE_LABELS[@]}" -eq 0 \
-        || "${#STAGE_LABELS[@]}" -ne "${#STAGE_PATTERNS[@]}" \
-        || "${#STAGE_LABELS[@]}" -ne "${#STAGE_EXPECTED[@]}" ]]; then
-        printf 'Invalid Combustion stage definition.\n' >&2
-        return 2
-    fi
     if ! [[ "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
         printf 'MAX_PARALLEL_JOBS must be a positive integer, got %s.\n' "${MAX_PARALLEL_JOBS}" >&2
         return 2
     fi
-    if [[ ! -f "${CONFIG_LIST_FILE}" ]]; then
-        printf 'Config list not found: %s\n' "${CONFIG_LIST_FILE}" >&2
-        return 2
-    fi
 
-    local -A seen=()
     local -a stage_groups=()
-    local -a stage_counts=()
     local raw line relative matched_stage index
     local total=0
+    local additional_group=""
     for index in "${!STAGE_LABELS[@]}"; do
         stage_groups+=("")
-        stage_counts+=(0)
-        total=$((total + STAGE_EXPECTED[index]))
     done
 
     while IFS= read -r raw || [[ -n "${raw}" ]]; do
@@ -80,47 +68,31 @@ combustion_batch_main() {
         line="${line%"${line##*[![:space:]]}"}"
         [[ -n "${line}" ]] || continue
         relative="${line#./}"
-        if [[ -n "${seen[${relative}]+x}" ]]; then
-            printf 'Duplicate Combustion config: %s\n' "${relative}" >&2
-            return 2
-        fi
-        if [[ ! -f "${REPO_ROOT}/${relative}" ]]; then
-            printf 'Config not found: %s\n' "${relative}" >&2
-            return 2
-        fi
-
         matched_stage=-1
         for index in "${!STAGE_PATTERNS[@]}"; do
             if [[ "${relative}" == ${STAGE_PATTERNS[${index}]} ]]; then
-                if [[ "${matched_stage}" -ne -1 ]]; then
-                    printf 'Config matches multiple stages: %s\n' "${relative}" >&2
-                    return 2
-                fi
                 matched_stage="${index}"
+                break
             fi
         done
         if [[ "${matched_stage}" -eq -1 ]]; then
-            printf 'Out-of-scope Combustion config: %s\n' "${relative}" >&2
-            return 2
-        fi
-
-        seen["${relative}"]=1
-        if [[ -n "${stage_groups[${matched_stage}]}" ]]; then
+            if [[ -n "${additional_group}" ]]; then
+                additional_group="${additional_group}${COMBUSTION_GROUP_DELIM}${REPO_ROOT}/${relative}"
+            else
+                additional_group="${REPO_ROOT}/${relative}"
+            fi
+        elif [[ -n "${stage_groups[${matched_stage}]}" ]]; then
             stage_groups[${matched_stage}]="${stage_groups[${matched_stage}]}${COMBUSTION_GROUP_DELIM}${REPO_ROOT}/${relative}"
         else
             stage_groups[${matched_stage}]="${REPO_ROOT}/${relative}"
         fi
-        stage_counts[${matched_stage}]=$((stage_counts[matched_stage] + 1))
+        total=$((total + 1))
     done < "${CONFIG_LIST_FILE}"
 
-    for index in "${!STAGE_LABELS[@]}"; do
-        if [[ "${stage_counts[${index}]}" -ne "${STAGE_EXPECTED[${index}]}" ]]; then
-            printf 'Expected %s=%d configs, found %d in %s.\n' \
-                "${STAGE_LABELS[${index}]}" "${STAGE_EXPECTED[${index}]}" \
-                "${stage_counts[${index}]}" "${CONFIG_LIST_FILE}" >&2
-            return 2
-        fi
-    done
+    if [[ -n "${additional_group}" ]]; then
+        STAGE_LABELS+=("Additional configs")
+        stage_groups+=("${additional_group}")
+    fi
 
     batch_init_status || return $?
     cd "${REPO_ROOT}" || return $?
@@ -129,6 +101,7 @@ combustion_batch_main() {
     local -a pids=()
     printf '%s: %d configs, max_parallel=%s\n' "${BATCH_LABEL}" "${total}" "${MAX_PARALLEL_JOBS}"
     for index in "${!STAGE_LABELS[@]}"; do
+        [[ -n "${stage_groups[${index}]}" ]] || continue
         combustion_run_stage "${index}"
     done
     batch_rebuild_failures

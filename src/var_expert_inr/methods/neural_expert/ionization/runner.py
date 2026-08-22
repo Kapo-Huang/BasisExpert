@@ -164,7 +164,7 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
     seed_everything(int(cfg["seed"]))
 
     train_dataloader, train_set = build_dataloader(cfg, cfg["DATA"]["attr_name"], training=True)
-    cfg["MODEL"]["out_dim"] = 1
+    cfg["MODEL"]["out_dim"] = int(train_set.target_dim)
     device = torch.device(f"cuda:{gpu}" if torch.cuda.is_available() else "cpu")
     cfg["device"] = device
 
@@ -239,7 +239,9 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             probe_coords, _ = train_set._flat_to_coords(probe_indices)
             if train_set.normalize_inputs:
                 probe_coords = (probe_coords - train_set.x_mean.numpy()) / train_set.x_std.numpy()
-            probe_target = np.asarray(train_set.target[probe_indices], dtype=np.float32).reshape(-1, 1)
+            probe_target = np.asarray(
+                train_set.target[probe_indices], dtype=np.float32
+            ).reshape(-1, train_set.target_dim)
             if train_set.normalize_targets:
                 probe_target = (probe_target - train_set.y_mean.numpy()) / train_set.y_std.numpy()
             probe_points = torch.from_numpy(np.asarray(probe_coords, dtype=np.float32))

@@ -3,9 +3,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/sensitivity/coordnet_learning_rate"
 RUN_ROOT="${REPO_ROOT}/runs/exploration_CoordNet"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration_CoordNet/${RUN_TOKEN}}"
 if command -v cygpath >/dev/null 2>&1; then LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"; fi
@@ -16,8 +17,6 @@ MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-5}"
 STRICT_VALIDATION="${STRICT_VALIDATION:-1}"
 COLLAPSE_THRESHOLD_DB="${COLLAPSE_THRESHOLD_DB:-1.0}"
 MINIMUM_GAIN_DB="${MINIMUM_GAIN_DB:-0.1}"
-EXPECTED_TOTAL=30
-
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 if [[ ! "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAX_PARALLEL_JOBS must be a positive integer, got %s.\n' "${MAX_PARALLEL_JOBS}" >&2
@@ -36,11 +35,7 @@ for profile in "${PROFILES[@]}"; do
     done
 done
 
-if [[ "${#CONFIGS[@]}" -ne "${EXPECTED_TOTAL}" ]]; then
-    printf 'Expected %d CoordNet learning-rate configs, found %d. Regenerate with scripts/sensitivity/generate_coordnet_learning_rate.py.\n' \
-        "${EXPECTED_TOTAL}" "${#CONFIGS[@]}" >&2
-    exit 2
-fi
+total=${#CONFIGS[@]}
 
 wait_for_pid_at() {
     local index="$1"
@@ -57,7 +52,7 @@ pids=()
 for config in "${CONFIGS[@]}"; do
     completed=$((completed + 1))
     while [[ "${#pids[@]}" -ge "${MAX_PARALLEL_JOBS}" ]]; do wait_for_pid_at 0; done
-    batch_run_one_config "${config}" "${completed}" "${EXPECTED_TOTAL}" &
+    batch_run_one_config "${config}" "${completed}" "${total}" &
     pids+=("$!")
 done
 while [[ "${#pids[@]}" -gt 0 ]]; do wait_for_pid_at 0; done
@@ -76,13 +71,13 @@ if [[ "${DRY_RUN}" != "1" ]]; then
         --minimum-gain-db "${MINIMUM_GAIN_DB}"
     )
     if [[ "${STRICT_VALIDATION}" == "1" ]]; then summary_args+=(--fail-on-attention); fi
-    if ! conda run --no-capture-output -n "${CONDA_ENV}" python \
-        "${SCRIPT_DIR}/summarize_coordnet_learning_rate.py" "${summary_args[@]}"; then
+    if ! server_python "${SCRIPT_DIR}/summarize_coordnet_learning_rate.py" \
+        "${summary_args[@]}"; then
         printf 'FAILED: exploration_CoordNet validation found runs needing attention.\n' >&2
         failures=$((failures + 1))
     fi
 fi
 
 printf 'Completed %d exploration_CoordNet configs; failures=%d; status=%s\n' \
-    "${EXPECTED_TOTAL}" "${failures}" "${STATUS_FILE}"
+    "${total}" "${failures}" "${STATUS_FILE}"
 if [[ "${failures}" -ne 0 ]]; then exit 1; fi

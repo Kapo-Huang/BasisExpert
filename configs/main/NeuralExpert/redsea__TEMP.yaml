@@ -1,0 +1,79 @@
+seed: 0
+wandb_project: inr_moe_redsea
+experiment: neural_expert_redsea_TEMP
+exp_id: neural-expert-redsea-TEMP
+experiment_root: ${REPO_ROOT}/runs/neural_expert
+MODEL:
+  model_name: inr_moe_mesh
+  in_dim: 4
+  out_dim: 1
+  decoder_hidden_dim: 64
+  decoder_n_hidden_layers: 2
+  decoder_input_encoding: learned_512_2_sine_siren_none
+  decoder_nl: sine
+  decoder_init_type: siren
+  n_experts: 8
+  outermost_linear: true
+  input_encoding: none
+  decoder_freqs: 30.0
+  decoder_trainable_freqs: false
+  top_k: 1
+  manager_hidden_dim: 128
+  manager_n_hidden_layers: 2
+  manager_input_encoding: learned_128_2_sine_siren_none
+  manager_nl: sine
+  manager_init: siren
+  manager_type: standard
+  experts_bias_std: 0.1
+  experts_bias_weight: 1.0
+  manager_softmax_temperature: 1.0
+  manager_softmax_temp_trainable: false
+  manager_q_activation: softmax
+  manager_clamp_q: 0.0
+  manager_conditioning: cat
+  manager_pt_path: ${REPO_ROOT}/runs/neural_expert/pretrained_managers/redsea/default/pt_inr_moe_mesh_TEMP_managerpretraining.pth
+  load_pt_manager: true
+  shared_encoder: false
+LOSS:
+  scale_by_q_grad: false
+  loss_type: 1000valrecon
+  segmentation_type: ce
+  sample_bias_correction: false
+  entropy_metric: kl
+DATA:
+  dataset_name: redsea
+  target: TEMP
+  targets:
+    SALT: ${REDSEA_ROOT}/target_SALT.npy
+    TEMP: ${REDSEA_ROOT}/target_TEMP.npy
+    U: ${REDSEA_ROOT}/target_U.npy
+    V: ${REDSEA_ROOT}/target_V.npy
+  target_stats_path: ${REPO_ROOT}/data/cache/neural_expert/redsea/target_stats_TEMP.npz
+  normalize_inputs: false
+  normalize_targets: false
+  association: point
+  source_path: ${REDSEA_ROOT}/source_XYZT.npy
+  stats_key: TEMP
+TRAINING:
+  n_points: 16000
+  lr: 3.0e-05
+  lr_gamma: 0.9999
+  lr_scheduler: ExponentialLR
+  num_epochs: 60000
+  batch_size: 1
+  num_workers: 0
+  grad_clip_norm: 10.0
+  save_every: 500
+  segmentation_mode: false
+  log_every: 100
+  stages:
+  - end_iteration_frac: 1.0
+    params: all
+    loss_type: 1000valrecon
+  pretrain_assignment:
+    method: coord_kmeans
+    fit_samples: 50000
+    cache_path: ${REPO_ROOT}/data/cache/neural_expert/redsea/coord_kmeans_TEMP.npz
+    normalize_features: false
+    random_seed: 0
+    chunk_size: 65536

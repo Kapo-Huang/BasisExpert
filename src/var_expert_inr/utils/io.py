@@ -11,6 +11,39 @@ import yaml
 
 REPO_ROOT_PLACEHOLDER = "${REPO_ROOT}"
 DATASETS_ROOT_PLACEHOLDER = "${DATASETS_ROOT}"
+DATASET_ROOT_PLACEHOLDERS = {
+    "${REDSEA_ROOT}": ("RedSea", Path("data/Mesh/RedSea")),
+    "${KATRINA_ROOT}": ("Katrina", Path("data/Mesh/Katrina")),
+    "${IONIZATION_ROOT}": ("Ionization", Path("data/Volume/Ionization")),
+    "${COMBUSTION_ROOT}": ("Combustion", Path("data/Volume/Combustion")),
+}
+
+
+def _dataset_root(
+    placeholder: str,
+    *,
+    base_dir: str | Path | None,
+) -> Path:
+    dataset_name, original_relative = DATASET_ROOT_PLACEHOLDERS[placeholder]
+    override = os.environ.get(f"{dataset_name.upper()}_ROOT")
+    if override:
+        return Path(override).expanduser()
+
+    server_env = os.environ.get("SERVER_ENV", "original").strip().lower()
+    if server_env == "autodl":
+        autodl_root = Path(os.environ.get("AUTODL_DATA_ROOT", "/root/autodl-tmp"))
+        return autodl_root / dataset_name
+    if server_env != "original":
+        raise ValueError(
+            f"Unsupported SERVER_ENV={server_env!r}; expected 'original' or 'autodl'"
+        )
+
+    repo_root = find_repo_root(base_dir)
+    if original_relative is not None:
+        return repo_root / original_relative
+    configured_root = os.environ.get("DATASETS_ROOT")
+    datasets_root = Path(configured_root) if configured_root else repo_root.parent.parent / "Datasets"
+    return datasets_root / dataset_name
 
 
 def find_repo_root(start: str | Path | None = None) -> Path:
@@ -93,6 +126,14 @@ def resolve_path(path_value: str | None, *, base_dir: str | Path | None = None) 
             else find_repo_root(base_dir).parent.parent / "Datasets"
         )
         return str((datasets_root / suffix).resolve())
+    for placeholder in DATASET_ROOT_PLACEHOLDERS:
+        if (
+            text == placeholder
+            or text.startswith(f"{placeholder}/")
+            or text.startswith(f"{placeholder}\\")
+        ):
+            suffix = text[len(placeholder) :].lstrip("/\\")
+            return str((_dataset_root(placeholder, base_dir=base_dir) / suffix).resolve())
     path = Path(text)
     if path.is_absolute():
         return str(path)

@@ -26,6 +26,32 @@ python -m var_expert_inr.cli train --config configs/main/ECNR/ionization__GT.yam
 python -m var_expert_inr.cli train --config configs/main/MINER/ionization__GT.yaml
 ```
 
+## Server environments
+
+All Bash experiment entrypoints support the original Conda server and the
+AutoDL server. The default remains `original`, which runs Python through the
+`compression` Conda environment. Select AutoDL either with an option or an
+environment variable:
+
+```bash
+bash scripts/main/run_all.sh --env autodl
+SERVER_ENV=autodl bash scripts/main/run_all.sh
+```
+
+`autodl` invokes `${PYTHON_BIN:-python}` directly. The equivalent setting for
+a direct CLI invocation is:
+
+```bash
+SERVER_ENV=autodl python -m var_expert_inr.cli train \
+  --config configs/main/VarExpert/ionization.yaml
+```
+
+On AutoDL, datasets default to `/root/autodl-tmp/Combustion`, `Ionization`,
+`RedSea`, and `Katrina`. Set `AUTODL_DATA_ROOT` to replace
+`/root/autodl-tmp`, or set `COMBUSTION_ROOT`, `IONIZATION_ROOT`,
+`REDSEA_ROOT`, or `KATRINA_ROOT` to override one dataset. The original profile
+retains the repository `data/Mesh` and `data/Volume` layout.
+
 MINER is integrated as a self-contained PyTorch subsystem. It trains one
 scalar spatial field per timestep: Ionization uses the published 3D path with
 four scales and `16^3` blocks, while the `128x128` Combustion fields use the
@@ -125,10 +151,16 @@ formal matrix. Comment out or delete paths in that file to select a subset. The
 remaining entries still follow the model grouping and main-before-RD-curve
 order defined by the runner.
 
-Run the selected configs in the `compression` conda environment:
+Run the selected configs on the original server (the default profile):
 
 ```bash
 bash scripts/main/run_all.sh
+```
+
+To run the same selection on AutoDL:
+
+```bash
+bash scripts/main/run_all.sh --env autodl
 ```
 
 An alternate list can be supplied without modifying the default file:
@@ -163,8 +195,8 @@ only on the config path: an old `ok` row still skips that path even if the YAML
 contents have since changed.
 
 The combined SIREN + NeuralExpert non-Ionization entrypoint runs the 13 SIREN
-Combustion targets, then the 16 NeuralExpert manager pretrains and their 16
-Bathymetry/Combustion main runs. It defaults to five parallel training jobs;
+Combustion targets, then the 17 NeuralExpert manager pretrains and their 17
+RedSea/Combustion main runs. It defaults to five parallel training jobs;
 NeuralExpert full-dataset PSNR evaluations run serially afterward. SIREN keeps
 its final deterministic 10% PSNR probe. Results are collected in
 `experiment_psnr.tsv` beneath the batch log directory.
@@ -178,17 +210,19 @@ MAX_PARALLEL_JOBS=5 CONDA_ENV=compression bash scripts/main/run_neural_expert_no
 
 The CoordNet-Combustion + MVNet-Katrina + STSR-INR-RedSea entrypoint contains
 15 configs: the 13 independent CoordNet Combustion targets, one joint MVNet
-Katrina config, and one joint five-attribute STSR-INR RedSea config. Stages run
-in that order, with at most five concurrent jobs by default. RedSea data is read
-from the sibling `Datasets/Ocean/train` directory; set `DATASETS_ROOT` when the
-datasets directory lives elsewhere.
+Katrina config, and one joint four-attribute STSR-INR RedSea config. Stages run
+in that order, with at most five concurrent jobs by default. RedSea uses the
+repository `data/Mesh/RedSea` directory in the original profile and
+`/root/autodl-tmp/RedSea` in the AutoDL profile; set `REDSEA_ROOT` to override
+that dataset directly.
 
 ```bash
 bash scripts/main/run_selected_datasets.sh
 DRY_RUN=1 bash scripts/main/run_selected_datasets.sh
 BATCH_LOG_ROOT=batch_logs/<existing-batch> bash scripts/main/run_selected_datasets.sh
 MAX_PARALLEL_JOBS=5 CONDA_ENV=compression bash scripts/main/run_selected_datasets.sh
-DATASETS_ROOT=/path/to/Datasets bash scripts/main/run_selected_datasets.sh
+REDSEA_ROOT=/path/to/RedSea bash scripts/main/run_selected_datasets.sh
+bash scripts/main/run_selected_datasets.sh --env autodl
 ```
 
 Three Combustion-only entrypoints cover the remaining formal model groups.
@@ -272,8 +306,10 @@ requires synchronization.
 
 ## RealPDEBench combustion tools
 
-Run the standalone script with the `compression` conda environment. Inspect
-real or numerical trajectories and optionally compute exact value statistics:
+Run the standalone script with a Python environment that provides its optional
+visualization and Hugging Face dependencies. The commands below show the
+original server; on AutoDL, replace the executable with `python`. Inspect real
+or numerical trajectories and optionally compute exact value statistics:
 
 ```powershell
 D:\Anaconda3\envs\compression\python.exe scripts\tools\combustion.py inspect `

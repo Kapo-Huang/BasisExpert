@@ -11,7 +11,7 @@ data:
     Z: 1
     T: 2001
   targets:
-    Temperature: ${REPO_ROOT}/data/Volume/Combustion/target_Temperature.npy
+    Temperature: ${COMBUSTION_ROOT}/target_Temperature.npy
 model:
   name: instant_ngp
   in_features: 4

@@ -3,8 +3,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_LIST_FILE="${SCRIPT_DIR}/selected_datasets.list"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-coordnet_mvnet_stsr_$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/${RUN_TOKEN}}"
 STATUS_FILE="${LOG_ROOT}/status.tsv"
@@ -20,10 +21,10 @@ fi
 
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 
-declare -A seen=()
 declare -a coordnet_configs=()
 declare -a mvnet_configs=()
 declare -a stsr_configs=()
+declare -a additional_configs=()
 
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
     line="${raw%$'\r'}"
@@ -32,15 +33,6 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
     line="${line%"${line##*[![:space:]]}"}"
     [[ -n "${line}" ]] || continue
     line="${line#./}"
-    if [[ -n "${seen[${line}]+x}" ]]; then
-        printf 'Duplicate config: %s\n' "${line}" >&2
-        exit 2
-    fi
-    if [[ ! -f "${REPO_ROOT}/${line}" ]]; then
-        printf 'Config not found: %s\n' "${line}" >&2
-        exit 2
-    fi
-    seen["${line}"]=1
     case "${line}" in
         configs/main/CoordNet/combustion_40NH3_1__*.yaml)
             coordnet_configs+=("${REPO_ROOT}/${line}")
@@ -52,17 +44,10 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
             stsr_configs+=("${REPO_ROOT}/${line}")
             ;;
         *)
-            printf 'Out-of-scope config: %s\n' "${line}" >&2
-            exit 2
+            additional_configs+=("${REPO_ROOT}/${line}")
             ;;
     esac
 done < "${CONFIG_LIST_FILE}"
-
-if [[ "${#coordnet_configs[@]}" -ne 13 || "${#mvnet_configs[@]}" -ne 1 || "${#stsr_configs[@]}" -ne 1 ]]; then
-    printf 'Expected CoordNet=13, MVNet=1, STSR-INR=1; found %d/%d/%d.\n' \
-        "${#coordnet_configs[@]}" "${#mvnet_configs[@]}" "${#stsr_configs[@]}" >&2
-    exit 2
-fi
 
 if ! [[ "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAX_PARALLEL_JOBS must be a positive integer, got %s.\n' "${MAX_PARALLEL_JOBS}" >&2
@@ -74,7 +59,7 @@ cd "${REPO_ROOT}"
 
 failures=0
 completed=0
-total=15
+total=$((${#coordnet_configs[@]} + ${#mvnet_configs[@]} + ${#stsr_configs[@]} + ${#additional_configs[@]}))
 
 wait_for_pid_at() {
     local index="$1"
@@ -109,11 +94,14 @@ run_stage() {
     done
 }
 
-printf 'CoordNet-Combustion + MVNet-Katrina + STSR-INR-RedSea: 15 configs, max_parallel=%s\n' \
-    "${MAX_PARALLEL_JOBS}"
+printf 'CoordNet-Combustion + MVNet-Katrina + STSR-INR-RedSea: %d configs, max_parallel=%s\n' \
+    "${total}" "${MAX_PARALLEL_JOBS}"
 run_stage "CoordNet Combustion" "${coordnet_configs[@]}"
 run_stage "MVNet Katrina" "${mvnet_configs[@]}"
 run_stage "STSR-INR RedSea" "${stsr_configs[@]}"
+if [[ "${#additional_configs[@]}" -gt 0 ]]; then
+    run_stage "Additional configs" "${additional_configs[@]}"
+fi
 
 batch_rebuild_failures
 printf 'Completed %d configs; failures=%d; status=%s\n' \

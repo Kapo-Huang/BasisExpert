@@ -3,9 +3,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/exploration/ecnr_tuning"
 RUN_ROOT="${REPO_ROOT}/runs/exploration_v6"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration_v6/${RUN_TOKEN}}"
 if command -v cygpath >/dev/null 2>&1; then LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"; fi
@@ -16,8 +17,6 @@ MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-1}"
 DEVICE="${DEVICE:-cuda:0}"
 STRICT_VALIDATION="${STRICT_VALIDATION:-1}"
 PSNR_REGRESSION_TOLERANCE_DB="${PSNR_REGRESSION_TOLERANCE_DB:-1.0}"
-EXPECTED_TOTAL=18
-
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 if [[ ! "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAX_PARALLEL_JOBS must be a positive integer, got %s.\n' "${MAX_PARALLEL_JOBS}" >&2
@@ -38,12 +37,6 @@ if ! batch_init_status; then exit 2; fi
 mapfile -t CONFIGS < <(
     find "${CONFIG_ROOT}/ECNR" -type f -name '*.yaml' -print | LC_ALL=C sort
 )
-if [[ "${#CONFIGS[@]}" -ne "${EXPECTED_TOTAL}" ]]; then
-    printf 'Expected %d ECNR tuning configs, found %d. Regenerate with scripts/exploration/generate_ecnr_tuning.py.\n' \
-        "${EXPECTED_TOTAL}" "${#CONFIGS[@]}" >&2
-    exit 2
-fi
-
 wait_for_pid_at() {
     local index="$1"
     local pid="${pids[${index}]}"
@@ -78,8 +71,8 @@ if [[ "${DRY_RUN}" != "1" ]]; then
     if [[ "${STRICT_VALIDATION}" == "1" ]]; then
         summary_args+=(--fail-if-no-eligible-profile)
     fi
-    if ! conda run --no-capture-output -n "${CONDA_ENV}" python \
-        "${SCRIPT_DIR}/summarize_ecnr_tuning.py" "${summary_args[@]}"; then
+    if ! server_python "${SCRIPT_DIR}/summarize_ecnr_tuning.py" \
+        "${summary_args[@]}"; then
         printf 'FAILED: exploration-v6 has no eligible three-target ECNR profile.\n' >&2
         failures=$((failures + 1))
     fi

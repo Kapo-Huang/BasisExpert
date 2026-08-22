@@ -93,8 +93,6 @@ class IonizationINRDataset(Dataset):
                 f"Target length mismatch: target N={int(self.target.shape[0])}, expected N={int(self.total_size)}"
             )
         self.target_dim = int(self.target.shape[1]) if self.target.ndim == 2 else 1
-        if self.target_dim != 1:
-            raise ValueError(f"IonizationINRDataset expects single-channel targets, got target_dim={self.target_dim}")
 
         self.x_mean, self.x_std = _compute_input_stats(self.volume_shape)
         self.y_mean, self.y_std = self._load_target_stats()
@@ -171,7 +169,9 @@ class IonizationINRDataset(Dataset):
             segments = torch.from_numpy(np.asarray(self.segments[spatial_idx], dtype=np.int64))
             return {"nonmnfld_points": coords_t, "nonmnfld_segments_gt": segments}
 
-        values = np.asarray(self.target[flat_idx], dtype=np.float32).reshape(-1, 1)
+        values = np.asarray(self.target[flat_idx], dtype=np.float32).reshape(
+            -1, self.target_dim
+        )
         if self.normalize_targets:
             values = (values - self.y_mean.numpy()) / self.y_std.numpy()
         return {"nonmnfld_points": coords_t, "nonmnfld_val": torch.from_numpy(values.astype(np.float32))}

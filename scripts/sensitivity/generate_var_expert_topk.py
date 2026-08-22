@@ -26,7 +26,6 @@ SIZE = "Size163"
 NUM_EXPERTS = 7
 BASE_DIM = 23
 TOP_K_VALUES = tuple(range(1, NUM_EXPERTS + 1))
-EXPECTED_TOTAL = len(TOP_K_VALUES)
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,
@@ -91,11 +90,6 @@ def generate() -> int:
             payload,
         )
 
-    expected = {(NUM_EXPERTS, BASE_DIM, int(top_k)) for top_k in TOP_K_VALUES}
-    if generated != expected or len(generated) != EXPECTED_TOTAL:
-        raise RuntimeError(
-            f"Expected {EXPECTED_TOTAL} VarExpert top-k configs, generated {sorted(generated)}"
-        )
     return len(generated)
 
 

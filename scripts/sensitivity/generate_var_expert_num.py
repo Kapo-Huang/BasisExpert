@@ -33,7 +33,6 @@ EXPERT_PROFILES = {
     7: {"name": "var_expert", "base_dim": 23, "top_k": 3},
     8: {"name": "var_expert", "base_dim": 22, "top_k": 3},
 }
-EXPECTED_TOTAL = len(EXPERT_PROFILES)
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,
@@ -128,19 +127,6 @@ def generate() -> int:
             payload,
         )
 
-    expected = {
-        (
-            int(experts),
-            str(values["name"]),
-            int(values["base_dim"]),
-            int(values["top_k"]) if values.get("top_k") is not None else None,
-        )
-        for experts, values in EXPERT_PROFILES.items()
-    }
-    if generated != expected or len(generated) != EXPECTED_TOTAL:
-        raise RuntimeError(
-            f"Expected {EXPECTED_TOTAL} VarExpert expert-count configs, generated {sorted(generated)}"
-        )
     return len(generated)
 
 

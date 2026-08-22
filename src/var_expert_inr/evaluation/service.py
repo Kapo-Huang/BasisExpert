@@ -15,7 +15,10 @@ from ..config.io import load_experiment_config
 from ..data.base import DatasetMeta, FieldBatch, FieldDataset, normalize_index_coordinates
 from ..models import build_model
 from ..training.engine import _predict_batch
-from ..utils.checkpoint import read_checkpoint_payload, validate_checkpoint_target_order
+from ..utils.checkpoint import (
+    read_checkpoint_payload,
+    validate_checkpoint_target_layout,
+)
 from .ground_truth import portable_data_path, target_paths_from_config, validate_ground_truth_paths
 from .metrics import QualityAccumulator, mae, mse, psnr, summarize_selected_quality
 from .performance import DecodeMeasurement, combine_memory_samples, synchronize_cuda
@@ -116,17 +119,40 @@ class _InferenceOnlyDataset(FieldDataset):
         raise RuntimeError("Ground Truth is unavailable for this evaluation")
 
     def align_target_order(self, target_names: tuple[str, ...]) -> None:
+        self.align_target_layout(
+            target_names,
+            tuple(self.meta.target_dims[name] for name in target_names),
+        )
+
+    def align_target_layout(
+        self,
+        target_names: tuple[str, ...],
+        target_dims: tuple[int, ...],
+    ) -> None:
         requested = tuple(str(name) for name in target_names)
         current = tuple(self._target_names)
         if set(requested) != set(current):
             raise ValueError(
                 f"Checkpoint targets do not match run config: checkpoint={list(requested)} config={list(current)}"
             )
+        if len(target_dims) != len(requested):
+            raise ValueError(
+                "Checkpoint target dimension count does not match target names: "
+                f"names={len(requested)} dims={len(target_dims)}"
+            )
+        resolved_dims = {
+            name: int(dimension)
+            for name, dimension in zip(requested, target_dims)
+        }
+        if any(dimension <= 0 for dimension in resolved_dims.values()):
+            raise ValueError(
+                f"Checkpoint target dimensions must be positive: {resolved_dims}"
+            )
         self._target_names = requested
         self.meta = replace(
             self.meta,
             target_names=requested,
-            target_dims={name: self.meta.target_dims[name] for name in requested},
+            target_dims=resolved_dims,
         )
 
     def reshape_flat_predictions(self, name, flat_values):
@@ -283,8 +309,17 @@ def _load_prediction_arrays(
 def _load_standard_model(config, dataset, device: torch.device, source: Path):
     payload = read_checkpoint_payload(source)
     if payload.get("target_names_order"):
-        dataset.align_target_order(tuple(payload["target_names_order"]))
-    validate_checkpoint_target_order(payload, dataset.target_names())
+        target_names = tuple(payload["target_names_order"])
+        target_dims = payload.get("target_dims_order")
+        if target_dims is None:
+            dataset.align_target_order(target_names)
+        else:
+            dataset.align_target_layout(target_names, tuple(target_dims))
+    validate_checkpoint_target_layout(
+        payload,
+        dataset.target_names(),
+        dataset.meta.target_dims,
+    )
     model = build_model(config.model, dataset.meta).to(device)
     model.load_state_dict(payload["model_state"])
     return model
@@ -310,7 +345,13 @@ def _predict_selected_frames(
                 batch_rows = rows[start : start + int(batch_size)]
                 batch = dataset.fetch_batch(batch_rows, include_targets=False)
                 coords = batch.coords.to(device, non_blocking=True)
-                predictions = _predict_batch(model, coords, dataset.target_names(), hard_topk=True)
+                predictions = _predict_batch(
+                    model,
+                    coords,
+                    dataset.target_names(),
+                    hard_topk=True,
+                    target_dims=dataset.meta.target_dims,
+                )
                 for name in targets:
                     parts[name].append(predictions[name].detach().cpu().numpy())
             for name in targets:
@@ -500,7 +541,6 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                     "status": "ok", "prediction_source": str(source_path),
                 }
                 if "psnr" in metrics:
-                    assert gt is not None
                     target_accumulators[target].update(gt, pred_for_metrics)
                     row.update({"mse": mse(gt, pred_for_metrics), "mae": mae(gt, pred_for_metrics), "psnr": psnr(gt, pred_for_metrics)})
                 if needs_render:

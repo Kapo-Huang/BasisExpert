@@ -2,6 +2,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 export CONFIG_LIST_FILE="${CONFIG_LIST_FILE:-${SCRIPT_DIR}/configs.list}"
 
-exec bash "${SCRIPT_DIR}/../main/run_all.sh"
+exec bash "${SCRIPT_DIR}/../main/run_all.sh" "$@"

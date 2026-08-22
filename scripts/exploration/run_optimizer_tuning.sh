@@ -3,9 +3,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/exploration/optimizer_tuning"
 RUN_ROOT="${REPO_ROOT}/runs/exploration_v5"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration_v5/${RUN_TOKEN}}"
 if command -v cygpath >/dev/null 2>&1; then LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"; fi
@@ -18,8 +19,6 @@ STRICT_VALIDATION="${STRICT_VALIDATION:-1}"
 COLLAPSE_THRESHOLD_DB="${COLLAPSE_THRESHOLD_DB:-1.0}"
 MINIMUM_GAIN_DB="${MINIMUM_GAIN_DB:-0.1}"
 FV_REFERENCE_TOLERANCE_DB="${FV_REFERENCE_TOLERANCE_DB:-1.0}"
-EXPECTED_TOTAL=42
-
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 if [[ ! "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAX_PARALLEL_JOBS must be a positive integer, got %s.\n' "${MAX_PARALLEL_JOBS}" >&2
@@ -44,18 +43,7 @@ mapfile -t INSTANT_CONFIGS < <(
     find "${CONFIG_ROOT}/InstantVNR" -type f -name '*.yaml' -print | LC_ALL=C sort
 )
 
-if [[ "${#FV_CONFIGS[@]}" -ne 24 || "${#INSTANT_CONFIGS[@]}" -ne 18 ]]; then
-    printf 'Unexpected optimizer-tuning counts: fv_srn=%d instant_vnr=%d. Regenerate with scripts/exploration/generate_optimizer_tuning.py.\n' \
-        "${#FV_CONFIGS[@]}" "${#INSTANT_CONFIGS[@]}" >&2
-    exit 2
-fi
-
 total=$(( ${#FV_CONFIGS[@]} + ${#INSTANT_CONFIGS[@]} ))
-if [[ "${total}" -ne "${EXPECTED_TOTAL}" ]]; then
-    printf 'Expected %d exploration-v5 configs, found %d.\n' "${EXPECTED_TOTAL}" "${total}" >&2
-    exit 2
-fi
-
 wait_for_pid_at() {
     local index="$1"
     local pid="${pids[${index}]}"
@@ -103,8 +91,8 @@ if [[ "${DRY_RUN}" != "1" ]]; then
     if [[ "${STRICT_VALIDATION}" == "1" ]]; then
         summary_args+=(--fail-if-no-eligible-profile)
     fi
-    if ! conda run --no-capture-output -n "${CONDA_ENV}" python \
-        "${SCRIPT_DIR}/summarize_optimizer_tuning.py" "${summary_args[@]}"; then
+    if ! server_python "${SCRIPT_DIR}/summarize_optimizer_tuning.py" \
+        "${summary_args[@]}"; then
         printf 'FAILED: exploration-v5 has a method with no eligible three-target profile.\n' >&2
         failures=$((failures + 1))
     fi

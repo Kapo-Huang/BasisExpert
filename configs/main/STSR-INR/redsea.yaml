@@ -5,14 +5,12 @@ data:
   kind: node
   dataset_name: redsea
   split: train
-  coords_path: ${DATASETS_ROOT}/Ocean/train/source_XYZT.npy
-  coordinate_stats_path: ${DATASETS_ROOT}/Ocean/train/target_stats_multi_normalized.npz
+  coords_path: ${REDSEA_ROOT}/source_XYZT.npy
   targets:
-    fort63: ${DATASETS_ROOT}/Ocean/train/target_fort63_normalized.npy
-    fort64: ${DATASETS_ROOT}/Ocean/train/target_fort64_normalized.npy
-    fort73: ${DATASETS_ROOT}/Ocean/train/target_fort73_normalized.npy
-    speed: ${DATASETS_ROOT}/Ocean/train/target_speed_normalized.npy
-    v: ${DATASETS_ROOT}/Ocean/train/target_v_normalized.npy
+    SALT: ${REDSEA_ROOT}/target_SALT.npy
+    TEMP: ${REDSEA_ROOT}/target_TEMP.npy
+    U: ${REDSEA_ROOT}/target_U.npy
+    V: ${REDSEA_ROOT}/target_V.npy
 model:
   name: stsr_inr
   in_features: 4
@@ -23,20 +21,31 @@ model:
   outermost_linear: true
   use_global_latent: true
 training:
-  epochs: 60
-  batch_size: 8192
-  pred_batch_size: 8192
+  epochs: 300
+  batch_size: 2048
+  pred_batch_size: 16000
+  gradient_accumulation_steps: 1
   num_workers: 0
-  lr: 5.0e-05
+  lr: 1.0e-05
+  beta_1: 0.9
+  beta_2: 0.999
+  epsilon: 1.0e-08
+  weight_decay: 0.0
   val_split: 0.0
-  log_every: 1
-  log_psnr_every: 10
+  log_every: 10
+  log_psnr_every: 0
   psnr_sample_ratio: 0.1
-  save_every: 10
+  save_every: 300
   early_stop_patience: 0
   loss_type: mse
   seed: 42
-  sampler: uniform_random
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    interval: epoch
+    step_size: 40
+    gamma: 0.92
   pretrain:
     enabled: false
 evaluation:

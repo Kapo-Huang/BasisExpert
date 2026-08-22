@@ -1,0 +1,61 @@
+experiment: katrina_stsr_inr
+exp_id: stsr-inr-katrina
+experiment_root: ${REPO_ROOT}/runs
+data:
+  kind: node
+  dataset_name: katrina
+  split: train
+  coords_path: ${KATRINA_ROOT}/source_XYZT.npy
+  targets:
+    fort63: ${KATRINA_ROOT}/target_fort63.npy
+    fort64: ${KATRINA_ROOT}/target_fort64.npy
+    fort73: ${KATRINA_ROOT}/target_fort73.npy
+    speed: ${KATRINA_ROOT}/target_speed.npy
+    v: ${KATRINA_ROOT}/target_v.npy
+model:
+  name: stsr_inr
+  in_features: 4
+  init_features: 64
+  num_res: 5
+  omega_0: 5.0
+  embedding_dims: 256
+  outermost_linear: true
+  use_global_latent: true
+training:
+  epochs: 300
+  batch_size: 2048
+  pred_batch_size: 16000
+  gradient_accumulation_steps: 1
+  num_workers: 0
+  lr: 1.0e-05
+  beta_1: 0.9
+  beta_2: 0.999
+  epsilon: 1.0e-08
+  weight_decay: 0.0
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 0
+  psnr_sample_ratio: 0.1
+  save_every: 300
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    interval: epoch
+    step_size: 40
+    gamma: 0.92
+  pretrain:
+    enabled: false
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

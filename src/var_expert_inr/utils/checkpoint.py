@@ -46,6 +46,10 @@ def save_checkpoint(
             gradient_accumulation_count
         ),
         "target_names_order": list(dataset.target_names()),
+        "target_dims_order": [
+            int(dataset.meta.target_dims[name])
+            for name in dataset.target_names()
+        ],
         "config_hash": str(config_hash),
     }
     torch.save(payload, checkpoint_path)
@@ -78,5 +82,22 @@ def validate_checkpoint_target_order(payload, current_target_names) -> None:
     if actual != expected:
         raise ValueError(
             "Checkpoint target order mismatch. "
+            f"checkpoint={actual} current={expected}"
+        )
+
+
+def validate_checkpoint_target_layout(payload, current_target_names, current_target_dims) -> None:
+    validate_checkpoint_target_order(payload, current_target_names)
+    actual = payload.get("target_dims_order")
+    if actual is None:
+        return
+    expected = [
+        int(current_target_dims[name])
+        for name in current_target_names
+    ]
+    actual = [int(value) for value in actual]
+    if actual != expected:
+        raise ValueError(
+            "Checkpoint target dimensions mismatch. "
             f"checkpoint={actual} current={expected}"
         )

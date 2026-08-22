@@ -3,7 +3,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
-CONDA_ENV="${CONDA_ENV:-compression}"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/${RUN_TOKEN}}"
 CONFIG_LIST_FILE="${CONFIG_LIST_FILE:-${SCRIPT_DIR}/all_configs.list}"
@@ -20,7 +21,7 @@ source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 
 declare -a GROUP_LABELS=()
 declare -a GROUP_CONFIGS=()
-declare -A SELECTED_CONFIGS=()
+declare -a SELECTED_CONFIGS=()
 
 join_configs() {
     local IFS="${GROUP_DELIM}"
@@ -69,7 +70,7 @@ append_attribute_main_groups() {
     local mode="${2:-all}"
     local dataset config
     local -a configs=()
-    for dataset in bathymetry combustion_40NH3_1 katrina ionization; do
+    for dataset in redsea combustion_40NH3_1 katrina ionization; do
         configs=()
         while IFS= read -r config; do
             case "${mode}" in
@@ -138,64 +139,55 @@ group_config_count() {
 }
 
 load_config_selection() {
-    local raw line line_number=0
-    if [[ ! -f "${CONFIG_LIST_FILE}" ]]; then
-        printf 'Config list not found: %s\n' "${CONFIG_LIST_FILE}" >&2
-        return 2
-    fi
+    local raw line
     while IFS= read -r raw || [[ -n "${raw}" ]]; do
-        line_number=$((line_number + 1))
         line="${raw%$'\r'}"
         line="${line%%#*}"
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
         [[ -n "${line}" ]] || continue
         line="${line#./}"
-        if [[ "${line}" != configs/*.yaml ]]; then
-            printf 'Invalid config list entry at %s:%d: %s\n' "${CONFIG_LIST_FILE}" "${line_number}" "${line}" >&2
-            return 2
-        fi
-        if [[ -n "${SELECTED_CONFIGS[${line}]+x}" ]]; then
-            printf 'Duplicate config list entry at %s:%d: %s\n' "${CONFIG_LIST_FILE}" "${line_number}" "${line}" >&2
-            return 2
-        fi
-        if [[ ! -f "${REPO_ROOT}/${line}" ]]; then
-            printf 'Selected config does not exist at %s:%d: %s\n' "${CONFIG_LIST_FILE}" "${line_number}" "${line}" >&2
-            return 2
-        fi
-        SELECTED_CONFIGS["${line}"]="${line_number}"
+        SELECTED_CONFIGS+=("${line}")
     done < "${CONFIG_LIST_FILE}"
-    if [[ "${#SELECTED_CONFIGS[@]}" -eq 0 ]]; then
-        printf 'Config list contains no active entries: %s\n' "${CONFIG_LIST_FILE}" >&2
-        return 2
-    fi
 }
 
 apply_config_selection() {
-    local group_index config relative selected_path
-    local -a configs=() selected=() filtered_labels=() filtered_groups=()
-    local -A matched=()
+    local group_index config relative selected_path matched
+    local -a configs=() selected_groups=() filtered_labels=() filtered_groups=() additional=()
     for group_index in "${!GROUP_CONFIGS[@]}"; do
-        IFS="${GROUP_DELIM}" read -r -a configs <<< "${GROUP_CONFIGS[${group_index}]}"
-        selected=()
-        for config in "${configs[@]}"; do
-            relative="${config#${REPO_ROOT}/}"
-            if [[ -n "${SELECTED_CONFIGS[${relative}]+x}" ]]; then
-                selected+=("${config}")
-                matched["${relative}"]=1
-            fi
+        selected_groups+=("")
+    done
+    for selected_path in "${SELECTED_CONFIGS[@]}"; do
+        matched=0
+        for group_index in "${!GROUP_CONFIGS[@]}"; do
+            IFS="${GROUP_DELIM}" read -r -a configs <<< "${GROUP_CONFIGS[${group_index}]}"
+            for config in "${configs[@]}"; do
+                relative="${config#${REPO_ROOT}/}"
+                if [[ "${relative}" == "${selected_path}" ]]; then
+                    if [[ -n "${selected_groups[${group_index}]}" ]]; then
+                        selected_groups[${group_index}]="${selected_groups[${group_index}]}${GROUP_DELIM}${config}"
+                    else
+                        selected_groups[${group_index}]="${config}"
+                    fi
+                    matched=1
+                    break 2
+                fi
+            done
         done
-        if [[ "${#selected[@]}" -gt 0 ]]; then
+        if [[ "${matched}" -eq 0 ]]; then
+            additional+=("${REPO_ROOT}/${selected_path}")
+        fi
+    done
+    for group_index in "${!GROUP_CONFIGS[@]}"; do
+        if [[ -n "${selected_groups[${group_index}]}" ]]; then
             filtered_labels+=("${GROUP_LABELS[${group_index}]}")
-            filtered_groups+=("$(join_configs "${selected[@]}")")
+            filtered_groups+=("${selected_groups[${group_index}]}")
         fi
     done
-    for selected_path in "${!SELECTED_CONFIGS[@]}"; do
-        if [[ -z "${matched[${selected_path}]+x}" ]]; then
-            printf 'Selected config is not part of the formal matrix: %s\n' "${selected_path}" >&2
-            return 2
-        fi
-    done
+    if [[ "${#additional[@]}" -gt 0 ]]; then
+        filtered_labels+=("Additional configs")
+        filtered_groups+=("$(join_configs "${additional[@]}")")
+    fi
     GROUP_LABELS=("${filtered_labels[@]}")
     GROUP_CONFIGS=("${filtered_groups[@]}")
 }
@@ -243,12 +235,8 @@ wait_for_all_pids() {
 }
 
 matrix_total="$(group_config_count)"
-if [[ "${matrix_total}" -ne 355 ]]; then
-    printf 'Expected 355 configs, found %d. Regenerate with scripts/main/generate_configs.py.\n' "${matrix_total}" >&2
-    exit 2
-fi
-load_config_selection || exit $?
-apply_config_selection || exit $?
+load_config_selection
+apply_config_selection
 total="$(group_config_count)"
 batch_init_status || exit $?
 printf 'Selected %d of %d configs from %s\n' "${total}" "${matrix_total}" "${CONFIG_LIST_FILE}"

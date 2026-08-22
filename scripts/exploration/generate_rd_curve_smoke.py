@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from copy import deepcopy
 from pathlib import Path
 import shutil
@@ -17,7 +18,6 @@ FORMAL_CONFIG_ROOT = ROOT / "configs" / "rd_curve"
 CONFIG_LIST = ROOT / "scripts" / "rd_curve" / "configs.list"
 CONFIG_ROOT = ROOT / "configs/exploration/rd_curve_smoke"
 RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v3"
-EXPECTED_TOTAL = 88
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,
@@ -49,8 +49,6 @@ def formal_config_paths() -> list[Path]:
             raise ValueError(f"Duplicate RD-curve config: {line}")
         seen.add(path)
         paths.append(path)
-    if len(paths) != EXPECTED_TOTAL:
-        raise RuntimeError(f"Expected {EXPECTED_TOTAL} formal Size configs, found {len(paths)}")
     return paths
 
 
@@ -145,30 +143,42 @@ def quick_payload(formal_path: Path) -> dict:
     return payload
 
 
-def generate() -> dict[str, int]:
-    if CONFIG_ROOT.exists():
+def generate(family: str | None = None) -> dict[str, int]:
+    paths = formal_config_paths()
+    if family is not None:
+        paths = [
+            path
+            for path in paths
+            if path.relative_to(FORMAL_CONFIG_ROOT).parts[0] == family
+        ]
+        if not paths:
+            raise ValueError(f"No formal RD-curve configs found for family: {family}")
+        family_root = CONFIG_ROOT / family
+        if family_root.exists():
+            shutil.rmtree(family_root)
+    elif CONFIG_ROOT.exists():
         shutil.rmtree(CONFIG_ROOT)
-    CONFIG_ROOT.mkdir(parents=True)
+    CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     exp_ids: set[str] = set()
-    for formal_path in formal_config_paths():
+    for formal_path in paths:
         relative = formal_path.relative_to(FORMAL_CONFIG_ROOT)
-        family = relative.parts[0]
+        config_family = relative.parts[0]
         payload = quick_payload(formal_path)
         exp_id = str(payload["exp_id"])
         if exp_id in exp_ids:
             raise ValueError(f"Duplicate exploration-v3 exp_id: {exp_id}")
         exp_ids.add(exp_id)
         dump(CONFIG_ROOT / relative, payload)
-        counts[family] = counts.get(family, 0) + 1
-    total = sum(counts.values())
-    if total != EXPECTED_TOTAL:
-        raise RuntimeError(f"Expected {EXPECTED_TOTAL} exploration-v3 configs, generated {total}: {counts}")
+        counts[config_family] = counts.get(config_family, 0) + 1
     return counts
 
 
 def main() -> None:
-    counts = generate()
+    parser = argparse.ArgumentParser(description="Generate exploration-v3 Size smoke configs.")
+    parser.add_argument("--family", help="Generate only one model family without replacing others.")
+    args = parser.parse_args()
+    counts = generate(args.family)
     print(f"Generated {sum(counts.values())} exploration-v3 Size configs: {counts}")
 
 

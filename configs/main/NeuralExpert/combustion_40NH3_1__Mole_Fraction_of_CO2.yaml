@@ -44,19 +44,19 @@ DATA:
   dataset_name: combustion_40NH3_1
   target: Mole_Fraction_of_CO2
   targets:
-    Absolute_Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Absolute_Pressure.npy
-    Chemistry_Heat_Release_Rate: ${REPO_ROOT}/data/Volume/Combustion/target_Chemistry_Heat_Release_Rate.npy
-    Mole_Fraction_of_CH4: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CH4.npy
-    Mole_Fraction_of_CO: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO.npy
-    Mole_Fraction_of_CO2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO2.npy
-    Mole_Fraction_of_H2O: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_H2O.npy
-    Mole_Fraction_of_NH2: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH2.npy
-    Mole_Fraction_of_NH3: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_NH3.npy
-    Mole_Fraction_of_OH: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_OH.npy
-    Pressure: ${REPO_ROOT}/data/Volume/Combustion/target_Pressure.npy
-    Temperature: ${REPO_ROOT}/data/Volume/Combustion/target_Temperature.npy
-    Velocity: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity.npy
-    Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+    Absolute_Pressure: ${COMBUSTION_ROOT}/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${COMBUSTION_ROOT}/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_OH.npy
+    Pressure: ${COMBUSTION_ROOT}/target_Pressure.npy
+    Temperature: ${COMBUSTION_ROOT}/target_Temperature.npy
+    Velocity: ${COMBUSTION_ROOT}/target_Velocity.npy
+    Velocity_Magnitude: ${COMBUSTION_ROOT}/target_Velocity_Magnitude.npy
   target_stats_path: ${REPO_ROOT}/data/cache/neural_expert/combustion_40NH3_1/target_stats_Mole_Fraction_of_CO2.npz
   normalize_inputs: true
   normalize_targets: false

@@ -776,7 +776,6 @@ def _copy_and_verify(
     complete_runs = [record for record in inventory.records if record.source_kind == "runs"]
     try:
         for index, record in enumerate(complete_runs, start=1):
-            assert record.root is not None
             target = destination_for(record, "raw", stage, runs_root)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(record.root, target, copy_function=shutil.copy2)
@@ -802,7 +801,6 @@ def _copy_and_verify(
             verified_files = 0
             verified_bytes = 0
             for index, record in enumerate(complete_runs, start=1):
-                assert record.root is not None
                 target = destination_for(record, "raw", stage, runs_root)
                 count, byte_count = _verify_tree(record.root, target)
                 verified_files += count

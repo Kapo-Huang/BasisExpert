@@ -11,7 +11,7 @@ data:
     Z: 1
     T: 2001
   targets:
-    Velocity_Magnitude: ${REPO_ROOT}/data/Volume/Combustion/target_Velocity_Magnitude.npy
+    Velocity_Magnitude: ${COMBUSTION_ROOT}/target_Velocity_Magnitude.npy
 model:
   name: instant_ngp
   in_features: 4

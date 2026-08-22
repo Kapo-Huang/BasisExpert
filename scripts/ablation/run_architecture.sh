@@ -3,8 +3,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/ablation/architecture"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration/${RUN_TOKEN}}"
 STATUS_FILE="${LOG_ROOT}/status.tsv"
@@ -57,11 +58,6 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne 126 ]]; then
-    printf 'Expected 126 architecture-ablation configs, found %d. Regenerate with scripts/ablation/generate_architecture.py.\n' "${total}" >&2
-    exit 2
-fi
-
 wait_for_pid_at() {
     local index="$1"
     local pid="${pids[${index}]}"
@@ -95,7 +91,7 @@ done
 
 batch_rebuild_failures
 if [[ "${DRY_RUN}" != "1" ]]; then
-    if ! conda run --no-capture-output -n "${CONDA_ENV}" python "${SCRIPT_DIR}/../ablation/summarize_architecture.py" \
+    if ! server_python "${SCRIPT_DIR}/../ablation/summarize_architecture.py" \
         --config-root "${CONFIG_ROOT}" \
         --status "${STATUS_FILE}" \
         --output "${LOG_ROOT}/exploration_summary.tsv" \

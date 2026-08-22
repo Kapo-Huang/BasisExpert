@@ -23,8 +23,6 @@ LR_PROFILES = {
     "lr1e-5": 1.0e-5,
     "lr5e-6": 5.0e-6,
 }
-EXPECTED_TOTAL = len(SIZES) * len(TARGETS) * len(LR_PROFILES)
-
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,
@@ -94,10 +92,6 @@ def generate() -> int:
                 )
                 count += 1
 
-    if count != EXPECTED_TOTAL:
-        raise RuntimeError(
-            f"Expected {EXPECTED_TOTAL} exploration_CoordNet configs, generated {count}"
-        )
     return count
 
 

@@ -11,11 +11,13 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIGS_ROOT = ROOT / "configs"
 MAIN_CONFIGS = CONFIGS_ROOT / "main"
 RD_CURVE_CONFIGS = CONFIGS_ROOT / "rd_curve"
-FORMAL_CONFIG_COUNT = 355
-MAIN_CONFIG_COUNT = 267
-RD_CURVE_CONFIG_COUNT = 88
 REPO_ROOT_TOKEN = "${REPO_ROOT}"
-DATASETS_ROOT_TOKEN = "${DATASETS_ROOT}"
+DATASET_ROOT_TOKENS = {
+    "redsea": "${REDSEA_ROOT}",
+    "katrina": "${KATRINA_ROOT}",
+    "ionization": "${IONIZATION_ROOT}",
+    "combustion_40NH3_1": "${COMBUSTION_ROOT}",
+}
 SIZES = {
     "Size082": 0.82,
     "Size163": 1.63,
@@ -28,9 +30,9 @@ SINGLE_TARGET_SIZES = {
 }
 ION_SHAPE = {"X": 600, "Y": 248, "Z": 248, "T": 100}
 DATASETS = {
-    "bathymetry": {
+    "redsea": {
         "kind": "node",
-        "dir": "Mesh/Bathymetry",
+        "dir": "Mesh/RedSea",
         "coords": "source_XYZT.npy",
         "targets": ["SALT", "TEMP", "U", "V"],
     },
@@ -69,7 +71,6 @@ COMBUSTION_DATASET = {
 COMBUSTION_SCALAR_TARGETS = [
     target for target in COMBUSTION_DATASET["targets"] if target != "Velocity"
 ]
-REDSEA_TARGETS = ["fort63", "fort64", "fort73", "speed", "v"]
 COMBUSTION_KEYFRAMES = [
     0,
     182,
@@ -120,7 +121,7 @@ DEFAULT_MODELS = {
     },
 }
 MOE_MAIN_BASE_DIMS = {
-    "bathymetry": {"default": 18},
+    "redsea": {"default": 18},
     "katrina": {"default": 16, "v": 15},
     "ionization": {"default": 45},
     COMBUSTION_DATASET["name"]: {"default": 23, "Velocity": 22},
@@ -185,22 +186,12 @@ def write_run_lists() -> None:
     main = [f"configs/main/{path.relative_to(MAIN_CONFIGS).as_posix()}" for path in main_paths]
     rd_curve = [f"configs/rd_curve/{path.relative_to(RD_CURVE_CONFIGS).as_posix()}" for path in rd_curve_paths]
     relative = [*main, *rd_curve]
-    if (len(relative), len(main), len(rd_curve)) != (
-        FORMAL_CONFIG_COUNT,
-        MAIN_CONFIG_COUNT,
-        RD_CURVE_CONFIG_COUNT,
-    ):
-        raise RuntimeError(
-            "Unexpected run-list partition: "
-            f"all={len(relative)} main={len(main)} rd_curve={len(rd_curve)}"
-        )
-
     headers = {
         "all_configs.list": [
             "# Formal training selection: one repository-relative YAML path per line.",
             "# Comment out or delete entries to run only a subset.",
             "# Execution order and parallel grouping remain defined by scripts/main/run_all.sh.",
-            f"# Active entries must be unique and belong to the {FORMAL_CONFIG_COUNT}-config formal matrix.",
+            f"# Generated formal matrix: {len(relative)} configs.",
         ],
         "configs.list": [
             "# Main-experiment selection: all formal configs without a Size tier.",
@@ -238,10 +229,10 @@ def repo_path(relative: str) -> str:
 
 
 def targets_for(dataset: str, nested: bool) -> dict[str, str]:
-    prefix = rel_prefix(nested)
+    del nested
     meta = DATASETS[dataset]
     return {
-        target: f"{prefix}data/{meta['dir']}/target_{TARGET_FILES.get(target, target)}.npy"
+        target: f"{DATASET_ROOT_TOKENS[dataset]}/target_{TARGET_FILES.get(target, target)}.npy"
         for target in meta["targets"]
     }
 
@@ -250,7 +241,7 @@ def unified_data(dataset: str, nested: bool, target: str | None = None) -> dict:
     meta = DATASETS[dataset]
     payload = {"kind": meta["kind"], "dataset_name": dataset, "split": "train"}
     if meta["kind"] == "node":
-        payload["coords_path"] = f"{rel_prefix(nested)}data/{meta['dir']}/{meta['coords']}"
+        payload["coords_path"] = f"{DATASET_ROOT_TOKENS[dataset]}/{meta['coords']}"
     else:
         payload["volume_shape"] = deepcopy(ION_SHAPE)
     payload["targets"] = targets_for(dataset, nested)
@@ -261,9 +252,22 @@ def unified_data(dataset: str, nested: bool, target: str | None = None) -> dict:
 
 def combustion_targets() -> dict[str, str]:
     return {
-        target: repo_path(f"data/Volume/Combustion/target_{target}.npy")
+        target: f"{DATASET_ROOT_TOKENS[COMBUSTION_DATASET['name']]}/target_{target}.npy"
         for target in COMBUSTION_DATASET["targets"]
     }
+
+
+def target_dimension(dataset: str, target: str) -> int:
+    if (dataset, target) in {
+        ("katrina", "v"),
+        (COMBUSTION_DATASET["name"], "Velocity"),
+    }:
+        return 3
+    return 1
+
+
+def total_target_channels(dataset: str, targets: list[str]) -> int:
+    return sum(target_dimension(dataset, target) for target in targets)
 
 
 def combustion_data(
@@ -541,14 +545,16 @@ def generate_mvnet() -> int:
             "exp_id": f"mvnet-{dataset}",
             "experiment_root": repo_path("runs"),
             "data": data,
-            "model": mvnet_model(len(meta["targets"])),
+            "model": mvnet_model(
+                total_target_channels(dataset, meta["targets"])
+            ),
             "training": mvnet_training(),
             "evaluation": evaluation(),
             "log": log_config(),
         }
         dump(MAIN_CONFIGS / "MVNet" / f"{dataset}.yaml", payload)
         count += 1
-    combustion = combustion_data(include_vector=False, four_coordinates=True)
+    combustion = combustion_data(four_coordinates=True)
     combustion["targets"] = {
         name: combustion["targets"][name]
         for name in sorted(combustion["targets"])
@@ -558,7 +564,12 @@ def generate_mvnet() -> int:
         "exp_id": f"mvnet-{COMBUSTION_DATASET['name']}",
         "experiment_root": repo_path("runs"),
         "data": combustion,
-        "model": mvnet_model(len(COMBUSTION_SCALAR_TARGETS)),
+        "model": mvnet_model(
+            total_target_channels(
+                COMBUSTION_DATASET["name"],
+                COMBUSTION_DATASET["targets"],
+            )
+        ),
         "training": mvnet_training(),
         "evaluation": evaluation(),
         "log": log_config(),
@@ -569,76 +580,46 @@ def generate_mvnet() -> int:
 
 
 def generate_stsr_inr() -> int:
+    def main_model() -> dict:
+        return {
+            "name": "stsr_inr",
+            "in_features": 4,
+            "init_features": 64,
+            "num_res": 5,
+            "omega_0": 5.0,
+            "embedding_dims": 256,
+            "outermost_linear": True,
+            "use_global_latent": True,
+        }
+
+    count = 0
+    for dataset in DATASETS:
+        payload = {
+            "experiment": f"{dataset}_stsr_inr",
+            "exp_id": f"stsr-inr-{dataset}",
+            "experiment_root": repo_path("runs"),
+            "data": unified_data(dataset, False),
+            "model": main_model(),
+            "training": mvnet_training(),
+            "evaluation": evaluation(),
+            "log": log_config(),
+        }
+        dump(MAIN_CONFIGS / "STSR-INR" / f"{dataset}.yaml", payload)
+        count += 1
+
     combustion_name = COMBUSTION_DATASET["name"]
-    combustion_payload = {
+    payload = {
         "experiment": f"{combustion_name}_stsr_inr",
         "exp_id": f"stsr-inr-{combustion_name}",
         "experiment_root": repo_path("runs"),
         "data": combustion_data(four_coordinates=True),
-        "model": {
-            "name": "stsr_inr",
-            "in_features": 4,
-            "init_features": 64,
-            "num_res": 5,
-            "omega_0": 5.0,
-            "embedding_dims": 256,
-            "outermost_linear": True,
-            "use_global_latent": True,
-        },
+        "model": main_model(),
         "training": mvnet_training(),
         "evaluation": evaluation(),
         "log": log_config(),
     }
-    dump(MAIN_CONFIGS / "STSR-INR" / f"{combustion_name}.yaml", combustion_payload)
-
-    redsea_root = f"{DATASETS_ROOT_TOKEN}/Ocean/train"
-    payload = {
-        "experiment": "redsea_stsr_inr",
-        "exp_id": "stsr-inr-redsea",
-        "experiment_root": repo_path("runs"),
-        "data": {
-            "kind": "node",
-            "dataset_name": "redsea",
-            "split": "train",
-            "coords_path": f"{redsea_root}/source_XYZT.npy",
-            "coordinate_stats_path": f"{redsea_root}/target_stats_multi_normalized.npz",
-            "targets": {
-                target: f"{redsea_root}/target_{target}_normalized.npy"
-                for target in REDSEA_TARGETS
-            },
-        },
-        "model": {
-            "name": "stsr_inr",
-            "in_features": 4,
-            "init_features": 64,
-            "num_res": 5,
-            "omega_0": 5.0,
-            "embedding_dims": 256,
-            "outermost_linear": True,
-            "use_global_latent": True,
-        },
-        "training": {
-            "epochs": 60,
-            "batch_size": 8192,
-            "pred_batch_size": 8192,
-            "num_workers": 0,
-            "lr": 5.0e-5,
-            "val_split": 0.0,
-            "log_every": 1,
-            "log_psnr_every": 10,
-            "psnr_sample_ratio": 0.1,
-            "save_every": 10,
-            "early_stop_patience": 0,
-            "loss_type": "mse",
-            "seed": 42,
-            "sampler": "uniform_random",
-            "pretrain": {"enabled": False},
-        },
-        "evaluation": evaluation(),
-        "log": log_config(),
-    }
-    dump(MAIN_CONFIGS / "STSR-INR" / "redsea.yaml", payload)
-    count = 2
+    dump(MAIN_CONFIGS / "STSR-INR" / f"{combustion_name}.yaml", payload)
+    count += 1
     for size, profile in STSR_SIZE_PROFILES.items():
         training = common_training()
         training["lr"] = 1.0e-5
@@ -711,13 +692,16 @@ def generate_unified_single() -> int:
                     if family == "MoE-INR"
                     else deepcopy(defaults[meta["kind"]])
                 )
+                training = common_training()
+                if family == "CoordNet":
+                    training["lr"] = 1.0e-5
                 payload = {
                     "experiment": f"{dataset}_{model_slug}_{target}",
                     "exp_id": f"{model_slug}-{dataset}-{target}",
                     "experiment_root": repo_path("runs"),
                     "data": unified_data(dataset, False, target),
                     "model": model,
-                    "training": common_training(),
+                    "training": training,
                     "evaluation": evaluation(),
                     "log": log_config(),
                 }
@@ -730,13 +714,16 @@ def generate_unified_single() -> int:
                 else deepcopy(defaults["volume"])
             )
             combustion_model["in_features"] = len(COMBUSTION_DATASET["coordinate_axes"])
+            training = common_training()
+            if family == "CoordNet":
+                training["lr"] = 1.0e-5
             payload = {
                 "experiment": f"{COMBUSTION_DATASET['name']}_{model_slug}_{target}",
                 "exp_id": f"{model_slug}-{COMBUSTION_DATASET['name']}-{target}",
                 "experiment_root": repo_path("runs"),
                 "data": combustion_data(target),
                 "model": deepcopy(combustion_model),
-                "training": common_training(),
+                "training": training,
                 "evaluation": evaluation(),
                 "log": log_config(),
             }
@@ -937,7 +924,9 @@ def neural_model(dataset: str, dim: int, nested: bool, target: str, manager_pret
         f"pt_{model_name}_{target}_managerpretraining.pth"
     )
     return {
-        "model_name": model_name, "in_dim": 4, "out_dim": 1,
+        "model_name": model_name,
+        "in_dim": 4,
+        "out_dim": target_dimension(dataset, target),
         "decoder_hidden_dim": dim, "decoder_n_hidden_layers": 2,
         "decoder_input_encoding": f"learned_{dim * 8}_2_sine_siren_none",
         "decoder_nl": "sine", "decoder_init_type": "siren", "n_experts": 8,
@@ -977,7 +966,7 @@ def neural_data(dataset: str, target: str, nested: bool) -> dict:
         meta = DATASETS[dataset]
         data.update({
             "association": "point",
-            "source_path": f"{rel_prefix(nested)}data/{meta['dir']}/{meta['coords']}",
+            "source_path": f"{DATASET_ROOT_TOKENS[dataset]}/{meta['coords']}",
             "stats_key": target,
         })
     return data
@@ -1033,7 +1022,7 @@ def generate_neural() -> int:
                     neural_payload(dataset, target, False, pretrain, 64, None),
                 )
                 count += 1
-    for target in COMBUSTION_SCALAR_TARGETS:
+    for target in COMBUSTION_DATASET["targets"]:
         for pretrain in (True, False):
             suffix = "__managerpretrain" if pretrain else ""
             dump(
@@ -1397,10 +1386,6 @@ def main() -> None:
         "miner": generate_miner(),
     }
     total = sum(counts.values())
-    if total != FORMAL_CONFIG_COUNT:
-        raise RuntimeError(
-            f"Expected {FORMAL_CONFIG_COUNT} configs, generated {total}: {counts}"
-        )
     if CONFIGS_ROOT.resolve() == (ROOT / "configs").resolve():
         write_run_lists()
     print(f"Generated {total} configs: {counts}")

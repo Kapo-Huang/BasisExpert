@@ -1,9 +1,9 @@
-# MoE-INR main experiments only: Bathymetry, Combustion, and Katrina.
+# MoE-INR main experiments only: RedSea, Combustion, and Katrina.
 # Ionization, Size, and ablation experiments are intentionally excluded.
-configs/main/MoE-INR/bathymetry__SALT.yaml
-configs/main/MoE-INR/bathymetry__TEMP.yaml
-configs/main/MoE-INR/bathymetry__U.yaml
-configs/main/MoE-INR/bathymetry__V.yaml
+configs/main/MoE-INR/redsea__SALT.yaml
+configs/main/MoE-INR/redsea__TEMP.yaml
+configs/main/MoE-INR/redsea__U.yaml
+configs/main/MoE-INR/redsea__V.yaml
 configs/main/MoE-INR/combustion_40NH3_1__Absolute_Pressure.yaml
 configs/main/MoE-INR/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
 configs/main/MoE-INR/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml

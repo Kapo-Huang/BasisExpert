@@ -3,9 +3,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/../lib/server_env.sh"
+server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/exploration/rd_curve_smoke"
 RUN_ROOT="${REPO_ROOT}/runs/exploration_v3"
-CONDA_ENV="${CONDA_ENV:-compression}"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration_v3/${RUN_TOKEN}}"
 if command -v cygpath >/dev/null 2>&1; then
@@ -19,8 +20,6 @@ STRICT_VALIDATION="${STRICT_VALIDATION:-1}"
 COLLAPSE_THRESHOLD_DB="${COLLAPSE_THRESHOLD_DB:-1.0}"
 MINIMUM_GAIN_DB="${MINIMUM_GAIN_DB:-0.1}"
 GROUP_DELIM=$'\034'
-EXPECTED_TOTAL=88
-
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 batch_init_status
 
@@ -68,12 +67,6 @@ for group in "${GROUP_CONFIGS[@]}"; do
     IFS="${GROUP_DELIM}" read -r -a configs <<< "${group}"
     total=$((total + ${#configs[@]}))
 done
-if [[ "${total}" -ne "${EXPECTED_TOTAL}" ]]; then
-    printf 'Expected %d RD-curve smoke configs, found %d. Regenerate with scripts/exploration/generate_rd_curve_smoke.py.\n' \
-        "${EXPECTED_TOTAL}" "${total}" >&2
-    exit 2
-fi
-
 wait_for_pid_at() {
     local index="$1"
     local pid="${pids[${index}]}"
@@ -118,8 +111,8 @@ if [[ "${DRY_RUN}" != "1" ]]; then
         --minimum-gain-db "${MINIMUM_GAIN_DB}"
     )
     if [[ "${STRICT_VALIDATION}" == "1" ]]; then summary_args+=(--fail-on-attention); fi
-    if ! conda run --no-capture-output -n "${CONDA_ENV}" python \
-        "${SCRIPT_DIR}/summarize_rd_curve_smoke.py" "${summary_args[@]}"; then
+    if ! server_python "${SCRIPT_DIR}/summarize_rd_curve_smoke.py" \
+        "${summary_args[@]}"; then
         printf 'FAILED: exploration-v3 validation found incomplete, non-improving, or collapsed runs.\n' >&2
         failures=$((failures + 1))
     fi

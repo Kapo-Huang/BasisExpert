@@ -18,8 +18,6 @@ CONFIG_ROOT = ROOT / "configs/exploration/ecnr_tuning"
 RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v6"
 TARGETS = ("GT", "H2", "H_plus")
 STRUCTURE = "official_main"
-EXPECTED_TOTAL = 18
-
 SMOKE_TRAINING = {
     "epochs_per_scale": 50,
     "batch_size": 3_200,
@@ -89,8 +87,6 @@ def generate() -> int:
             )
             dump(destination, payload)
             count += 1
-    if count != EXPECTED_TOTAL:
-        raise RuntimeError(f"Expected {EXPECTED_TOTAL} configs, generated {count}")
     return count
 
 

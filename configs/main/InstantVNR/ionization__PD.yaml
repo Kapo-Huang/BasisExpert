@@ -11,7 +11,7 @@ data:
     Z: 248
     T: 100
   targets:
-    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+    PD: ${IONIZATION_ROOT}/target_PD.npy
 model:
   name: instant_vnr
   in_features: 4

@@ -11,7 +11,7 @@ data:
     Z: 1
     T: 2001
   targets:
-    Mole_Fraction_of_CO: ${REPO_ROOT}/data/Volume/Combustion/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO.npy
 model:
   name: instant_vnr
   in_features: 4

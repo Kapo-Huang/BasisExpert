@@ -7,11 +7,11 @@ data:
   split: train
   target: H2
   targets:
-    GT: ${REPO_ROOT}/data/Volume/Ionization/target_GT.npy
-    H_plus: ${REPO_ROOT}/data/Volume/Ionization/target_H+.npy
-    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
-    He: ${REPO_ROOT}/data/Volume/Ionization/target_He.npy
-    PD: ${REPO_ROOT}/data/Volume/Ionization/target_PD.npy
+    GT: ${IONIZATION_ROOT}/target_GT.npy
+    H_plus: ${IONIZATION_ROOT}/target_H+.npy
+    H2: ${IONIZATION_ROOT}/target_H2.npy
+    He: ${IONIZATION_ROOT}/target_He.npy
+    PD: ${IONIZATION_ROOT}/target_PD.npy
   volume_shape:
     X: 600
     Y: 248

@@ -11,7 +11,7 @@ data:
     Z: 248
     T: 100
   targets:
-    H2: ${REPO_ROOT}/data/Volume/Ionization/target_H2.npy
+    H2: ${IONIZATION_ROOT}/target_H2.npy
   target: H2
 model:
   name: instant_vnr
