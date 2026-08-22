@@ -44,6 +44,7 @@ MODEL_ALIASES = {
     "coordnet": "CoordNet",
     "dcinr": "DC-INR",
     "ecnr": "ECNR",
+    "miner": "MINER",
     "fatrinr": "FA-TR-INR",
     "fvsrn": "fV-SRN",
     "instantngp": "InstantNGP",

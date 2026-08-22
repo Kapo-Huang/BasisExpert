@@ -54,12 +54,12 @@ class ConfigMatrixTestCase(unittest.TestCase):
         ]
         return [line for line in selected if line]
 
-    def test_matrix_contains_exactly_459_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 459)
+    def test_matrix_contains_exactly_476_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 476)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
-    def test_generator_preserves_combustion_and_generates_459_configs(self):
+    def test_generator_preserves_combustion_and_generates_476_configs(self):
         committed_path = self.config_root / "VarExpert" / "combustion_40NH3_1.yaml"
         committed_payload = yaml.safe_load(committed_path.read_text(encoding="utf-8"))
         committed_moe = {
@@ -85,7 +85,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 for path in (generated_root / "MoE-INR").rglob("*.yaml")
             }
 
-        self.assertEqual(len(generated_paths), 459)
+        self.assertEqual(len(generated_paths), 476)
         self.assertEqual(generated_payload, committed_payload)
         self.assertEqual(generated_moe, committed_moe)
 
@@ -93,7 +93,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         selected = self.read_run_list("run_all_configs.list")
         expected = {path.relative_to(self.repo_root).as_posix() for path in self.paths}
 
-        self.assertEqual(len(selected), 459)
+        self.assertEqual(len(selected), 476)
         self.assertEqual(set(selected), expected)
 
     def test_main_and_rd_curve_lists_partition_the_complete_matrix(self):
@@ -102,7 +102,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         rd_curve_configs = self.read_run_list("run_rd_curve_configs.list")
         size_marker = "/Size"
 
-        self.assertEqual(len(main_configs), 249)
+        self.assertEqual(len(main_configs), 266)
         self.assertEqual(len(rd_curve_configs), 210)
         self.assertTrue(all(size_marker not in path for path in main_configs))
         self.assertTrue(all(size_marker in path for path in rd_curve_configs))
@@ -257,19 +257,20 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 }
                 self.assertEqual(sized, DATASET_TARGETS["ionization"])
 
-        ecnr_targets = {
-            path.stem.split("__")[1]
-            for path in (self.config_root / "ECNR").glob("ionization__*.yaml")
-        }
-        self.assertEqual(ecnr_targets, DATASET_TARGETS["ionization"])
-        ecnr_combustion = {
-            path.stem.split("__")[1]
-            for path in (self.config_root / "ECNR").glob(
-                f"{COMBUSTION_DATASET}__*.yaml"
-            )
-        }
-        self.assertEqual(ecnr_combustion, COMBUSTION_SCALAR_TARGETS)
-        self.assertEqual(list((self.config_root / "ECNR").glob("Size*/*.yaml")), [])
+        for family in ("ECNR", "MINER"):
+            ionization_targets = {
+                path.stem.split("__")[1]
+                for path in (self.config_root / family).glob("ionization__*.yaml")
+            }
+            self.assertEqual(ionization_targets, DATASET_TARGETS["ionization"])
+            combustion = {
+                path.stem.split("__")[1]
+                for path in (self.config_root / family).glob(
+                    f"{COMBUSTION_DATASET}__*.yaml"
+                )
+            }
+            self.assertEqual(combustion, COMBUSTION_SCALAR_TARGETS)
+            self.assertEqual(list((self.config_root / family).glob("Size*/*.yaml")), [])
 
         for family in ("InstantNGP", "InstantVNR"):
             instant_targets = {
@@ -452,7 +453,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         for path in self.paths:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             family = path.relative_to(self.config_root).parts[0]
-            if family in {"VarExpert", "MVNet", "SIREN", "CoordNet", "MoE-INR", "InstantNGP", "InstantVNR", "MC-INR", "fV-SRN", "ECNR", "STSR-INR"}:
+            if family in {"VarExpert", "MVNet", "SIREN", "CoordNet", "MoE-INR", "InstantNGP", "InstantVNR", "MC-INR", "fV-SRN", "ECNR", "MINER", "STSR-INR"}:
                 self.assertFalse(payload["evaluation"]["save_predictions"], path)
             if family in {"fV-SRN", "RMDSRN"}:
                 self.assertFalse(payload["evaluation"]["run_after_training"], path)
@@ -701,6 +702,13 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 )
                 self.assertEqual(total, expected, path)
                 self.assertEqual(training["primary_sample_budget"], expected, path)
+                continue
+            if family == "MINER":
+                training = payload["training"]
+                is_combustion = COMBUSTION_DATASET in path.name
+                self.assertEqual(training["epochs_per_scale"], 500 if is_combustion else 2000, path)
+                self.assertEqual(payload["model"]["block_size"], 32 if is_combustion else 16, path)
+                self.assertNotIn("primary_sample_budget", training)
                 continue
             if family in {"VarExpert", "SIREN", "CoordNet", "MoE-INR", "InstantNGP", "InstantVNR"}:
                 training = payload["training"]

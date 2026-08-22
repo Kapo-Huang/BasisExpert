@@ -9,8 +9,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs"
-FORMAL_CONFIG_COUNT = 459
-MAIN_CONFIG_COUNT = 249
+FORMAL_CONFIG_COUNT = 476
+MAIN_CONFIG_COUNT = 266
 RD_CURVE_CONFIG_COUNT = 210
 REPO_ROOT_TOKEN = "${REPO_ROOT}"
 DATASETS_ROOT_TOKEN = "${DATASETS_ROOT}"
@@ -1101,8 +1101,8 @@ def fv_payload(
                 12000 if dataset == COMBUSTION_DATASET["name"] else 240000
             ),
             "validation_fraction": 0.0, "batch_size": 16000,
-            "prediction_batch_size": 16000, "lr": 0.01,
-            "beta_1": 0.9, "beta_2": 0.999, "lr_step": 100,
+            "prediction_batch_size": 16000, "lr": 5.0e-3,
+            "beta_1": 0.9, "beta_2": 0.999, "lr_step": 20,
             "lr_gamma": 0.5, "l1_weight": 1.0, "l2_weight": 0.0,
             "importance_floor": 0.01, "rebuild_every": 51,
             "rebuild_grid_size": 32, "rebuild_samples_per_cell": 2,
@@ -1183,6 +1183,64 @@ def generate_ecnr() -> int:
         dump(
             CONFIGS / "ECNR" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
             ecnr_payload(target, COMBUSTION_DATASET["name"]),
+        )
+    return len(DATASETS["ionization"]["targets"]) + len(COMBUSTION_SCALAR_TARGETS)
+
+
+def miner_payload(target: str, dataset: str = "ionization") -> dict:
+    is_2d = dataset == COMBUSTION_DATASET["name"]
+    return {
+        "experiment": f"miner_{dataset}_{target}",
+        "exp_id": f"miner-{dataset}-{target}",
+        "experiment_root": repo_path("runs/miner"),
+        "data": volume_data(target, False, dataset=dataset),
+        "model": {
+            "name": "miner",
+            "scales": 4,
+            "block_size": 32 if is_2d else 16,
+            "hidden_features": 18 if is_2d else 20,
+            "hidden_layers": 2,
+            "omega_0": 150.0 if is_2d else 30.0,
+            "coordinate_type": "local",
+            "propagation": "coarse_to_fine",
+            "carry_start_scale": 2,
+            "coarse_feature_multiplier": 4,
+        },
+        "training": {
+            "epochs_per_scale": 500 if is_2d else 2000,
+            "lr": 5.0e-4 if is_2d else 1.0e-3,
+            "beta_1": 0.9,
+            "beta_2": 0.999,
+            "block_mse_threshold": 1.0e-4 if is_2d else 2.0e-4,
+            "scale_convergence_delta": 5.0e-7 if is_2d else 2.0e-6,
+            "global_mse_threshold": 1.0e-4 if is_2d else 0.0,
+            "lr_decay": 0.999,
+            "max_active_blocks_per_step": 16384 if is_2d else 2048,
+            "time_indices": "all",
+            "seed": 42,
+            "device": "cuda",
+            "log_every": 25,
+        },
+        "evaluation": {
+            "save_predictions": False,
+            "run_after_training": False,
+            "default_model": "checkpoint",
+        },
+        "log": {
+            "effective_config": True,
+            "startup_timing": True,
+            "epoch_summary": True,
+        },
+    }
+
+
+def generate_miner() -> int:
+    for target in DATASETS["ionization"]["targets"]:
+        dump(CONFIGS / "MINER" / f"ionization__{target}.yaml", miner_payload(target))
+    for target in COMBUSTION_SCALAR_TARGETS:
+        dump(
+            CONFIGS / "MINER" / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+            miner_payload(target, COMBUSTION_DATASET["name"]),
         )
     return len(DATASETS["ionization"]["targets"]) + len(COMBUSTION_SCALAR_TARGETS)
 
@@ -1269,6 +1327,7 @@ def main() -> None:
         "neural_expert": generate_neural(),
         "volume_only": generate_volume_only(),
         "ecnr": generate_ecnr(),
+        "miner": generate_miner(),
     }
     total = sum(counts.values())
     if total != FORMAL_CONFIG_COUNT:

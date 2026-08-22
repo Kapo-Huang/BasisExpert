@@ -23,7 +23,17 @@ python -m var_expert_inr.apmgsrn.cli train --config configs/APMGSRN/ionization__
 python -m var_expert_inr.fv_srn.cli train --config configs/fV-SRN/ionization__GT.yaml
 python -m var_expert_inr.rmdsrn.cli train --config configs/RMDSRN/ionization__GT.yaml
 python -m var_expert_inr.cli train --config configs/ECNR/ionization__GT.yaml
+python -m var_expert_inr.cli train --config configs/MINER/ionization__GT.yaml
 ```
+
+MINER is integrated as a self-contained PyTorch subsystem. It trains one
+scalar spatial field per timestep: Ionization uses the published 3D path with
+four scales and `16^3` blocks, while the `128x128` Combustion fields use the
+published 2D `32x32` blocks and automatically reduce to three compatible
+scales. Training writes scale-complete and final timestep checkpoints under
+the timestamped run. Resume a partial run with `--resume <run-or-scale-path>`;
+run-based evaluation decodes only the requested timesteps. The external
+reference checkout is not required at runtime.
 
 ## Evaluation
 
@@ -83,7 +93,7 @@ python -m var_expert_inr.apmgsrn.cli evaluate --run runs/<run> --timesteps 0:10
 python -m var_expert_inr.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
 ```
 
-The checked-in formal experiment matrix contains 459 configs. The established
+The checked-in formal experiment matrix contains 476 configs. The established
 matrix families have main Combustion (`40NH3_1`) experiments, while STSR-INR
 adds a joint RedSea experiment. SIREN, CoordNet, and MoE-INR cover
 all 13 exported fields, including the three-component `Velocity` target. Models
@@ -122,7 +132,7 @@ CONFIG_LIST_FILE=scripts/my_configs.list bash scripts/run_all_configs.sh
 Two ready-made subsets are also provided:
 
 ```bash
-# Main experiments only: 249 configs without Size tiers
+# Main experiments only: 266 configs without Size tiers
 CONFIG_LIST_FILE=scripts/run_main_configs.list bash scripts/run_all_configs.sh
 
 # RD-Curve experiments only: 210 Size-tier configs

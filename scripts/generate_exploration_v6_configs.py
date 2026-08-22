@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+import shutil
+
+import yaml
+
+try:
+    from scripts.generate_config_matrix import REPO_ROOT_TOKEN, dump
+except ModuleNotFoundError:  # Direct execution from scripts/.
+    from generate_config_matrix import REPO_ROOT_TOKEN, dump
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FORMAL_ROOT = ROOT / "configs" / "ECNR"
+CONFIG_ROOT = ROOT / "configs_exploration_v6"
+RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v6"
+TARGETS = ("GT", "H2", "H_plus")
+STRUCTURE = "official_main"
+EXPECTED_TOTAL = 18
+
+SMOKE_TRAINING = {
+    "epochs_per_scale": 50,
+    "batch_size": 3_200,
+    "batches_per_epoch_budget": 300,
+    "primary_sample_budget": 144_000_000,
+    "pruning_epochs": [15, 23, 30, 38],
+    "pruning_sparsities": [0.30, 0.40, 0.45, 0.50],
+    "quantization_finetune_epochs": 8,
+    "quantization_finetune_batches_per_epoch": 300,
+    "save_every": 0,
+    "log_every": 5,
+    "seed": 42,
+}
+
+PROFILES = {
+    "official_control": {},
+    "lr5e4": {"lr": 5.0e-4},
+    "lr2e3": {"lr": 2.0e-3},
+    "no_weight_decay": {"weight_decay": 0.0},
+    "pruning_gamma09": {"pruning_lr_gamma": 0.9},
+    "quant_lr5e5": {"quantization_finetune_lr": 5.0e-5},
+}
+
+
+def _read(path: Path) -> dict:
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing formal ECNR config: {path}")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError(f"Config must contain a mapping: {path}")
+    return payload
+
+
+def _profile_payload(source: dict, *, target: str, profile: str) -> dict:
+    payload = deepcopy(source)
+    payload["experiment"] = f"exploration_v6_ecnr_{STRUCTURE}_{profile}_{target}"
+    payload["exp_id"] = f"explore-v6-ecnr-{STRUCTURE.replace('_', '-')}-{profile.replace('_', '-')}-{target}"
+    payload["experiment_root"] = RUN_ROOT
+    payload["data"]["target"] = target
+    payload["training"].update(deepcopy(SMOKE_TRAINING))
+    payload["training"].update(deepcopy(PROFILES[profile]))
+    payload["cnn"]["epochs"] = 10
+    payload["evaluation"].update(
+        {
+            "save_predictions": False,
+            "run_after_training": True,
+            "default_model": "artifact",
+        }
+    )
+    return payload
+
+
+def generate() -> int:
+    if CONFIG_ROOT.exists():
+        shutil.rmtree(CONFIG_ROOT)
+    count = 0
+    for profile in PROFILES:
+        for target in TARGETS:
+            source = _read(FORMAL_ROOT / f"ionization__{target}.yaml")
+            payload = _profile_payload(source, target=target, profile=profile)
+            destination = (
+                CONFIG_ROOT
+                / "ECNR"
+                / STRUCTURE
+                / profile
+                / f"ionization__{target}.yaml"
+            )
+            dump(destination, payload)
+            count += 1
+    if count != EXPECTED_TOTAL:
+        raise RuntimeError(f"Expected {EXPECTED_TOTAL} configs, generated {count}")
+    return count
+
+
+def main() -> None:
+    count = generate()
+    print(f"Generated {count} exploration-v6 ECNR configs")
+
+
+if __name__ == "__main__":
+    main()

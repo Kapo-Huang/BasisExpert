@@ -1,7 +1,7 @@
 # Formal training selection: one repository-relative YAML path per line.
 # Comment out or delete entries to run only a subset.
 # Execution order and parallel grouping remain defined by run_all_configs.sh.
-# Active entries must be unique and belong to the 459-config formal matrix.
+# Active entries must be unique and belong to the 476-config formal matrix.
 
 configs/APMGSRN/combustion_40NH3_1__Absolute_Pressure.yaml
 configs/APMGSRN/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
@@ -157,6 +157,23 @@ configs/MC-INR/Size1304/ionization.yaml
 configs/MC-INR/Size163/ionization.yaml
 configs/MC-INR/Size326/ionization.yaml
 configs/MC-INR/Size652/ionization.yaml
+configs/MINER/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/MINER/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/MINER/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/MINER/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/MINER/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/MINER/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/MINER/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/MINER/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/MINER/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/MINER/combustion_40NH3_1__Pressure.yaml
+configs/MINER/combustion_40NH3_1__Temperature.yaml
+configs/MINER/combustion_40NH3_1__Velocity_Magnitude.yaml
+configs/MINER/ionization__GT.yaml
+configs/MINER/ionization__H2.yaml
+configs/MINER/ionization__H_plus.yaml
+configs/MINER/ionization__He.yaml
+configs/MINER/ionization__PD.yaml
 configs/MVNet/bathymetry.yaml
 configs/MVNet/combustion_40NH3_1.yaml
 configs/MVNet/ionization.yaml

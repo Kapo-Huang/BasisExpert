@@ -216,6 +216,7 @@ append_volume_main_group "APMGSRN"
 append_volume_main_group "fV-SRN"
 append_volume_main_group "RMDSRN"
 append_volume_main_group "ECNR"
+append_volume_main_group "MINER"
 
 # Phase 2: run the complete Size matrix only after all main experiments finish.
 append_serial_size_family "VarExpert"
@@ -246,8 +247,8 @@ wait_for_all_pids() {
 }
 
 matrix_total="$(group_config_count)"
-if [[ "${matrix_total}" -ne 459 ]]; then
-    printf 'Expected 459 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
+if [[ "${matrix_total}" -ne 476 ]]; then
+    printf 'Expected 476 configs, found %d. Regenerate with scripts/generate_config_matrix.py.\n' "${matrix_total}" >&2
     exit 2
 fi
 load_config_selection || exit $?

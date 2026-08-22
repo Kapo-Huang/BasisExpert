@@ -1114,7 +1114,17 @@ def run_evaluate(
     cfg = load_config(config_path, target_override=target)
     dirs = _run_for_path(cfg, artifact or checkpoint or prediction_result["model_path"])
     volume = _load_volume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
-    prediction = np.load(prediction_result["prediction_path"], mmap_mode="r")
+    prediction_path = Path(prediction_result["prediction_path"])
+    prediction = np.load(prediction_path, mmap_mode="r")
     metrics = _evaluate(volume, prediction, Path(prediction_result["model_path"]))
+    del prediction
     metrics_path = save_metrics(dirs["metrics"] / f"{cfg['exp_id']}.json", metrics)
-    return {**prediction_result, "metrics": metrics, "metrics_path": str(metrics_path)}
+    prediction_retained = bool(cfg["evaluation"]["save_predictions"])
+    if not prediction_retained:
+        prediction_path.unlink(missing_ok=True)
+    return {
+        **prediction_result,
+        "prediction_retained": prediction_retained,
+        "metrics": metrics,
+        "metrics_path": str(metrics_path),
+    }

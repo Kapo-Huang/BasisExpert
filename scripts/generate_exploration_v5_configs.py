@@ -45,6 +45,10 @@ FV_PROFILES = {
 }
 
 INSTANT_STRUCTURE = "official_default"
+INSTANT_SIZE_MATCHED_MODEL_UPDATE = {
+    "log2_hashmap_size": 11,
+    "hidden_features": 105,
+}
 INSTANT_PROFILES = {
     "official_control": {
         "lr": 5.0e-3,
@@ -150,6 +154,7 @@ def generate_instant_vnr() -> int:
                 profile=profile,
                 target=target,
             )
+            payload["model"].update(deepcopy(INSTANT_SIZE_MATCHED_MODEL_UPDATE))
             training = payload["training"]
             training.pop("grad_clip_norm", None)
             scheduler = deepcopy(training["scheduler"])

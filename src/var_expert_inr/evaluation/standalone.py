@@ -42,7 +42,7 @@ def identify_subsystem(raw: dict[str, Any]) -> str | None:
         if "neural" in name or "inr_moe" in name:
             return "neural_expert"
     name = str((raw.get("model") or {}).get("name", "")).lower().replace("-", "_")
-    return name if name in {"mc_inr", "fv_srn", "rmdsrn", "ecnr"} else None
+    return name if name in {"mc_inr", "fv_srn", "rmdsrn", "ecnr", "miner"} else None
 
 
 def _resolve_path(value: str | Path, *, repo_root: Path, config_path: Path) -> Path:
@@ -83,7 +83,7 @@ def _find_source(run_dir: Path, subsystem: str, requested: str, checkpoint, arti
     predictions = sorted((run_dir / "predictions").glob("*.npy")) if (run_dir / "predictions").exists() else []
     artifacts = sorted((run_dir / "artifacts").glob("*")) if (run_dir / "artifacts").exists() else []
     checkpoints = sorted((run_dir / "checkpoints").glob("*.pth")) if (run_dir / "checkpoints").exists() else []
-    if subsystem == "apmgsrn":
+    if subsystem in {"apmgsrn", "miner"}:
         timestep_checkpoints = sorted((run_dir / "timesteps").glob("t*/checkpoint.pth"))
         if requested in {"auto", "checkpoint"} and timestep_checkpoints:
             return "checkpoint", run_dir / "timesteps"
@@ -114,6 +114,40 @@ def _load_torch_payload(path: Path, device: torch.device) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Checkpoint payload must be a mapping: {path}")
     return payload
+
+
+def _decode_miner_frames(
+    source_root: Path,
+    *,
+    timesteps: tuple[int, ...],
+    targets: tuple[str, ...],
+    shape_tzyx: tuple[int, int, int, int],
+    device: torch.device,
+) -> dict[tuple[str, int], np.ndarray]:
+    from ..miner.runner import decode_checkpoint
+
+    if len(targets) != 1:
+        raise ValueError("MINER checkpoints contain one scalar target per run")
+    decoded: dict[tuple[str, int], np.ndarray] = {}
+    for timestep in timesteps:
+        if source_root.is_file():
+            checkpoint_path = source_root
+        else:
+            checkpoint_path = source_root / f"t{int(timestep):04d}" / "checkpoint.pth"
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(
+                f"Missing MINER checkpoint for timestep {timestep}: {checkpoint_path}"
+            )
+        frame = decode_checkpoint(checkpoint_path, device=device)
+        if shape_tzyx[1] == 1 and frame.ndim == 2:
+            frame = frame[None, ...]
+        expected = tuple(int(value) for value in shape_tzyx[1:])
+        if tuple(frame.shape) != expected:
+            raise ValueError(
+                f"MINER decoded shape mismatch: expected {expected}, got {tuple(frame.shape)}"
+            )
+        decoded[(targets[0], int(timestep))] = frame
+    return decoded
 
 
 def _normalized_axis(values: np.ndarray, size: int) -> np.ndarray:
@@ -407,13 +441,14 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         request.run_dir, subsystem, request.source, request.checkpoint,
         request.artifact, request.prediction,
     )
-    if source_kind == "checkpoint" and subsystem != "apmgsrn" and not source_path.is_file():
+    directory_checkpoint_subsystems = {"apmgsrn", "miner"}
+    if source_kind == "checkpoint" and subsystem not in directory_checkpoint_subsystems and not source_path.is_file():
         raise FileNotFoundError(f"Evaluation checkpoint does not exist: {source_path}")
-    if source_kind == "checkpoint" and subsystem == "apmgsrn" and not source_path.exists():
-        raise FileNotFoundError(f"Evaluation APMGSRN checkpoint source does not exist: {source_path}")
+    if source_kind == "checkpoint" and subsystem in directory_checkpoint_subsystems and not source_path.exists():
+        raise FileNotFoundError(f"Evaluation {subsystem} checkpoint source does not exist: {source_path}")
     if source_kind in {"artifact", "prediction"} and not source_path.exists():
         raise FileNotFoundError(f"Evaluation {source_kind} does not exist: {source_path}")
-    if source_kind == "artifact" and subsystem in {"apmgsrn", "neural_expert"}:
+    if source_kind == "artifact" and subsystem in {"apmgsrn", "miner", "neural_expert"}:
         raise ValueError(f"{subsystem} does not define a compact artifact format; use checkpoint or prediction")
     key_payload = {
         "schema_version": 1,
@@ -444,7 +479,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
     if source_kind == "prediction":
         prediction_result: dict[str, Any] = {}
         prediction_paths = _prediction_paths(prediction_result, source_path, tuple(targets))
-    elif subsystem in {"apmgsrn", "neural_expert"}:
+    elif subsystem in {"apmgsrn", "miner", "neural_expert"}:
         with measurement:
             started = time.perf_counter()
             if subsystem == "apmgsrn":
@@ -452,6 +487,15 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
                 decoded_frames = _decode_apmgsrn_frames(
                     source_path, raw, timesteps=timesteps, targets=tuple(targets),
                     shape_tzyx=shape_tzyx, device=device,
+                )
+            elif subsystem == "miner":
+                assert shape_tzyx is not None
+                decoded_frames = _decode_miner_frames(
+                    source_path,
+                    timesteps=timesteps,
+                    targets=tuple(targets),
+                    shape_tzyx=shape_tzyx,
+                    device=device,
                 )
             else:
                 decoded_frames = _decode_neural_expert_frames(
@@ -562,7 +606,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
             "reconstruction_seconds": reconstruction_seconds,
             "total_decode_seconds": total_decode,
             "values_per_second": float(selected_values / reconstruction_seconds) if reconstruction_seconds > 0 else None,
-            "decode_selection_mode": "selected" if subsystem in {"apmgsrn", "neural_expert"} or source_kind == "prediction" else "full_required",
+            "decode_selection_mode": "selected" if subsystem in {"apmgsrn", "miner", "neural_expert"} or source_kind == "prediction" else "full_required",
         })
     if "memory" in request.metrics:
         performance.update(measurement.as_dict())

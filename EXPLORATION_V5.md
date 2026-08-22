@@ -10,9 +10,12 @@ Every run uses seed 42, 50 epoch-equivalents, and fixed probes of at most
 - fV-SRN: 24 configs. The formal Size163 and previous grid-heavy structures
   each run the Cartesian product of learning rates `1e-2` and `5e-3` with
   StepLR horizons 100 and 20; all use `gamma=0.5`.
-- InstantVNR: 18 configs. The released HashGrid/MLP structure and four-batch
-  gradient accumulation remain fixed. Profiles cover the current optimizer,
-  lower learning rates, faster decay, gradient clipping, and MSE versus L1.
+- InstantVNR: 18 configs. The released HashGrid/MLP structure is reduced to
+  170,972 parameters to match the 171,105-parameter fV-SRN Size163 structure:
+  `log2_hashmap_size=11` and `hidden_features=105`, with levels, features per
+  level, resolutions, decoder depth, and four-batch gradient accumulation kept
+  fixed. Profiles cover the current optimizer, lower learning rates, faster
+  decay, gradient clipping, and MSE versus L1.
 
 Generate the checked-in configs:
 

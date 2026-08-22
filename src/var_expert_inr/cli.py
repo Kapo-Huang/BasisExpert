@@ -207,12 +207,17 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
 
 
 def run_train(config_path: str | Path, *, resume_path: str | Path | None = None) -> dict:
-    if _configured_method(config_path) == "ecnr":
+    configured_method = _configured_method(config_path)
+    if configured_method == "ecnr":
         from .ecnr.runner import run_train as run_ecnr_train
 
         return run_ecnr_train(config_path, resume=resume_path)
+    if configured_method == "miner":
+        from .miner.runner import run_train as run_miner_train
+
+        return run_miner_train(config_path, resume=resume_path)
     if resume_path is not None:
-        raise ValueError("--resume is currently supported by ECNR only in the unified CLI")
+        raise ValueError("--resume is currently supported by ECNR and MINER only in the unified CLI")
     apply_runtime_thread_limits()
     train_started_at = time.perf_counter()
     try:
@@ -271,7 +276,8 @@ def run_predict(
     checkpoint_path: str | Path | None = None,
     artifact_path: str | Path | None = None,
 ) -> dict:
-    if _configured_method(config_path) == "ecnr":
+    configured_method = _configured_method(config_path)
+    if configured_method == "ecnr":
         from .ecnr.runner import run_predict as run_ecnr_predict
 
         return run_ecnr_predict(
@@ -279,6 +285,12 @@ def run_predict(
             checkpoint=checkpoint_path,
             artifact=artifact_path,
         )
+    if configured_method == "miner":
+        if artifact_path is not None:
+            raise ValueError("MINER does not define a compact artifact format")
+        from .miner.runner import run_predict as run_miner_predict
+
+        return run_miner_predict(config_path, checkpoint=checkpoint_path)
     if artifact_path is not None:
         raise ValueError("artifact_path is supported by ECNR only")
     apply_runtime_thread_limits()
@@ -301,7 +313,8 @@ def run_evaluate(
     checkpoint_path: str | Path | None = None,
     artifact_path: str | Path | None = None,
 ) -> dict:
-    if _configured_method(config_path) == "ecnr":
+    configured_method = _configured_method(config_path)
+    if configured_method == "ecnr":
         from .ecnr.runner import run_evaluate as run_ecnr_evaluate
 
         return run_ecnr_evaluate(
@@ -309,6 +322,12 @@ def run_evaluate(
             checkpoint=checkpoint_path,
             artifact=artifact_path,
         )
+    if configured_method == "miner":
+        if artifact_path is not None:
+            raise ValueError("MINER does not define a compact artifact format")
+        from .miner.runner import run_evaluate as run_miner_evaluate
+
+        return run_miner_evaluate(config_path, checkpoint=checkpoint_path)
     if artifact_path is not None:
         raise ValueError("artifact_path is supported by ECNR only")
     apply_runtime_thread_limits()

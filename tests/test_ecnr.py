@@ -248,6 +248,15 @@ class ECNREndToEndTestCase(unittest.TestCase):
             self.assertEqual(prediction.shape, values.shape)
             self.assertIn("psnr", evaluated["metrics"]["aggregate"])
 
+            payload["evaluation"]["save_predictions"] = False
+            config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+            temporary_evaluation = unified_run_evaluate(
+                config_path,
+                artifact_path=result["artifact_path"],
+            )
+            self.assertFalse(temporary_evaluation["prediction_retained"])
+            self.assertFalse(Path(temporary_evaluation["prediction_path"]).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

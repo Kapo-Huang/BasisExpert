@@ -48,10 +48,10 @@ training:
   validation_fraction: 0.0
   batch_size: 16000
   prediction_batch_size: 16000
-  lr: 0.01
+  lr: 0.005
   beta_1: 0.9
   beta_2: 0.999
-  lr_step: 100
+  lr_step: 20
   lr_gamma: 0.5
   l1_weight: 1.0
   l2_weight: 0.0

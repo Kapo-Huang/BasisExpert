@@ -14,6 +14,7 @@ COMBINED_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_
 COMBINED_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.list"
 V4_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v4.sh"
 V5_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v5.sh"
+V6_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v6.sh"
 COORDNET_MVNET_STSR_RUNNER = (
     Path(__file__).resolve().parents[1]
     / "scripts"
@@ -147,7 +148,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 2 of 459 configs", output)
+            self.assertIn("Selected 2 of 476 configs", output)
             main_position = output.index("configs/VarExpert/combustion_40NH3_1.yaml")
             size_position = output.index("configs/SIREN/Size082/ionization__GT.yaml")
             self.assertLess(main_position, size_position)
@@ -180,7 +181,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 22 of 459 configs", output)
+            self.assertIn("Selected 22 of 476 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 22)
             bathymetry = output.index("main:MoE-INR:bathymetry:all")
             combustion = output.index("main:MoE-INR:combustion_40NH3_1:all")
@@ -219,7 +220,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             output = completed.stdout
 
             self.assertIn("SIREN + NeuralExpert non-Ionization matrix: 45 configs, max_parallel=5", output)
-            self.assertIn("Selected 45 of 459 configs", output)
+            self.assertIn("Selected 45 of 476 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 45)
             siren = output.index("main:SIREN:combustion_40NH3_1:all")
             bathymetry_manager = output.index("main:NeuralExpert:bathymetry:manager")
@@ -487,6 +488,55 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
             )
             self.assertEqual(invalid.returncode, 2)
             self.assertIn("DEVICE must use cuda:N form", invalid.stderr)
+
+    def test_exploration_v6_dry_run_has_exact_ecnr_matrix(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        syntax = subprocess.run(
+            [bash, "-n", V6_RUNNER.as_posix()],
+            cwd=V6_RUNNER.parents[1],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stdout + syntax.stderr)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                    "RUN_TOKEN": "test-v6",
+                }
+            )
+            environment.pop("MAX_PARALLEL_JOBS", None)
+            environment.pop("DEVICE", None)
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [
+                        str(git_root / "usr" / "bin"),
+                        str(git_root / "bin"),
+                        environment.get("PATH", ""),
+                    ]
+                )
+            completed = subprocess.run(
+                [bash, V6_RUNNER.as_posix()],
+                cwd=V6_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            output = completed.stdout
+            self.assertEqual(output.count("DRY_RUN:"), 18)
+            self.assertEqual(output.count("var_expert_inr.cli"), 18)
+            self.assertIn(
+                "ECNR main-training sweep (18 configs, max_parallel=1)",
+                output,
+            )
+            self.assertIn("Completed 18 exploration-v6 configs; failures=0", output)
 
     def test_coordnet_mvnet_stsr_dry_run_has_exact_stages(self):
         bash = self._bash()

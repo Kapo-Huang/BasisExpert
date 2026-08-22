@@ -75,5 +75,6 @@ SUPPORTED_ADAPTERS = (
     "fv_srn",
     "rmdsrn",
     "ecnr",
+    "miner",
     "neural_expert",
 )
