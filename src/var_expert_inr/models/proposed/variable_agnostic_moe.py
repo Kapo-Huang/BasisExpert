@@ -1,12 +1,12 @@
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 
-from .components import ExpertEncoder, PositionalEncoding, SirenMLP, ViewGating
+from .components import ExpertEncoder, PositionalEncoding, SirenMLP, SpatialGating
 
 
-class VarExpert(nn.Module):
+class VariableAgnosticMoE(nn.Module):
     supports_expert_routing_aux = True
 
     def __init__(
@@ -16,7 +16,6 @@ class VarExpert(nn.Module):
         num_experts: int = 7,
         expert_feature_dim: int = 128,
         top_k: int = 3,
-        view_embed_dim: int = 16,
         expert_num_frequencies: int = 6,
         expert_hidden_dim: int = 128,
         expert_num_layers: int = 3,
@@ -45,18 +44,18 @@ class VarExpert(nn.Module):
             raise ValueError("head_num_layers must be >= 2")
 
         self.view_names = list(view_specs.keys())
-        self.view_name_to_idx = {name: idx for idx, name in enumerate(self.view_names)}
         self.view_dims = dict(view_specs)
         self.num_views = len(self.view_names)
         self.num_experts = num_experts
         self.top_k = min(top_k, num_experts)
 
-        self.view_embedding = nn.Embedding(self.num_views, view_embed_dim)
-        self.pos_enc = PositionalEncoding(in_features=in_features, num_frequencies=expert_num_frequencies)
+        self.pos_enc = PositionalEncoding(
+            in_features=in_features,
+            num_frequencies=expert_num_frequencies,
+        )
         pe_dim = self.pos_enc.out_dim
-        self.gating = ViewGating(
+        self.gating = SpatialGating(
             in_features=pe_dim,
-            view_embed_dim=view_embed_dim,
             num_experts=num_experts,
             hidden_dim=gate_hidden_dim,
             num_layers=gate_num_layers,
@@ -120,75 +119,53 @@ class VarExpert(nn.Module):
 
         x_pe = self.pos_enc(coords)
         expert_feats = torch.stack([expert(x_pe) for expert in self.experts], dim=1)
+        probs, _ = self.gating(x_pe)
+        mask = self._topk_mask(probs)
+        masked_probs = probs * mask
+        masked_probs = masked_probs / (masked_probs.sum(dim=-1, keepdim=True) + 1e-9)
+        weights = masked_probs if hard_topk else probs
 
-        preds = {}
-        probs_list: List[torch.Tensor] = []
-        masks_list: List[torch.Tensor] = []
-        h_views: List[torch.Tensor] = []
-        shared_feats: List[torch.Tensor] = []
-
-        if request is None:
-            view_items = enumerate(self.view_names)
-        else:
-            view_items = [(self.view_name_to_idx[request], request)]
-
-        for view_idx, name in view_items:
-            view_ids = torch.full((coords.shape[0],), view_idx, device=coords.device, dtype=torch.long)
-            view_embed = self.view_embedding(view_ids)
-            probs, _ = self.gating(x_pe, view_embed)
-            mask = self._topk_mask(probs)
-            masked_probs = probs * mask
-            masked_probs = masked_probs / (masked_probs.sum(dim=-1, keepdim=True) + 1e-9)
-            weights = masked_probs if hard_topk else probs
-
-            h_v = torch.sum(expert_feats * weights.unsqueeze(-1), dim=1)
-            shared_feat = self.decoder(h_v)
-            preds[name] = self.heads[name](shared_feat)
-
-            probs_list.append(probs)
-            masks_list.append(mask)
-            h_views.append(h_v)
-            shared_feats.append(shared_feat)
+        h_shared = torch.sum(expert_feats * weights.unsqueeze(-1), dim=1)
+        shared_feat = self.decoder(h_shared)
+        selected_names = self.view_names if request is None else [request]
+        preds = {name: self.heads[name](shared_feat) for name in selected_names}
 
         output = preds if request is None else preds[request]
         if return_aux:
+            view_count = len(selected_names)
             return output, {
-                "probs": torch.stack(probs_list, dim=1),
-                "masks": torch.stack(masks_list, dim=1),
-                "H_views": torch.stack(h_views, dim=1),
-                "H_shared": torch.stack(shared_feats, dim=1),
+                "probs": probs.unsqueeze(1).expand(-1, view_count, -1),
+                "masks": mask.unsqueeze(1).expand(-1, view_count, -1),
+                "H_views": h_shared.unsqueeze(1).expand(-1, view_count, -1),
+                "H_shared": shared_feat.unsqueeze(1).expand(-1, view_count, -1),
                 "expert_feats": expert_feats,
             }
         return output
 
     def pretrain_forward(self, coords: torch.Tensor) -> torch.Tensor:
         x_pe = self.pos_enc(coords)
-        logits_list: List[torch.Tensor] = []
-        for view_idx in range(self.num_views):
-            view_ids = torch.full((coords.shape[0],), view_idx, device=coords.device, dtype=torch.long)
-            view_embed = self.view_embedding(view_ids)
-            _, logits = self.gating(x_pe, view_embed)
-            logits_list.append(logits)
-        return torch.stack(logits_list, dim=0).mean(dim=0)
+        _, logits = self.gating(x_pe)
+        return logits
 
     def pretrain_parameters(self):
-        return list(self.gating.parameters()) + list(self.view_embedding.parameters())
+        return list(self.gating.parameters())
 
 
-def build_var_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) -> VarExpert:
+def build_variable_agnostic_moe_from_config(
+    cfg: Dict,
+    view_specs: Dict[str, int],
+) -> VariableAgnosticMoE:
     base_dim = cfg.get("base_dim")
     head_hidden_raw = cfg.get("head_hidden_dim")
     decoder_feature_raw = cfg.get("decoder_feature_dim")
     if base_dim is not None:
         base_dim = int(base_dim)
         expert_feature_dim = 8 * base_dim
-        view_embed_dim = base_dim
         expert_hidden_dim = 8 * base_dim
-        gate_hidden_dim = 8 * base_dim
+        gate_hidden_dim = int(cfg.get("gate_hidden_dim", 8 * base_dim))
         decoder_hidden_dim = 8 * base_dim
     else:
         expert_feature_dim = int(cfg.get("expert_feature_dim", 128))
-        view_embed_dim = int(cfg.get("view_embed_dim", 16))
         expert_hidden_dim = int(cfg.get("expert_hidden_dim", 128))
         gate_hidden_dim = int(cfg.get("gate_hidden_dim", 128))
         decoder_hidden_dim = int(cfg.get("decoder_hidden_dim", 128))
@@ -196,13 +173,12 @@ def build_var_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) -> VarEx
         int(decoder_feature_raw) if decoder_feature_raw is not None else expert_feature_dim
     )
     head_hidden_dim = int(head_hidden_raw) if head_hidden_raw is not None else decoder_feature_dim
-    return VarExpert(
+    return VariableAgnosticMoE(
         in_features=int(cfg.get("in_features", 4)),
         view_specs=view_specs,
         num_experts=int(cfg.get("num_experts", 7)),
         expert_feature_dim=expert_feature_dim,
         top_k=int(cfg.get("top_k", 3)),
-        view_embed_dim=view_embed_dim,
         expert_num_frequencies=int(cfg.get("expert_num_frequencies", 6)),
         expert_hidden_dim=expert_hidden_dim,
         expert_num_layers=int(cfg.get("expert_num_layers", 3)),

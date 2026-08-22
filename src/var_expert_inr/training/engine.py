@@ -45,7 +45,7 @@ def validate_mvnet_training_config(cfg) -> None:
             int(cfg.early_stop_patience),
             0,
         ),
-        "lr": (float(cfg.lr), 1.0e-4),
+        "lr": (float(cfg.lr), 1.0e-5),
         "beta_1": (float(cfg.beta_1), 0.9),
         "beta_2": (float(cfg.beta_2), 0.999),
         "epsilon": (float(cfg.epsilon), 1.0e-8),
@@ -66,13 +66,13 @@ def validate_mvnet_training_config(cfg) -> None:
         mismatches.append(
             f"scheduler.interval={scheduler.interval} (expected epoch)"
         )
-    if int(scheduler.step_size) != 15:
+    if int(scheduler.step_size) != 40:
         mismatches.append(
-            f"scheduler.step_size={scheduler.step_size} (expected 15)"
+            f"scheduler.step_size={scheduler.step_size} (expected 40)"
         )
-    if float(scheduler.gamma) != 0.8:
+    if float(scheduler.gamma) != 0.92:
         mismatches.append(
-            f"scheduler.gamma={scheduler.gamma} (expected 0.8)"
+            f"scheduler.gamma={scheduler.gamma} (expected 0.92)"
         )
     if scheduler.milestones:
         mismatches.append(

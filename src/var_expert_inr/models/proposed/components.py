@@ -131,3 +131,29 @@ class ViewGating(nn.Module):
         logits = self.gate(torch.cat([coords, view_embed], dim=-1))
         probs = torch.softmax(logits, dim=-1)
         return probs, logits
+
+
+class SpatialGating(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        num_experts: int,
+        hidden_dim: int = 128,
+        num_layers: int = 3,
+        first_omega_0: float = 30.0,
+        hidden_omega_0: float = 30.0,
+    ):
+        super().__init__()
+        self.gate = SirenMLP(
+            in_dim=in_features,
+            out_dim=num_experts,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            first_omega_0=first_omega_0,
+            hidden_omega_0=hidden_omega_0,
+        )
+
+    def forward(self, coords: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        logits = self.gate(coords)
+        probs = torch.softmax(logits, dim=-1)
+        return probs, logits

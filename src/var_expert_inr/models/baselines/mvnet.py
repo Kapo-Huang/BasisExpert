@@ -8,7 +8,7 @@ import torch.nn as nn
 
 
 MVNET_IN_FEATURES = 4
-MVNET_HIDDEN_FEATURES = 120
+MVNET_HIDDEN_FEATURES = 206
 MVNET_RESIDUAL_BLOCKS = 10
 MVNET_OMEGA_0 = 30.0
 MVNET_BIAS = True
@@ -153,7 +153,12 @@ class MVNet4D(nn.Module):
 
     @property
     def expected_parameter_count(self) -> int:
-        return 291_000 + 121 * self.num_variables
+        hidden = self.hidden_features
+        return (
+            hidden * (self.in_features + 1)
+            + 2 * len(self.residual_blocks) * hidden * (hidden + 1)
+            + self.num_variables * (hidden + 1)
+        )
 
     def forward(self, coords: torch.Tensor, **_: Any) -> torch.Tensor:
         if coords.ndim != 2 or coords.shape[1] != self.in_features:

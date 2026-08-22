@@ -418,12 +418,12 @@ def instant_vnr_training() -> dict:
     payload.update(
         {
             "gradient_accumulation_steps": 4,
-            "lr": 5.0e-3,
+            "lr": 1.0e-3,
             "beta_1": 0.9,
             "beta_2": 0.999,
             "epsilon": 1.0e-15,
             "weight_decay": 1.0e-6,
-            "loss_type": "l1",
+            "loss_type": "mse",
             "scheduler": {
                 "enabled": True,
                 "interval": "optimizer_step",
@@ -489,7 +489,7 @@ def mvnet_model(num_variables: int) -> dict:
         "name": "mvnet",
         "in_features": 4,
         "out_features": int(num_variables),
-        "hidden_features": 120,
+        "hidden_features": 206,
         "num_residual_blocks": 10,
         "omega_0": 30.0,
         "bias": True,
@@ -503,7 +503,7 @@ def mvnet_training() -> dict:
         "pred_batch_size": 16000,
         "gradient_accumulation_steps": 1,
         "num_workers": 0,
-        "lr": 1.0e-4,
+        "lr": 1.0e-5,
         "beta_1": 0.9,
         "beta_2": 0.999,
         "epsilon": 1.0e-8,
@@ -521,8 +521,8 @@ def mvnet_training() -> dict:
         "scheduler": {
             "enabled": True,
             "interval": "epoch",
-            "step_size": 15,
-            "gamma": 0.8,
+            "step_size": 40,
+            "gamma": 0.92,
         },
         "pretrain": {"enabled": False},
     }

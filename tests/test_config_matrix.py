@@ -619,8 +619,8 @@ class ConfigMatrixTestCase(unittest.TestCase):
             self.assertEqual(training["batch_size"], 16_000)
             self.assertEqual(training["batches_per_epoch_budget"], 1_500)
             self.assertEqual(training["gradient_accumulation_steps"], 4)
-            self.assertEqual(training["loss_type"], "l1")
-            self.assertEqual(training["lr"], 5.0e-3)
+            self.assertEqual(training["loss_type"], "mse")
+            self.assertEqual(training["lr"], 1.0e-3)
             self.assertEqual(training["beta_1"], 0.9)
             self.assertEqual(training["beta_2"], 0.999)
             self.assertEqual(training["epsilon"], 1.0e-15)
@@ -650,7 +650,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
             model = payload["model"]
             self.assertEqual(model["name"], "mvnet")
             self.assertEqual(model["in_features"], 4)
-            self.assertEqual(model["hidden_features"], 120)
+            self.assertEqual(model["hidden_features"], 206)
             self.assertEqual(model["num_residual_blocks"], 10)
             self.assertEqual(model["omega_0"], 30.0)
             self.assertTrue(model["bias"])
@@ -661,7 +661,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
             self.assertEqual(training["gradient_accumulation_steps"], 1)
             self.assertEqual(training["batches_per_epoch_budget"], 1500)
             self.assertEqual(training["sampler"], "budgeted_random")
-            self.assertEqual(training["lr"], 1.0e-4)
+            self.assertEqual(training["lr"], 1.0e-5)
             self.assertEqual(training["beta_1"], 0.9)
             self.assertEqual(training["beta_2"], 0.999)
             self.assertEqual(training["epsilon"], 1.0e-8)
@@ -673,8 +673,8 @@ class ConfigMatrixTestCase(unittest.TestCase):
             scheduler = training["scheduler"]
             self.assertTrue(scheduler["enabled"])
             self.assertEqual(scheduler["interval"], "epoch")
-            self.assertEqual(scheduler["step_size"], 15)
-            self.assertEqual(scheduler["gamma"], 0.8)
+            self.assertEqual(scheduler["step_size"], 40)
+            self.assertEqual(scheduler["gamma"], 0.92)
 
     def test_var_expert_ionization_dwa_config_uses_dwa_not_ema(self):
         payload = yaml.safe_load((self.main_root / "VarExpert" / "ionization_dwa.yaml").read_text(encoding="utf-8"))

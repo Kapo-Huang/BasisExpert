@@ -42,7 +42,7 @@ def _training_config() -> TrainingConfig:
         pred_batch_size=16000,
         gradient_accumulation_steps=1,
         num_workers=0,
-        lr=1.0e-4,
+        lr=1.0e-5,
         beta_1=0.9,
         beta_2=0.999,
         epsilon=1.0e-8,
@@ -55,8 +55,8 @@ def _training_config() -> TrainingConfig:
         scheduler=SchedulerConfig(
             enabled=True,
             interval="epoch",
-            step_size=15,
-            gamma=0.8,
+            step_size=40,
+            gamma=0.92,
         ),
     )
 
@@ -103,8 +103,8 @@ class MVNetModelTestCase(unittest.TestCase):
             21,
         )
         self.assertEqual(model.input_layer.linear.in_features, 4)
-        self.assertEqual(model.input_layer.linear.out_features, 120)
-        self.assertEqual(model.output_layer.in_features, 120)
+        self.assertEqual(model.input_layer.linear.out_features, 206)
+        self.assertEqual(model.output_layer.in_features, 206)
         self.assertEqual(model.output_layer.out_features, 5)
         self.assertIsNotNone(model.output_layer.bias)
         forbidden = (
@@ -127,7 +127,7 @@ class MVNetModelTestCase(unittest.TestCase):
             float(model.input_layer.linear.weight.abs().max()),
             input_bound,
         )
-        hidden_bound = math.sqrt(6.0 / 120.0) / 30.0
+        hidden_bound = math.sqrt(6.0 / 206.0) / 30.0
         for block in model.residual_blocks:
             for layer in (block.layer1, block.layer2):
                 self.assertLessEqual(
@@ -136,7 +136,7 @@ class MVNetModelTestCase(unittest.TestCase):
                 )
                 self.assertLessEqual(
                     float(layer.linear.bias.abs().max()),
-                    1.0 / math.sqrt(120.0) + 1.0e-8,
+                    1.0 / math.sqrt(206.0) + 1.0e-8,
                 )
                 self.assertGreater(
                     float(layer.linear.bias.abs().sum()),
@@ -144,7 +144,7 @@ class MVNetModelTestCase(unittest.TestCase):
                 )
         self.assertLessEqual(
             float(model.output_layer.weight.abs().max()),
-            1.0 / 120.0 + 1.0e-8,
+            1.0 / 206.0 + 1.0e-8,
         )
         self.assertGreater(float(model.output_layer.bias.abs().sum()), 0.0)
 
@@ -165,16 +165,19 @@ class MVNetModelTestCase(unittest.TestCase):
         self.assertIsInstance(model.output_layer, nn.Linear)
 
     def test_parameter_count_matches_closed_form(self):
-        for variables in (4, 5):
+        for variables in (4, 5, 12):
             model = MVNet4D(variables)
             actual = sum(parameter.numel() for parameter in model.parameters())
-            expected = 291_000 + 121 * variables
+            expected = 853_870 + 207 * variables
             self.assertEqual(actual, expected)
             self.assertEqual(model.expected_parameter_count, expected)
+            fp16_size_mib = actual * 2 / (1024 ** 2)
+            self.assertGreaterEqual(fp16_size_mib, 1.63)
+            self.assertLess(fp16_size_mib, 1.64)
 
     def test_fixed_architecture_rejects_changes(self):
         with self.assertRaisesRegex(ValueError, "fixed architecture"):
-            MVNet4D(5, hidden_features=121)
+            MVNet4D(5, hidden_features=207)
         with self.assertRaisesRegex(ValueError, "at least two"):
             MVNet4D(1)
 
@@ -204,7 +207,7 @@ class MVNetIntegrationTestCase(unittest.TestCase):
             params={
                 "in_features": 4,
                 "out_features": 4,
-                "hidden_features": 120,
+                "hidden_features": 206,
                 "num_residual_blocks": 10,
                 "omega_0": 30.0,
                 "bias": True,
@@ -215,7 +218,7 @@ class MVNetIntegrationTestCase(unittest.TestCase):
         model = build_model(cfg, self._meta())
         self.assertEqual(
             sum(parameter.numel() for parameter in model.parameters()),
-            291_484,
+            854_698,
         )
         with self.assertRaisesRegex(ValueError, "at least two"):
             materialize_model_config(
@@ -232,7 +235,7 @@ class MVNetIntegrationTestCase(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "input_dim"):
             materialize_model_config(cfg, self._meta(input_dim=3))
-        with self.assertRaisesRegex(ValueError, "hidden_features=120"):
+        with self.assertRaisesRegex(ValueError, "hidden_features=206"):
             materialize_model_config(
                 ModelConfig(
                     name="mvnet",
@@ -292,17 +295,17 @@ class MVNetIntegrationTestCase(unittest.TestCase):
             )
 
         parameter = nn.Parameter(torch.ones(()))
-        optimizer = torch.optim.Adam([parameter], lr=1.0e-4)
+        optimizer = torch.optim.Adam([parameter], lr=1.0e-5)
         scheduler = build_training_scheduler(optimizer, cfg.scheduler)
         observed = {}
-        for epoch in range(1, 32):
+        for epoch in range(1, 82):
             observed[epoch] = optimizer.param_groups[0]["lr"]
             optimizer.step()
             scheduler.step()
-        self.assertAlmostEqual(observed[15], 1.0e-4, places=12)
-        self.assertAlmostEqual(observed[16], 8.0e-5, places=12)
-        self.assertAlmostEqual(observed[30], 8.0e-5, places=12)
-        self.assertAlmostEqual(observed[31], 6.4e-5, places=12)
+        self.assertAlmostEqual(observed[40], 1.0e-5, places=12)
+        self.assertAlmostEqual(observed[41], 9.2e-6, places=12)
+        self.assertAlmostEqual(observed[80], 9.2e-6, places=12)
+        self.assertAlmostEqual(observed[81], 8.464e-6, places=12)
 
     def test_unified_checkpoint_predict_and_evaluate_preserve_all_variables(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -338,7 +341,7 @@ class MVNetIntegrationTestCase(unittest.TestCase):
                     "name": "mvnet",
                     "in_features": 4,
                     "out_features": 4,
-                    "hidden_features": 120,
+                    "hidden_features": 206,
                     "num_residual_blocks": 10,
                     "omega_0": 30.0,
                     "bias": True,
@@ -349,7 +352,7 @@ class MVNetIntegrationTestCase(unittest.TestCase):
                     "pred_batch_size": 8,
                     "gradient_accumulation_steps": 1,
                     "num_workers": 0,
-                    "lr": 1.0e-4,
+                    "lr": 1.0e-5,
                     "beta_1": 0.9,
                     "beta_2": 0.999,
                     "epsilon": 1.0e-8,
@@ -364,8 +367,8 @@ class MVNetIntegrationTestCase(unittest.TestCase):
                     "scheduler": {
                         "enabled": True,
                         "interval": "epoch",
-                        "step_size": 15,
-                        "gamma": 0.8,
+                        "step_size": 40,
+                        "gamma": 0.92,
                     },
                     "pretrain": {"enabled": False},
                 },

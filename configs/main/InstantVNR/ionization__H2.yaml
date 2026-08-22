@@ -28,14 +28,14 @@ training:
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
-  lr: 0.005
+  lr: 0.001
   val_split: 0.0
   log_every: 10
   log_psnr_every: 100
   psnr_sample_ratio: 0.1
   save_every: 600
   early_stop_patience: 0
-  loss_type: l1
+  loss_type: mse
   seed: 42
   sampler: budgeted_random
   batches_per_epoch_budget: 1500

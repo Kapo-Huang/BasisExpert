@@ -227,8 +227,10 @@ training system are outside this reproduction's scope. See the
 [paper](https://arxiv.org/abs/2207.11620) for the complete rendering system.
 MVNet is a shared multi-output residual SIREN that consumes the existing
 `[-1, 1]` XYZT coordinates and predicts every scalar variable in the dataset in
-one forward pass. Its output-column order is stored in each checkpoint and
-reused by unified prediction and evaluation.
+one forward pass. Its 206-feature backbone uses the 1.63 MiB multi-variable
+model budget, and its learning-rate schedule follows VarExpert's 40-epoch,
+0.92-gamma decay with an MVNet learning rate of `1e-5`. Its output-column order
+is stored in each checkpoint and reused by unified prediction and evaluation.
 The resolved effective config is saved as `runs/<exp_id>/<timestamp>/configs/config.yaml`.
 
 For unified-engine models, opt in to training-step peak memory measurement with:
