@@ -20,6 +20,21 @@ COORDNET_MVNET_STSR_RUNNER = (
     / "scripts"
     / "main" / "run_selected_datasets.sh"
 )
+COMBUSTION_FV_APMG_INSTANTVNR_RUNNER = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "main" / "run_combustion_fv_apmg_instantvnr.sh"
+)
+COMBUSTION_STSR_MVNET_RUNNER = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "main" / "run_combustion_stsr_mvnet.sh"
+)
+COMBUSTION_MINER_ECNR_RUNNER = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "main" / "run_combustion_miner_ecnr.sh"
+)
 
 
 class BatchRunnerTestCase(unittest.TestCase):
@@ -148,7 +163,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 2 of 354 configs", output)
+            self.assertIn("Selected 2 of 355 configs", output)
             main_position = output.index("configs/main/VarExpert/combustion_40NH3_1.yaml")
             size_position = output.index("configs/rd_curve/CoordNet/Size082/ionization__GT.yaml")
             self.assertLess(main_position, size_position)
@@ -181,7 +196,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             )
             output = completed.stdout
 
-            self.assertIn("Selected 22 of 354 configs", output)
+            self.assertIn("Selected 22 of 355 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 22)
             bathymetry = output.index("main:MoE-INR:bathymetry:all")
             combustion = output.index("main:MoE-INR:combustion_40NH3_1:all")
@@ -220,7 +235,7 @@ printf 'after_append=%s,%s,%s\n' "$(batch_latest_status configs/a.yaml)" "$(batc
             output = completed.stdout
 
             self.assertIn("SIREN + NeuralExpert non-Ionization matrix: 45 configs, max_parallel=5", output)
-            self.assertIn("Selected 45 of 354 configs", output)
+            self.assertIn("Selected 45 of 355 configs", output)
             self.assertEqual(output.count("DRY_RUN:"), 45)
             siren = output.index("main:SIREN:combustion_40NH3_1:all")
             bathymetry_manager = output.index("main:NeuralExpert:bathymetry:manager")
@@ -568,6 +583,115 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
             self.assertIn("MVNet Katrina (1 config, max_parallel=5)", output)
             self.assertIn("STSR-INR RedSea (1 config, max_parallel=5)", output)
             self.assertIn("Completed 15 configs; failures=0", output)
+
+    def test_combustion_group_runners_have_exact_dry_run_stages(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                }
+            )
+            environment.pop("MAX_PARALLEL_JOBS", None)
+            environment.pop("CONFIG_LIST_FILE", None)
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+
+            results = {}
+            for runner in (
+                COMBUSTION_FV_APMG_INSTANTVNR_RUNNER,
+                COMBUSTION_STSR_MVNET_RUNNER,
+                COMBUSTION_MINER_ECNR_RUNNER,
+            ):
+                syntax = subprocess.run(
+                    [bash, "-n", runner.as_posix()],
+                    cwd=runner.parents[1],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(syntax.returncode, 0, syntax.stdout + syntax.stderr)
+                environment["RUN_TOKEN"] = f"test-{runner.stem}"
+                completed = subprocess.run(
+                    [bash, runner.as_posix()],
+                    cwd=runner.parents[1],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                )
+                results[runner] = completed.stdout
+
+            first = results[COMBUSTION_FV_APMG_INSTANTVNR_RUNNER]
+            self.assertEqual(first.count("DRY_RUN:"), 36)
+            self.assertEqual(first.count("var_expert_inr.methods.fv_srn.cli"), 12)
+            self.assertEqual(first.count("var_expert_inr.methods.apmgsrn.cli"), 12)
+            self.assertEqual(first.count("python -m var_expert_inr.cli"), 12)
+            self.assertLess(first.index("== fV-SRN Combustion"), first.index("== APMGSRN Combustion"))
+            self.assertLess(first.index("== APMGSRN Combustion"), first.index("== InstantVNR Combustion"))
+
+            joint = results[COMBUSTION_STSR_MVNET_RUNNER]
+            self.assertEqual(joint.count("DRY_RUN:"), 2)
+            self.assertEqual(joint.count("python -m var_expert_inr.cli"), 2)
+            self.assertLess(joint.index("== STSR-INR Combustion"), joint.index("== MVNet Combustion"))
+
+            adaptive = results[COMBUSTION_MINER_ECNR_RUNNER]
+            self.assertEqual(adaptive.count("DRY_RUN:"), 24)
+            self.assertEqual(adaptive.count("python -m var_expert_inr.cli"), 24)
+            self.assertLess(adaptive.index("== MINER Combustion"), adaptive.index("== ECNR Combustion"))
+
+    def test_combustion_group_runner_rejects_invalid_lists_before_training(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (root / "batch").as_posix(),
+                    "RUN_TOKEN": "test-invalid-combustion-list",
+                }
+            )
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [str(git_root / "usr" / "bin"), str(git_root / "bin"), environment.get("PATH", "")]
+                )
+
+            stsr = "configs/main/STSR-INR/combustion_40NH3_1.yaml"
+            cases = {
+                "duplicate": (f"{stsr}\n{stsr}\n", "Duplicate Combustion config"),
+                "out-of-scope": (
+                    "configs/main/SIREN/combustion_40NH3_1__Temperature.yaml\n",
+                    "Out-of-scope Combustion config",
+                ),
+                "missing": ("configs/main/STSR-INR/not-present.yaml\n", "Config not found"),
+                "wrong-count": (f"{stsr}\n", "Expected MVNet Combustion=1 configs"),
+            }
+            for name, (content, expected_error) in cases.items():
+                config_list = root / f"{name}.list"
+                config_list.write_text(content, encoding="utf-8", newline="\n")
+                environment["CONFIG_LIST_FILE"] = config_list.as_posix()
+                completed = subprocess.run(
+                    [bash, COMBUSTION_STSR_MVNET_RUNNER.as_posix()],
+                    cwd=COMBUSTION_STSR_MVNET_RUNNER.parents[1],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                )
+                self.assertEqual(completed.returncode, 2, (name, completed.stdout, completed.stderr))
+                self.assertIn(expected_error, completed.stderr, name)
+                self.assertNotIn("DRY_RUN:", completed.stdout, name)
 
     def test_moe_runner_validates_terminal_status_and_final_psnr(self):
         bash = self._bash()

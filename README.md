@@ -93,19 +93,20 @@ python -m var_expert_inr.methods.apmgsrn.cli evaluate --run runs/<run> --timeste
 python -m var_expert_inr.methods.neural_expert.cli evaluate --run runs/<run> --metrics psnr,memory
 ```
 
-The checked-in formal experiment matrix contains 354 configs. The established
-matrix families have main Combustion (`40NH3_1`) experiments, while STSR-INR
-adds a joint RedSea experiment. SIREN, CoordNet, and MoE-INR cover
+The checked-in formal experiment matrix contains 355 configs. The established
+matrix families have main Combustion (`40NH3_1`) experiments, and STSR-INR has
+joint Combustion and RedSea experiments. SIREN, CoordNet, and MoE-INR cover
 all 13 exported fields, including the three-component `Velocity` target. Models
 whose published implementation requires scalar outputs cover the other 12 fields;
-MVNet jointly models those 12 scalar fields, while MC-INR and VarExpert jointly
-model all 13 fields. The formal Ionization SIZE matrix contains `Size082`,
+MVNet jointly models those 12 scalar fields, while MC-INR, STSR-INR, and
+VarExpert jointly model all 13 fields. The formal Ionization SIZE matrix contains `Size082`,
 `Size163`, `Size326`, and `Size652` for VarExpert, CoordNet, MoE-INR, fV-SRN,
 MINER, and STSR-INR, plus a VarExpert DWA loss-balancing main config.
 All primary training stages except MVNet, NeuralExpert, and STSR-INR consume 14.4 billion physical samples. NeuralExpert uses 960 million sampled points (60,000 optimizer steps at 16,000 points per step).
 InstantVNR accumulates four 16,000-sample batches into an approximately
 paper-sized 64,000-sample optimizer update; other unified baselines retain their
-configured update batches. MVNet uses its method-specific 300 epochs,
+configured update batches. MVNet and the STSR-INR Combustion experiment use
+the MVNet training budget of 300 epochs,
 2,048-sample batches, and 1,500 random batches per epoch (921.6 million
 samples). Model-size tiers use all parameters at two bytes per parameter
 (theoretical FP16 size). The Ionization tier is a total five-variable budget:
@@ -139,7 +140,7 @@ CONFIG_LIST_FILE=scripts/my_configs.list bash scripts/main/run_all.sh
 Two ready-made subsets are also provided:
 
 ```bash
-# Main experiments only: 266 configs
+# Main experiments only: 267 configs
 bash scripts/main/run_all.sh
 
 # RD-Curve experiments only: 88 Size-tier configs
@@ -188,6 +189,26 @@ DRY_RUN=1 bash scripts/main/run_selected_datasets.sh
 BATCH_LOG_ROOT=batch_logs/<existing-batch> bash scripts/main/run_selected_datasets.sh
 MAX_PARALLEL_JOBS=5 CONDA_ENV=compression bash scripts/main/run_selected_datasets.sh
 DATASETS_ROOT=/path/to/Datasets bash scripts/main/run_selected_datasets.sh
+```
+
+Three Combustion-only entrypoints cover the remaining formal model groups.
+Model stages run in the listed order. Single-target stages run at most five
+configs concurrently by default, while the joint STSR-INR and MVNet stages each
+contain one config. Override concurrency with `MAX_PARALLEL_JOBS`; reuse an
+existing batch with `BATCH_LOG_ROOT`.
+
+```bash
+# fV-SRN (12) -> APMGSRN (12) -> InstantVNR (12)
+bash scripts/main/run_combustion_fv_apmg_instantvnr.sh
+
+# STSR-INR (one 13-variable joint run) -> MVNet (one 12-scalar joint run)
+bash scripts/main/run_combustion_stsr_mvnet.sh
+
+# MINER (12) -> ECNR (12)
+bash scripts/main/run_combustion_miner_ecnr.sh
+
+DRY_RUN=1 bash scripts/main/run_combustion_fv_apmg_instantvnr.sh
+MAX_PARALLEL_JOBS=3 CONDA_ENV=compression bash scripts/main/run_combustion_miner_ecnr.sh
 ```
 
 Size-structure exploration is generated and run independently of the formal

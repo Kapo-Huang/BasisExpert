@@ -245,6 +245,7 @@ configs/main/SIREN/katrina__fort64.yaml
 configs/main/SIREN/katrina__fort73.yaml
 configs/main/SIREN/katrina__speed.yaml
 configs/main/SIREN/katrina__v.yaml
+configs/main/STSR-INR/combustion_40NH3_1.yaml
 configs/main/STSR-INR/redsea.yaml
 configs/main/VarExpert/bathymetry.yaml
 configs/main/VarExpert/combustion_40NH3_1.yaml

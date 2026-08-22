@@ -1,7 +1,7 @@
 # Formal training selection: one repository-relative YAML path per line.
 # Comment out or delete entries to run only a subset.
 # Execution order and parallel grouping remain defined by scripts/main/run_all.sh.
-# Active entries must be unique and belong to the 354-config formal matrix.
+# Active entries must be unique and belong to the 355-config formal matrix.
 
 configs/main/APMGSRN/combustion_40NH3_1__Absolute_Pressure.yaml
 configs/main/APMGSRN/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
@@ -246,6 +246,7 @@ configs/main/SIREN/katrina__fort64.yaml
 configs/main/SIREN/katrina__fort73.yaml
 configs/main/SIREN/katrina__speed.yaml
 configs/main/SIREN/katrina__v.yaml
+configs/main/STSR-INR/combustion_40NH3_1.yaml
 configs/main/STSR-INR/redsea.yaml
 configs/main/VarExpert/bathymetry.yaml
 configs/main/VarExpert/combustion_40NH3_1.yaml

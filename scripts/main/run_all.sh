@@ -243,8 +243,8 @@ wait_for_all_pids() {
 }
 
 matrix_total="$(group_config_count)"
-if [[ "${matrix_total}" -ne 354 ]]; then
-    printf 'Expected 354 configs, found %d. Regenerate with scripts/main/generate_configs.py.\n' "${matrix_total}" >&2
+if [[ "${matrix_total}" -ne 355 ]]; then
+    printf 'Expected 355 configs, found %d. Regenerate with scripts/main/generate_configs.py.\n' "${matrix_total}" >&2
     exit 2
 fi
 load_config_selection || exit $?

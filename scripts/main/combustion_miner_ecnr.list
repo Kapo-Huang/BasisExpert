@@ -1,0 +1,27 @@
+# MINER: all 12 scalar Combustion targets.
+configs/main/MINER/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/main/MINER/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/main/MINER/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/main/MINER/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/main/MINER/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/main/MINER/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/main/MINER/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/main/MINER/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/main/MINER/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/main/MINER/combustion_40NH3_1__Pressure.yaml
+configs/main/MINER/combustion_40NH3_1__Temperature.yaml
+configs/main/MINER/combustion_40NH3_1__Velocity_Magnitude.yaml
+
+# ECNR: all 12 scalar Combustion targets.
+configs/main/ECNR/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/main/ECNR/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/main/ECNR/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/main/ECNR/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/main/ECNR/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/main/ECNR/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/main/ECNR/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/main/ECNR/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/main/ECNR/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/main/ECNR/combustion_40NH3_1__Pressure.yaml
+configs/main/ECNR/combustion_40NH3_1__Temperature.yaml
+configs/main/ECNR/combustion_40NH3_1__Velocity_Magnitude.yaml

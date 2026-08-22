@@ -1,0 +1,41 @@
+# fV-SRN: all 12 scalar Combustion targets.
+configs/main/fV-SRN/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Pressure.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Temperature.yaml
+configs/main/fV-SRN/combustion_40NH3_1__Velocity_Magnitude.yaml
+
+# APMGSRN: all 12 scalar Combustion targets.
+configs/main/APMGSRN/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Pressure.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Temperature.yaml
+configs/main/APMGSRN/combustion_40NH3_1__Velocity_Magnitude.yaml
+
+# InstantVNR: all 12 scalar Combustion targets.
+configs/main/InstantVNR/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Pressure.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Temperature.yaml
+configs/main/InstantVNR/combustion_40NH3_1__Velocity_Magnitude.yaml

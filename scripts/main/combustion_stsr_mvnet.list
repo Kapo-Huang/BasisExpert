@@ -1,0 +1,5 @@
+# One joint STSR-INR run with all 13 Combustion variables.
+configs/main/STSR-INR/combustion_40NH3_1.yaml
+
+# One joint MVNet run with the 12 scalar Combustion variables.
+configs/main/MVNet/combustion_40NH3_1.yaml

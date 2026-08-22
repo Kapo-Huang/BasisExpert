@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIGS_ROOT = ROOT / "configs"
 MAIN_CONFIGS = CONFIGS_ROOT / "main"
 RD_CURVE_CONFIGS = CONFIGS_ROOT / "rd_curve"
-FORMAL_CONFIG_COUNT = 354
-MAIN_CONFIG_COUNT = 266
+FORMAL_CONFIG_COUNT = 355
+MAIN_CONFIG_COUNT = 267
 RD_CURVE_CONFIG_COUNT = 88
 REPO_ROOT_TOKEN = "${REPO_ROOT}"
 DATASETS_ROOT_TOKEN = "${DATASETS_ROOT}"
@@ -569,6 +569,28 @@ def generate_mvnet() -> int:
 
 
 def generate_stsr_inr() -> int:
+    combustion_name = COMBUSTION_DATASET["name"]
+    combustion_payload = {
+        "experiment": f"{combustion_name}_stsr_inr",
+        "exp_id": f"stsr-inr-{combustion_name}",
+        "experiment_root": repo_path("runs"),
+        "data": combustion_data(four_coordinates=True),
+        "model": {
+            "name": "stsr_inr",
+            "in_features": 4,
+            "init_features": 64,
+            "num_res": 5,
+            "omega_0": 5.0,
+            "embedding_dims": 256,
+            "outermost_linear": True,
+            "use_global_latent": True,
+        },
+        "training": mvnet_training(),
+        "evaluation": evaluation(),
+        "log": log_config(),
+    }
+    dump(MAIN_CONFIGS / "STSR-INR" / f"{combustion_name}.yaml", combustion_payload)
+
     redsea_root = f"{DATASETS_ROOT_TOKEN}/Ocean/train"
     payload = {
         "experiment": "redsea_stsr_inr",
@@ -616,7 +638,7 @@ def generate_stsr_inr() -> int:
         "log": log_config(),
     }
     dump(MAIN_CONFIGS / "STSR-INR" / "redsea.yaml", payload)
-    count = 1
+    count = 2
     for size, profile in STSR_SIZE_PROFILES.items():
         training = common_training()
         training["lr"] = 1.0e-5

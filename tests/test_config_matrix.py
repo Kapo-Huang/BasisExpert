@@ -36,6 +36,11 @@ SIZES = {
 MOE_RERUN_LIST = Path("main/moe_non_ionization.list")
 COMBINED_RUN_LIST = Path("main/neural_expert_non_ionization.list")
 COORDNET_MVNET_STSR_RUN_LIST = Path("main/selected_datasets.list")
+COMBUSTION_FV_APMG_INSTANTVNR_LIST = Path(
+    "main/combustion_fv_apmg_instantvnr.list"
+)
+COMBUSTION_STSR_MVNET_LIST = Path("main/combustion_stsr_mvnet.list")
+COMBUSTION_MINER_ECNR_LIST = Path("main/combustion_miner_ecnr.list")
 
 
 class ConfigMatrixTestCase(unittest.TestCase):
@@ -57,14 +62,19 @@ class ConfigMatrixTestCase(unittest.TestCase):
         ]
         return [line for line in selected if line]
 
-    def test_matrix_contains_exactly_354_configs_and_no_removed_datasets(self):
-        self.assertEqual(len(self.paths), 354)
+    def test_matrix_contains_exactly_355_configs_and_no_removed_datasets(self):
+        self.assertEqual(len(self.paths), 355)
         relative_names = [str(path.relative_to(self.config_root)).lower() for path in self.paths]
         self.assertFalse(any("car" in name or "linkage" in name for name in relative_names))
 
-    def test_generator_preserves_combustion_and_generates_354_configs(self):
+    def test_generator_preserves_combustion_and_generates_355_configs(self):
         committed_path = self.main_root / "VarExpert" / "combustion_40NH3_1.yaml"
         committed_payload = yaml.safe_load(committed_path.read_text(encoding="utf-8"))
+        committed_stsr = yaml.safe_load(
+            (self.main_root / "STSR-INR" / "combustion_40NH3_1.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
         committed_moe = {
             path.relative_to(self.main_root / "MoE-INR").as_posix(): yaml.safe_load(
                 path.read_text(encoding="utf-8")
@@ -87,6 +97,11 @@ class ConfigMatrixTestCase(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
+            generated_stsr = yaml.safe_load(
+                (generated_main / "STSR-INR" / "combustion_40NH3_1.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
             generated_moe = {
                 path.relative_to(generated_main / "MoE-INR").as_posix(): yaml.safe_load(
                     path.read_text(encoding="utf-8")
@@ -94,15 +109,16 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 for path in (generated_main / "MoE-INR").rglob("*.yaml")
             }
 
-        self.assertEqual(len(generated_paths), 354)
+        self.assertEqual(len(generated_paths), 355)
         self.assertEqual(generated_payload, committed_payload)
+        self.assertEqual(generated_stsr, committed_stsr)
         self.assertEqual(generated_moe, committed_moe)
 
     def test_default_run_list_contains_the_complete_formal_matrix(self):
         selected = self.read_run_list("main/all_configs.list")
         expected = {path.relative_to(self.repo_root).as_posix() for path in self.paths}
 
-        self.assertEqual(len(selected), 354)
+        self.assertEqual(len(selected), 355)
         self.assertEqual(set(selected), expected)
 
     def test_main_and_rd_curve_lists_partition_the_complete_matrix(self):
@@ -111,7 +127,7 @@ class ConfigMatrixTestCase(unittest.TestCase):
         rd_curve_configs = self.read_run_list("rd_curve/configs.list")
         size_marker = "/Size"
 
-        self.assertEqual(len(main_configs), 266)
+        self.assertEqual(len(main_configs), 267)
         self.assertEqual(len(rd_curve_configs), 88)
         self.assertTrue(all(size_marker not in path for path in main_configs))
         self.assertTrue(all(size_marker in path for path in rd_curve_configs))
@@ -218,6 +234,80 @@ class ConfigMatrixTestCase(unittest.TestCase):
         self.assertEqual(payload["training"]["epochs"], 60)
         self.assertEqual(payload["training"]["batch_size"], 8192)
         self.assertEqual(payload["training"]["sampler"], "uniform_random")
+
+    def test_combustion_group_lists_have_exact_scope_and_stage_order(self):
+        scalar_filenames = [
+            f"combustion_40NH3_1__{target}.yaml"
+            for target in sorted(COMBUSTION_SCALAR_TARGETS)
+        ]
+        fv_apmg_instant = self.read_run_list(COMBUSTION_FV_APMG_INSTANTVNR_LIST)
+        expected_fv_apmg_instant = [
+            f"configs/main/{family}/{filename}"
+            for family in ("fV-SRN", "APMGSRN", "InstantVNR")
+            for filename in scalar_filenames
+        ]
+        self.assertEqual(fv_apmg_instant, expected_fv_apmg_instant)
+
+        self.assertEqual(
+            self.read_run_list(COMBUSTION_STSR_MVNET_LIST),
+            [
+                "configs/main/STSR-INR/combustion_40NH3_1.yaml",
+                "configs/main/MVNet/combustion_40NH3_1.yaml",
+            ],
+        )
+
+        miner_ecnr = self.read_run_list(COMBUSTION_MINER_ECNR_LIST)
+        expected_miner_ecnr = [
+            f"configs/main/{family}/{filename}"
+            for family in ("MINER", "ECNR")
+            for filename in scalar_filenames
+        ]
+        self.assertEqual(miner_ecnr, expected_miner_ecnr)
+
+    def test_stsr_combustion_uses_all_targets_and_mvnet_training_budget(self):
+        stsr = yaml.safe_load(
+            (self.main_root / "STSR-INR" / "combustion_40NH3_1.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        mvnet = yaml.safe_load(
+            (self.main_root / "MVNet" / "combustion_40NH3_1.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(set(stsr["data"]["targets"]), COMBUSTION_TARGETS)
+        self.assertNotIn("target", stsr["data"])
+        self.assertNotIn("coordinate_axes", stsr["data"])
+        self.assertEqual(
+            stsr["model"],
+            {
+                "name": "stsr_inr",
+                "in_features": 4,
+                "init_features": 64,
+                "num_res": 5,
+                "omega_0": 5.0,
+                "embedding_dims": 256,
+                "outermost_linear": True,
+                "use_global_latent": True,
+            },
+        )
+        self.assertEqual(stsr["training"], mvnet["training"])
+
+        target_dims = {target: 1 for target in COMBUSTION_TARGETS}
+        target_dims["Velocity"] = 3
+        meta = DatasetMeta(
+            kind="volume",
+            n_samples=1,
+            input_dim=4,
+            target_names=tuple(sorted(COMBUSTION_TARGETS)),
+            target_dims=target_dims,
+            volume_shape=None,
+        )
+        model_payload = dict(stsr["model"])
+        model_name = model_payload.pop("name")
+        model = build_model(ModelConfig(name=model_name, params=model_payload), meta)
+        self.assertEqual(type(model.backbone).__name__, "STSRINR")
+        self.assertEqual(model.backbone.target_dims["Velocity"], 3)
 
     def test_single_target_default_and_size_coverage(self):
         for family in ("SIREN", "CoordNet", "MoE-INR", "NeuralExpert"):
@@ -694,7 +784,9 @@ class ConfigMatrixTestCase(unittest.TestCase):
                 continue
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             family = path.relative_to(self.config_root).parts[1]
-            if family == "MVNet":
+            if family == "MVNet" or (
+                family == "STSR-INR" and path.stem == COMBUSTION_DATASET
+            ):
                 training = payload["training"]
                 total = (
                     training["batch_size"]
