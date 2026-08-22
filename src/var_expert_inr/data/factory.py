@@ -9,6 +9,7 @@ SINGLE_TARGET_SELECTOR_MODELS = {
     "coordnet",
     "moe_inr",
     "instant_ngp",
+    "instant_vnr",
 }
 
 def build_dataset(data_cfg: DataConfig, *, model_name: str | None = None):
