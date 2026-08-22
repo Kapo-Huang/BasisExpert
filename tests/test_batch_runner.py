@@ -13,6 +13,7 @@ MOE_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_moe_non_ioniza
 COMBINED_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.sh"
 COMBINED_LIST = Path(__file__).resolve().parents[1] / "scripts" / "run_neural_expert_non_ionization_main.list"
 V4_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v4.sh"
+V5_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run_exploration_v5.sh"
 COORDNET_MVNET_STSR_RUNNER = (
     Path(__file__).resolve().parents[1]
     / "scripts"
@@ -386,6 +387,56 @@ printf 'NEURAL_EXPERT_PSNR\\t%s\\t%s\\t/fake/run\\t/fake/metrics.json\\n' "${tar
             self.assertIn("CoordNet equal-budget depth (45 configs, max_parallel=5)", output)
             self.assertIn("CoordNet causal controls (9 configs, max_parallel=5)", output)
             self.assertIn("Completed 81 exploration-v4 configs; failures=0", output)
+
+    def test_exploration_v5_dry_run_has_exact_matrix_and_method_dispatch(self):
+        bash = self._bash()
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        syntax = subprocess.run(
+            [bash, "-n", V5_RUNNER.as_posix()],
+            cwd=V5_RUNNER.parents[1],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stdout + syntax.stderr)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "BATCH_LOG_ROOT": (Path(tmpdir) / "batch").as_posix(),
+                    "RUN_TOKEN": "test-v5",
+                }
+            )
+            environment.pop("MAX_PARALLEL_JOBS", None)
+            if os.name == "nt":
+                git_root = Path(bash).parents[1]
+                environment["PATH"] = os.pathsep.join(
+                    [
+                        str(git_root / "usr" / "bin"),
+                        str(git_root / "bin"),
+                        environment.get("PATH", ""),
+                    ]
+                )
+            completed = subprocess.run(
+                [bash, V5_RUNNER.as_posix()],
+                cwd=V5_RUNNER.parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            output = completed.stdout
+            self.assertEqual(output.count("DRY_RUN:"), 42)
+            self.assertEqual(output.count("var_expert_inr.fv_srn.cli"), 24)
+            self.assertEqual(output.count("var_expert_inr.cli"), 18)
+            self.assertIn(
+                "fV-SRN structure and optimizer sweep (24 configs, max_parallel=5)",
+                output,
+            )
+            self.assertIn("InstantVNR optimizer sweep (18 configs, max_parallel=5)", output)
+            self.assertIn("Completed 42 exploration-v5 configs; failures=0", output)
 
     def test_coordnet_mvnet_stsr_dry_run_has_exact_stages(self):
         bash = self._bash()
