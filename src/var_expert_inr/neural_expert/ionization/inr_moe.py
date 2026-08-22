@@ -136,7 +136,7 @@ class INR_MoE(nn.Module):
             nonmanifold_pnts_pred,
             dim=-3,
             index=nonmnfld_selected_expert_idx[None, None, :, None].repeat([1, 1, 1, nonmanifold_pnts_pred.shape[-1]]),
-        ).squeeze(-2)
+        ).squeeze(1)
         return {
             "manifold_pnts_pred": manifold_pnts_pred,
             "nonmanifold_pnts_pred": nonmanifold_pnts_pred,

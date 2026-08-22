@@ -16,6 +16,7 @@ from var_expert_inr.evaluation.standalone import (
     _decode_neural_expert_frames,
 )
 from var_expert_inr.neural_expert.ionization.inr import INR
+from var_expert_inr.neural_expert.ionization.inr_moe import INR_MoE
 
 
 class StandaloneAdapterContractTestCase(unittest.TestCase):
@@ -136,6 +137,60 @@ class StandaloneAdapterContractTestCase(unittest.TestCase):
                 device=torch.device("cpu"),
             )
             self.assertEqual(combustion_frames[("Temperature", 0)].shape, (2, 2, 2))
+
+    def test_neural_expert_moe_decodes_uneven_prediction_chunks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw = {
+                "MODEL": {
+                    "model_name": "inr_moe_ionization",
+                    "in_dim": 4,
+                    "out_dim": 1,
+                    "decoder_hidden_dim": 4,
+                    "decoder_n_hidden_layers": 1,
+                    "decoder_input_encoding": "none",
+                    "decoder_nl": "relu",
+                    "decoder_init_type": "normal",
+                    "decoder_freqs": 30.0,
+                    "n_experts": 2,
+                    "shared_encoder": True,
+                    "manager_conditioning": "none",
+                    "manager_type": "standard",
+                    "manager_hidden_dim": 4,
+                    "manager_n_hidden_layers": 1,
+                    "manager_input_encoding": "none",
+                    "manager_nl": "relu",
+                    "manager_init": "normal",
+                    "manager_q_activation": "softmax",
+                    "manager_softmax_temperature": 1.0,
+                    "manager_softmax_temp_trainable": False,
+                    "manager_clamp_q": 0.0,
+                },
+                "DATA": {
+                    "dataset_name": "combustion_40nh3_1",
+                    "normalize_inputs": False,
+                    "normalize_targets": False,
+                },
+                "TRAINING": {"n_points": 3},
+            }
+            model = INR_MoE(raw)
+            checkpoint = root / "neural-moe.pth"
+            torch.save({"model_state": model.state_dict()}, checkpoint)
+
+            frames = _decode_neural_expert_frames(
+                checkpoint,
+                raw,
+                timesteps=(0,),
+                targets=("Temperature",),
+                indexers=[slice(0, 8)],
+                shape_tzyx=(1, 2, 2, 2),
+                coords=None,
+                repo_root=root,
+                config_path=root / "config.yaml",
+                device=torch.device("cpu"),
+            )
+
+            self.assertEqual(frames[("Temperature", 0)].shape, (2, 2, 2))
 
     def test_neural_expert_config_evaluator_selects_full_single_target_psnr(self):
         with tempfile.TemporaryDirectory() as tmpdir:
