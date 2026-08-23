@@ -20,8 +20,8 @@ data:
 model:
   name: miner
   scales: 4
-  block_size: 40
-  hidden_features: 4
+  block_size: 16
+  hidden_features: 20
   hidden_layers: 2
   omega_0: 30.0
   coordinate_type: local

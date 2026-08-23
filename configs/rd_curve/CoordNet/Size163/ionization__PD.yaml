@@ -20,7 +20,7 @@ data:
 model:
   name: coordnet
   in_features: 4
-  init_features: 22
+  init_features: 21
   num_res: 10
 training:
   epochs: 600

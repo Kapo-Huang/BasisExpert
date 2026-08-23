@@ -95,13 +95,13 @@ UNIFIED_SIZE_MODELS = {
     },
     "CoordNet": {
         "Size082": {"name": "coordnet", "in_features": 4, "init_features": 15, "num_res": 10},
-        "Size163": {"name": "coordnet", "in_features": 4, "init_features": 22, "num_res": 10},
+        "Size163": {"name": "coordnet", "in_features": 4, "init_features": 21, "num_res": 10},
         "Size326": {"name": "coordnet", "in_features": 4, "init_features": 31, "num_res": 10},
         "Size652": {"name": "coordnet", "in_features": 4, "init_features": 43, "num_res": 10},
     },
     "MoE-INR": {
         "Size082": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 32, "encoder_feature_dim": 256, "policy_hidden_dim": 32, "policy_num_layers": 3},
-        "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 46, "encoder_feature_dim": 368, "policy_hidden_dim": 46, "policy_num_layers": 3},
+        "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 45, "encoder_feature_dim": 360, "policy_hidden_dim": 45, "policy_num_layers": 3},
         "Size326": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 66, "encoder_feature_dim": 528, "policy_hidden_dim": 66, "policy_num_layers": 3},
         "Size652": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 93, "encoder_feature_dim": 744, "policy_hidden_dim": 93, "policy_num_layers": 3},
     },
@@ -134,13 +134,13 @@ VAR_SIZE_PROFILES = {
 }
 STSR_SIZE_PROFILES = {
     "Size082": {"init_features": 20, "embedding_dims": 80},
-    "Size163": {"init_features": 28, "embedding_dims": 112},
+    "Size163": {"init_features": 64, "embedding_dims": 256},
     "Size326": {"init_features": 40, "embedding_dims": 160},
     "Size652": {"init_features": 56, "embedding_dims": 224},
 }
 MINER_SIZE_HIDDEN_FEATURES = {
     "Size082": 3,
-    "Size163": 4,
+    "Size163": 20,
     "Size326": 6,
     "Size652": 9,
 }
@@ -160,7 +160,7 @@ APMG_SIZE = {
     "Size652": {"feature_grid_shape": [4, 4, 4], "n_grids": 44, "n_features": 1, "nodes_per_layer": 32, "n_layers": 3},
 }
 FV_SIZE = {
-    "Size082": (5, 54), "Size163": (6, 64), "Size326": (8, 55),
+    "Size082": (5, 54), "Size163": (32, 16), "Size326": (8, 55),
     "Size652": (8, 110),
 }
 RM_SIZE = {
@@ -621,14 +621,13 @@ def generate_stsr_inr() -> int:
     dump(MAIN_CONFIGS / "STSR-INR" / f"{combustion_name}.yaml", payload)
     count += 1
     for size, profile in STSR_SIZE_PROFILES.items():
-        training = common_training()
-        training["lr"] = 1.0e-5
-        sized_payload = {
-            "experiment": f"ionization_stsr_inr_{size.lower()}",
-            "exp_id": f"stsr-inr-ionization-{size.lower()}",
-            "experiment_root": repo_path("runs"),
-            "data": unified_data("ionization", True),
-            "model": {
+        if size == "Size163":
+            training = mvnet_training()
+            model = main_model()
+        else:
+            training = common_training()
+            training["lr"] = 1.0e-5
+            model = {
                 "name": "stsr_inr",
                 "in_features": 4,
                 **profile,
@@ -636,7 +635,13 @@ def generate_stsr_inr() -> int:
                 "omega_0": 5.0,
                 "outermost_linear": True,
                 "use_global_latent": True,
-            },
+            }
+        sized_payload = {
+            "experiment": f"ionization_stsr_inr_{size.lower()}",
+            "exp_id": f"stsr-inr-ionization-{size.lower()}",
+            "experiment_root": repo_path("runs"),
+            "data": unified_data("ionization", True),
+            "model": model,
             "training": training,
             "evaluation": evaluation(),
             "log": log_config(),
@@ -1283,16 +1288,17 @@ def generate_miner() -> int:
             payload = miner_payload(target)
             payload["experiment"] = f"miner_ionization_{size.lower()}_{target}"
             payload["exp_id"] = f"miner-ionization-{size.lower()}-{target}"
-            payload["model"].update(
-                {
-                    "scales": 4,
-                    "block_size": 40,
-                    "hidden_features": hidden_features,
-                    "hidden_layers": 2,
-                    "carry_start_scale": 2,
-                    "coarse_feature_multiplier": 4,
-                }
-            )
+            if size != "Size163":
+                payload["model"].update(
+                    {
+                        "scales": 4,
+                        "block_size": 40,
+                        "hidden_features": hidden_features,
+                        "hidden_layers": 2,
+                        "carry_start_scale": 2,
+                        "coarse_feature_multiplier": 4,
+                    }
+                )
             dump(RD_CURVE_CONFIGS / "MINER" / size / f"ionization__{target}.yaml", payload)
             count += 1
     return count
