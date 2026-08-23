@@ -244,6 +244,7 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
             lr=float(cfg["training"]["lr"]),
             betas=(float(cfg["training"]["beta_1"]), float(cfg["training"]["beta_2"])),
             eps=float(cfg["training"]["eps"]),
+            weight_decay=float(cfg["training"]["weight_decay"]),
         )
         if cfg["training"]["lr_scheduler"] == "constant":
             scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)

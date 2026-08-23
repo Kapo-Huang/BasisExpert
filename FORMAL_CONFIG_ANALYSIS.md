@@ -56,7 +56,7 @@
 | **SIREN** | 四数据集均 `5e-5` | `16,000 × 1,500` | 24.0M/epoch；600 epoch = 14.4B | 一致 | 合理 |
 | **NeuralExpert** | 四数据集均 `3e-5` | 每 iteration 采样 16,000 点 | reconstruction 60,000 iterations = 960M；manager 30,000 = 480M | 一致 | 方法专用预算，明显低于 14.4B |
 | **MoE-INR** | 四数据集均 `5e-5` | `16,000 × 1,500` | 24.0M/epoch；600 epoch = 14.4B | 一致 | 合理 |
-| **fV-SRN** | 两个规则数据集均 `1e-2` | batch 16,000；按 timestep 采样 | 24.000M vs 24.012M/epoch，差 0.05% | 近似一致 | 差异来自 2,001 个时间步不可整除 |
+| **fV-SRN** | 两个规则数据集及 RD 均 `5e-5`；Adam + StepLR(40, 0.92) | batch 16,000；按 timestep 采样 | 24.000M vs 24.012M/epoch，差 0.05% | 优化策略一致 | 与 VarExpert 的 lr、betas、eps、weight decay 和 epoch scheduler 对齐 |
 | **APMGSRN** | 两个规则数据集均 `1e-2` | 16,000/iteration；逐 timestep | 总预算 14.400B vs 14.4072B，差 0.05% | 近似一致 | 无传统 epoch，预算可接受 |
 | **InstantVNR** | 两个规则数据集均 `1e-3` | `16,000 × 1,500`，累积 4 个 batch | 24.0M/epoch；总计 14.4B | 一致 | 合理，且有直接 exploration 支持 |
 | **MINER** | Ionization `1e-3`；Combustion `5e-4` | active-block cap | 实际量随 active blocks 动态变化 | 不一致（有意） | 二维/三维专用 recipe，可解释但缺少直接调参证据 |
@@ -81,7 +81,7 @@
 | **SIREN** | architecture、历史 RD smoke | volume 的三层结构与 Size163 优胜项一致；node 结构缺跨数据集探索 | 中 | 对 RedSea/Katrina 各做一个短程属性 smoke |
 | **NeuralExpert** | architecture、v2 depth、历史 RD smoke | 探索中 depth1 优于 depth2，正式仍采用原方法 depth2；向量输出未单独 sweep | 中 | 对两个三通道目标做短程稳定性检查 |
 | **MoE-INR** | architecture、RD smoke | 10 experts 曾优于正式 7 experts；lr/batch 未独立 sweep | 中 | 记录采用 7 experts 的参数预算依据 |
-| **fV-SRN** | APMGSRN 正式 optimizer 对齐 | 采用 APMGSRN 主优化器参数：Adam `lr=1e-2, betas=(0.9,0.99), eps=1e-14`，学习率保持常数 | 用户指定 | 不采用 APMGSRN 专属的坐标变换辅助优化器 |
+| **fV-SRN** | 既有 fV optimizer sweep；正式策略改为 VarExpert 对齐 | Adam `lr=5e-5, betas=(0.9,0.999), eps=1e-8, weight_decay=0`，按 epoch 使用 `StepLR(step=40, gamma=0.92)` | 协议对齐 | 现有 `5e-3/1e-2` exploration 保留为历史对照；正式运行先观察早期收敛速度 |
 | **APMGSRN** | architecture、历史 RD smoke | Ionization 保留 balanced；Combustion 改用已有 Size082 小结构，避免改变逐 timestep 方法本身 | 中 | 用一个 Combustion 属性确认小结构逐 timestep 收敛 |
 | **InstantVNR** | v5 optimizer stability | 正式 `lr=1e-3 + MSE` 与 v5 第一名一致；Ionization 的 `hash=2^11, hidden=105` 有直接 size-matched 依据 | 强/中 | Combustion 的 `hash=2^10, hidden=88` 需短程确认 |
 | **MINER** | RD smoke | 没有与当前实现直接对应的完成结果；二维/三维参数不同 | 弱 | 分别对两个数据集做 lr 与 active-block-cap 小矩阵 |
@@ -160,7 +160,7 @@ SIREN、NeuralExpert、APMGSRN、InstantVNR、ECNR 和 MVNet 当前没有正式 
 
 ## 6. 最终判定
 
-正式配置矩阵现在满足以下条件：支持非结构网格的模型覆盖 RedSea 与 Katrina；规则体模型覆盖 Ionization 与 Combustion 的兼容属性；NeuralExpert、STSR-INR、MVNet 正确处理三通道向量；可静态调节的 main 模型已按数据集对齐 VarExpert 参数预算；CoordNet 正式学习率统一为 `1e-5`；STSR-INR 四数据集训练预算一致；fV-SRN 正式 checkpoint 周期统一为 300 epochs。
+正式配置矩阵现在满足以下条件：支持非结构网格的模型覆盖 RedSea 与 Katrina；规则体模型覆盖 Ionization 与 Combustion 的兼容属性；NeuralExpert、STSR-INR、MVNet 正确处理三通道向量；可静态调节的 main 模型已按数据集对齐 VarExpert 参数预算；CoordNet 正式学习率统一为 `1e-5`；fV-SRN 正式优化策略与 VarExpert 对齐且 checkpoint 周期为 300 epochs；STSR-INR 四数据集训练预算一致。
 
 除 APMGSRN、MINER、ECNR 的结构性/动态例外外，main 已满足“每个数据集的多变量总参数量与 VarExpert 对齐”，可进入短程稳定性 exploration。当前 RD 矩阵仍不能用于严格的等大小比较：fV-SRN、STSR-INR 和 MINER 的 Size163 需要另行校准。论文表格应显式报告 APMGSRN/MINER 的时间子模型汇总，以及 fV-SRN/ECNR 的最终 compact artifact 大小。
 

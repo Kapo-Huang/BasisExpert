@@ -48,11 +48,14 @@ training:
   validation_fraction: 0.0
   batch_size: 16000
   prediction_batch_size: 16000
-  lr: 0.01
+  lr: 5.0e-05
   beta_1: 0.9
-  beta_2: 0.99
-  eps: 1.0e-14
-  lr_scheduler: constant
+  beta_2: 0.999
+  eps: 1.0e-08
+  weight_decay: 0.0
+  lr_scheduler: step
+  lr_step: 40
+  lr_gamma: 0.92
   l1_weight: 1.0
   l2_weight: 0.0
   importance_floor: 0.01
