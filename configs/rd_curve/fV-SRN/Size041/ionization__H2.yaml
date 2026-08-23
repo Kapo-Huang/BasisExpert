@@ -1,0 +1,73 @@
+experiment: fv_srn_ionization-size041_H2
+exp_id: fv-srn-ionization-size041-H2
+experiment_root: ${REPO_ROOT}/runs/fv_srn
+data:
+  kind: volume
+  dataset_name: ionization
+  split: train
+  target: H2
+  targets:
+    GT: ${IONIZATION_ROOT}/target_GT.npy
+    H_plus: ${IONIZATION_ROOT}/target_H+.npy
+    H2: ${IONIZATION_ROOT}/target_H2.npy
+    He: ${IONIZATION_ROOT}/target_He.npy
+    PD: ${IONIZATION_ROOT}/target_PD.npy
+  volume_shape:
+    X: 600
+    Y: 248
+    Z: 248
+    T: 100
+model:
+  name: fv_srn
+  grid_resolution: 5
+  grid_channels: 26
+  grid_init_std: 0.01
+  keyframe_indices:
+  - 0
+  - 9
+  - 18
+  - 27
+  - 36
+  - 45
+  - 54
+  - 63
+  - 72
+  - 81
+  - 90
+  - 99
+  fourier_features: 14
+  fourier_mode: nerf
+  hidden_features: 32
+  hidden_layers: 3
+  activation: snake_alt
+  activation_frequency: 1.0
+  time_encoding: none
+training:
+  epochs: 600
+  samples_per_timestep: 240000
+  validation_fraction: 0.0
+  batch_size: 16000
+  prediction_batch_size: 16000
+  lr: 5.0e-05
+  beta_1: 0.9
+  beta_2: 0.999
+  eps: 1.0e-08
+  weight_decay: 0.0
+  lr_scheduler: step
+  lr_step: 40
+  lr_gamma: 0.92
+  l1_weight: 1.0
+  l2_weight: 0.0
+  importance_floor: 0.01
+  rebuild_every: 51
+  rebuild_grid_size: 32
+  rebuild_samples_per_cell: 2
+  save_every: 300
+  log_every: 1
+  seed: 42
+  device: cuda
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+  run_after_training: false
+  default_model: compact

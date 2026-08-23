@@ -1,7 +1,7 @@
 # Formal training selection: one repository-relative YAML path per line.
 # Comment out or delete entries to run only a subset.
 # Execution order and parallel grouping remain defined by scripts/main/run_all.sh.
-# Generated formal matrix: 359 configs.
+# Generated formal matrix: 381 configs.
 
 configs/main/APMGSRN/combustion_40NH3_1__Absolute_Pressure.yaml
 configs/main/APMGSRN/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
@@ -274,6 +274,11 @@ configs/main/fV-SRN/ionization__H2.yaml
 configs/main/fV-SRN/ionization__H_plus.yaml
 configs/main/fV-SRN/ionization__He.yaml
 configs/main/fV-SRN/ionization__PD.yaml
+configs/rd_curve/CoordNet/Size041/ionization__GT.yaml
+configs/rd_curve/CoordNet/Size041/ionization__H2.yaml
+configs/rd_curve/CoordNet/Size041/ionization__H_plus.yaml
+configs/rd_curve/CoordNet/Size041/ionization__He.yaml
+configs/rd_curve/CoordNet/Size041/ionization__PD.yaml
 configs/rd_curve/CoordNet/Size082/ionization__GT.yaml
 configs/rd_curve/CoordNet/Size082/ionization__H2.yaml
 configs/rd_curve/CoordNet/Size082/ionization__H_plus.yaml
@@ -294,6 +299,11 @@ configs/rd_curve/CoordNet/Size652/ionization__H2.yaml
 configs/rd_curve/CoordNet/Size652/ionization__H_plus.yaml
 configs/rd_curve/CoordNet/Size652/ionization__He.yaml
 configs/rd_curve/CoordNet/Size652/ionization__PD.yaml
+configs/rd_curve/MINER/Size041/ionization__GT.yaml
+configs/rd_curve/MINER/Size041/ionization__H2.yaml
+configs/rd_curve/MINER/Size041/ionization__H_plus.yaml
+configs/rd_curve/MINER/Size041/ionization__He.yaml
+configs/rd_curve/MINER/Size041/ionization__PD.yaml
 configs/rd_curve/MINER/Size082/ionization__GT.yaml
 configs/rd_curve/MINER/Size082/ionization__H2.yaml
 configs/rd_curve/MINER/Size082/ionization__H_plus.yaml
@@ -314,6 +324,11 @@ configs/rd_curve/MINER/Size652/ionization__H2.yaml
 configs/rd_curve/MINER/Size652/ionization__H_plus.yaml
 configs/rd_curve/MINER/Size652/ionization__He.yaml
 configs/rd_curve/MINER/Size652/ionization__PD.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__GT.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__H2.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__H_plus.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__He.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__PD.yaml
 configs/rd_curve/MoE-INR/Size082/ionization__GT.yaml
 configs/rd_curve/MoE-INR/Size082/ionization__H2.yaml
 configs/rd_curve/MoE-INR/Size082/ionization__H_plus.yaml
@@ -334,14 +349,21 @@ configs/rd_curve/MoE-INR/Size652/ionization__H2.yaml
 configs/rd_curve/MoE-INR/Size652/ionization__H_plus.yaml
 configs/rd_curve/MoE-INR/Size652/ionization__He.yaml
 configs/rd_curve/MoE-INR/Size652/ionization__PD.yaml
+configs/rd_curve/STSR-INR/Size041/ionization.yaml
 configs/rd_curve/STSR-INR/Size082/ionization.yaml
 configs/rd_curve/STSR-INR/Size163/ionization.yaml
 configs/rd_curve/STSR-INR/Size326/ionization.yaml
 configs/rd_curve/STSR-INR/Size652/ionization.yaml
+configs/rd_curve/VarExpert/Size041/ionization.yaml
 configs/rd_curve/VarExpert/Size082/ionization.yaml
 configs/rd_curve/VarExpert/Size163/ionization.yaml
 configs/rd_curve/VarExpert/Size326/ionization.yaml
 configs/rd_curve/VarExpert/Size652/ionization.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__GT.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__H2.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__H_plus.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__He.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__PD.yaml
 configs/rd_curve/fV-SRN/Size082/ionization__GT.yaml
 configs/rd_curve/fV-SRN/Size082/ionization__H2.yaml
 configs/rd_curve/fV-SRN/Size082/ionization__H_plus.yaml

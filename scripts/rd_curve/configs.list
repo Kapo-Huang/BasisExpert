@@ -2,6 +2,11 @@
 # Use with: bash scripts/rd_curve/run.sh
 # Comment out or delete entries to select a smaller RD-curve subset.
 
+configs/rd_curve/CoordNet/Size041/ionization__GT.yaml
+configs/rd_curve/CoordNet/Size041/ionization__H2.yaml
+configs/rd_curve/CoordNet/Size041/ionization__H_plus.yaml
+configs/rd_curve/CoordNet/Size041/ionization__He.yaml
+configs/rd_curve/CoordNet/Size041/ionization__PD.yaml
 configs/rd_curve/CoordNet/Size082/ionization__GT.yaml
 configs/rd_curve/CoordNet/Size082/ionization__H2.yaml
 configs/rd_curve/CoordNet/Size082/ionization__H_plus.yaml
@@ -22,6 +27,11 @@ configs/rd_curve/CoordNet/Size652/ionization__H2.yaml
 configs/rd_curve/CoordNet/Size652/ionization__H_plus.yaml
 configs/rd_curve/CoordNet/Size652/ionization__He.yaml
 configs/rd_curve/CoordNet/Size652/ionization__PD.yaml
+configs/rd_curve/MINER/Size041/ionization__GT.yaml
+configs/rd_curve/MINER/Size041/ionization__H2.yaml
+configs/rd_curve/MINER/Size041/ionization__H_plus.yaml
+configs/rd_curve/MINER/Size041/ionization__He.yaml
+configs/rd_curve/MINER/Size041/ionization__PD.yaml
 configs/rd_curve/MINER/Size082/ionization__GT.yaml
 configs/rd_curve/MINER/Size082/ionization__H2.yaml
 configs/rd_curve/MINER/Size082/ionization__H_plus.yaml
@@ -42,6 +52,11 @@ configs/rd_curve/MINER/Size652/ionization__H2.yaml
 configs/rd_curve/MINER/Size652/ionization__H_plus.yaml
 configs/rd_curve/MINER/Size652/ionization__He.yaml
 configs/rd_curve/MINER/Size652/ionization__PD.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__GT.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__H2.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__H_plus.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__He.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__PD.yaml
 configs/rd_curve/MoE-INR/Size082/ionization__GT.yaml
 configs/rd_curve/MoE-INR/Size082/ionization__H2.yaml
 configs/rd_curve/MoE-INR/Size082/ionization__H_plus.yaml
@@ -62,14 +77,21 @@ configs/rd_curve/MoE-INR/Size652/ionization__H2.yaml
 configs/rd_curve/MoE-INR/Size652/ionization__H_plus.yaml
 configs/rd_curve/MoE-INR/Size652/ionization__He.yaml
 configs/rd_curve/MoE-INR/Size652/ionization__PD.yaml
+configs/rd_curve/STSR-INR/Size041/ionization.yaml
 configs/rd_curve/STSR-INR/Size082/ionization.yaml
 configs/rd_curve/STSR-INR/Size163/ionization.yaml
 configs/rd_curve/STSR-INR/Size326/ionization.yaml
 configs/rd_curve/STSR-INR/Size652/ionization.yaml
+configs/rd_curve/VarExpert/Size041/ionization.yaml
 configs/rd_curve/VarExpert/Size082/ionization.yaml
 configs/rd_curve/VarExpert/Size163/ionization.yaml
 configs/rd_curve/VarExpert/Size326/ionization.yaml
 configs/rd_curve/VarExpert/Size652/ionization.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__GT.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__H2.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__H_plus.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__He.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__PD.yaml
 configs/rd_curve/fV-SRN/Size082/ionization__GT.yaml
 configs/rd_curve/fV-SRN/Size082/ionization__H2.yaml
 configs/rd_curve/fV-SRN/Size082/ionization__H_plus.yaml

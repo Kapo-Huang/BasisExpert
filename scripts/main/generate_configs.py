@@ -19,6 +19,7 @@ DATASET_ROOT_TOKENS = {
     "combustion_40NH3_1": "${COMBUSTION_ROOT}",
 }
 SIZES = {
+    "Size041": 0.41,
     "Size082": 0.82,
     "Size163": 1.63,
     "Size326": 3.26,
@@ -94,12 +95,14 @@ UNIFIED_SIZE_MODELS = {
         "Size652": {"name": "siren", "in_features": 4, "hidden_features": 412, "hidden_layers": 4, "first_omega_0": 30.0, "hidden_omega_0": 30.0, "outermost_linear": True},
     },
     "CoordNet": {
+        "Size041": {"name": "coordnet", "in_features": 4, "init_features": 12, "num_res": 8},
         "Size082": {"name": "coordnet", "in_features": 4, "init_features": 15, "num_res": 10},
         "Size163": {"name": "coordnet", "in_features": 4, "init_features": 21, "num_res": 10},
         "Size326": {"name": "coordnet", "in_features": 4, "init_features": 31, "num_res": 10},
         "Size652": {"name": "coordnet", "in_features": 4, "init_features": 43, "num_res": 10},
     },
     "MoE-INR": {
+        "Size041": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 23, "encoder_feature_dim": 184, "policy_hidden_dim": 22, "policy_num_layers": 3},
         "Size082": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 32, "encoder_feature_dim": 256, "policy_hidden_dim": 32, "policy_num_layers": 3},
         "Size163": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 45, "encoder_feature_dim": 360, "policy_hidden_dim": 45, "policy_num_layers": 3},
         "Size326": {"name": "moe_inr", "in_features": 4, "num_experts": 7, "base_dim": 66, "encoder_feature_dim": 528, "policy_hidden_dim": 66, "policy_num_layers": 3},
@@ -196,18 +199,21 @@ FV_MAIN_PROFILES = {
     COMBUSTION_DATASET["name"]: (5, 60),
 }
 VAR_SIZE_PROFILES = {
+    "Size041": {"num_experts": 8, "base_dim": 11, "top_k": 4},
     "Size082": {"num_experts": 8, "base_dim": 15, "top_k": 4},
     "Size163": {"num_experts": 8, "base_dim": 22, "top_k": 4},
     "Size326": {"num_experts": 8, "base_dim": 31, "top_k": 4},
     "Size652": {"num_experts": 8, "base_dim": 45, "top_k": 4},
 }
 STSR_SIZE_PROFILES = {
+    "Size041": {"init_features": 14, "embedding_dims": 56},
     "Size082": {"init_features": 20, "embedding_dims": 80},
     "Size163": {"init_features": 64, "embedding_dims": 256},
     "Size326": {"init_features": 40, "embedding_dims": 160},
     "Size652": {"init_features": 56, "embedding_dims": 224},
 }
 MINER_SIZE_HIDDEN_FEATURES = {
+    "Size041": 2,
     "Size082": 3,
     "Size163": 20,
     "Size326": 6,
@@ -233,7 +239,7 @@ APMG_MAIN_PROFILES = {
     COMBUSTION_DATASET["name"]: APMG_SIZE["Size082"],
 }
 FV_SIZE = {
-    "Size082": (5, 54), "Size163": (32, 16), "Size326": (8, 55),
+    "Size041": (5, 26), "Size082": (5, 54), "Size163": (32, 16), "Size326": (8, 55),
     "Size652": (8, 110),
 }
 RM_SIZE = {
