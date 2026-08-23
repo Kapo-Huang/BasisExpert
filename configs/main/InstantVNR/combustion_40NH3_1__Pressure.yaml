@@ -20,8 +20,8 @@ model:
   n_features_per_level: 8
   base_resolution: 16
   per_level_scale: 2.0
-  log2_hashmap_size: 19
-  hidden_features: 64
+  log2_hashmap_size: 10
+  hidden_features: 88
   hidden_layers: 4
 training:
   epochs: 600

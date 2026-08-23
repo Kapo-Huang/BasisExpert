@@ -33,7 +33,9 @@ DEFAULT_TRAINING = {
     "prediction_batch_size": 65536,
     "lr": 0.01,
     "beta_1": 0.9,
-    "beta_2": 0.999,
+    "beta_2": 0.99,
+    "eps": 1.0e-8,
+    "lr_scheduler": "step",
     "lr_step": 100,
     "lr_gamma": 0.5,
     "l1_weight": 1.0,
@@ -166,8 +168,12 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     training["rebuild_every"] = int(training["rebuild_every"])
     if training["save_every"] < 0 or training["rebuild_every"] < 0:
         raise ValueError("training.save_every and rebuild_every must be non-negative")
-    for key in ("lr", "beta_1", "beta_2", "lr_gamma"):
+    for key in ("lr", "beta_1", "beta_2", "eps", "lr_gamma"):
         training[key] = _positive(training[key], f"training.{key}")
+    scheduler_name = str(training["lr_scheduler"]).strip().lower()
+    if scheduler_name not in {"constant", "step"}:
+        raise ValueError("training.lr_scheduler must be 'constant' or 'step'")
+    training["lr_scheduler"] = scheduler_name
     validation_fraction = float(training["validation_fraction"])
     if not 0.0 <= validation_fraction < 1.0:
         raise ValueError("training.validation_fraction must be in [0,1)")

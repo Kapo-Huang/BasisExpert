@@ -392,7 +392,6 @@ def _materialize_mvnet(
             f"total target channel count={expected_out_features}"
         )
     fixed_values = {
-        "hidden_features": MVNET_HIDDEN_FEATURES,
         "num_residual_blocks": MVNET_RESIDUAL_BLOCKS,
         "omega_0": MVNET_OMEGA_0,
         "bias": MVNET_BIAS,
@@ -419,9 +418,12 @@ def _materialize_mvnet(
                 f"mvnet requires {key}={expected}, "
                 f"got {actual_values[key]}"
             )
+    if actual_values["hidden_features"] <= 0:
+        raise ValueError("mvnet requires hidden_features > 0")
     return {
         "in_features": in_features,
         "out_features": out_features,
+        "hidden_features": actual_values["hidden_features"],
         **fixed_values,
     }
 

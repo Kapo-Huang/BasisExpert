@@ -122,9 +122,78 @@ DEFAULT_MODELS = {
 }
 MOE_MAIN_BASE_DIMS = {
     "redsea": {"default": 18},
-    "katrina": {"default": 16, "v": 15},
-    "ionization": {"default": 45},
-    COMBUSTION_DATASET["name"]: {"default": 23, "Velocity": 22},
+    "katrina": {"default": 16},
+    "ionization": {"default": 46},
+    COMBUSTION_DATASET["name"]: {"default": 33},
+}
+MAIN_SINGLE_MODEL_PROFILES = {
+    "SIREN": {
+        "redsea": {"hidden_features": 72, "hidden_layers": 5},
+        "katrina": {"hidden_features": 66, "hidden_layers": 5},
+        "ionization": {"hidden_features": 237, "hidden_layers": 3},
+        COMBUSTION_DATASET["name"]: {
+            "hidden_features": 169,
+            "hidden_layers": 3,
+        },
+    },
+    "CoordNet": {
+        "redsea": {"init_features": 10, "num_res": 7},
+        "katrina": {"init_features": 9, "num_res": 7},
+        "ionization": {"init_features": 29, "num_res": 5},
+        COMBUSTION_DATASET["name"]: {"init_features": 18, "num_res": 7},
+    },
+}
+INSTANT_VNR_MAIN_PROFILES = {
+    "ionization": {"log2_hashmap_size": 11, "hidden_features": 105},
+    COMBUSTION_DATASET["name"]: {
+        "log2_hashmap_size": 10,
+        "hidden_features": 88,
+    },
+}
+MVNET_MAIN_HIDDEN_FEATURES = {
+    "redsea": 73,
+    "katrina": 74,
+    "ionization": 206,
+    COMBUSTION_DATASET["name"]: 237,
+}
+STSR_MAIN_PROFILES = {
+    "redsea": {"init_features": 12, "embedding_dims": 655},
+    "katrina": {"init_features": 12, "embedding_dims": 36},
+    "ionization": {"init_features": 33, "embedding_dims": 635},
+    COMBUSTION_DATASET["name"]: {
+        "init_features": 28,
+        "embedding_dims": 120,
+    },
+}
+NEURAL_MAIN_PROFILES = {
+    "redsea": {
+        "decoder_hidden_dim": 8,
+        "decoder_encoding_dim": 76,
+        "manager_hidden_dim": 16,
+        "manager_encoding_dim": 15,
+    },
+    "katrina": {
+        "decoder_hidden_dim": 7,
+        "decoder_encoding_dim": 69,
+        "manager_hidden_dim": 14,
+        "manager_encoding_dim": 17,
+    },
+    "ionization": {
+        "decoder_hidden_dim": 31,
+        "decoder_encoding_dim": 159,
+        "manager_hidden_dim": 62,
+        "manager_encoding_dim": 71,
+    },
+    COMBUSTION_DATASET["name"]: {
+        "decoder_hidden_dim": 16,
+        "decoder_encoding_dim": 126,
+        "manager_hidden_dim": 32,
+        "manager_encoding_dim": 56,
+    },
+}
+FV_MAIN_PROFILES = {
+    "ionization": (6, 64),
+    COMBUSTION_DATASET["name"]: (5, 60),
 }
 VAR_SIZE_PROFILES = {
     "Size082": {"num_experts": 8, "base_dim": 15, "top_k": 4},
@@ -158,6 +227,10 @@ APMG_SIZE = {
     "Size163": {"feature_grid_shape": [5, 5, 5], "n_grids": 6, "n_features": 1, "nodes_per_layer": 16, "n_layers": 3},
     "Size326": {"feature_grid_shape": [5, 5, 5], "n_grids": 12, "n_features": 1, "nodes_per_layer": 32, "n_layers": 2},
     "Size652": {"feature_grid_shape": [4, 4, 4], "n_grids": 44, "n_features": 1, "nodes_per_layer": 32, "n_layers": 3},
+}
+APMG_MAIN_PROFILES = {
+    "ionization": APMG_MAIN_MODEL,
+    COMBUSTION_DATASET["name"]: APMG_SIZE["Size082"],
 }
 FV_SIZE = {
     "Size082": (5, 54), "Size163": (32, 16), "Size326": (8, 55),
@@ -402,8 +475,8 @@ def generate_instant_ngp() -> int:
     return count
 
 
-def instant_vnr_model() -> dict:
-    return {
+def instant_vnr_model(dataset: str) -> dict:
+    payload = {
         "name": "instant_vnr",
         "in_features": 4,
         "out_features": 1,
@@ -415,6 +488,8 @@ def instant_vnr_model() -> dict:
         "hidden_features": 64,
         "hidden_layers": 4,
     }
+    payload.update(deepcopy(INSTANT_VNR_MAIN_PROFILES[dataset]))
+    return payload
 
 
 def instant_vnr_training() -> dict:
@@ -457,7 +532,7 @@ def generate_instant_vnr() -> int:
             "exp_id": f"instant-vnr-ionization-{target}",
             "experiment_root": repo_path("runs"),
             "data": data,
-            "model": instant_vnr_model(),
+            "model": instant_vnr_model("ionization"),
             "training": instant_vnr_training(),
             "evaluation": evaluation(),
             "log": log_config(),
@@ -475,7 +550,7 @@ def generate_instant_vnr() -> int:
                 four_coordinates=True,
                 selected_only=True,
             ),
-            "model": instant_vnr_model(),
+            "model": instant_vnr_model(COMBUSTION_DATASET["name"]),
             "training": instant_vnr_training(),
             "evaluation": evaluation(),
             "log": log_config(),
@@ -488,12 +563,12 @@ def generate_instant_vnr() -> int:
     return count
 
 
-def mvnet_model(num_variables: int) -> dict:
+def mvnet_model(dataset: str, num_variables: int) -> dict:
     return {
         "name": "mvnet",
         "in_features": 4,
         "out_features": int(num_variables),
-        "hidden_features": 206,
+        "hidden_features": MVNET_MAIN_HIDDEN_FEATURES[dataset],
         "num_residual_blocks": 10,
         "omega_0": 30.0,
         "bias": True,
@@ -546,6 +621,7 @@ def generate_mvnet() -> int:
             "experiment_root": repo_path("runs"),
             "data": data,
             "model": mvnet_model(
+                dataset,
                 total_target_channels(dataset, meta["targets"])
             ),
             "training": mvnet_training(),
@@ -565,6 +641,7 @@ def generate_mvnet() -> int:
         "experiment_root": repo_path("runs"),
         "data": combustion,
         "model": mvnet_model(
+            COMBUSTION_DATASET["name"],
             total_target_channels(
                 COMBUSTION_DATASET["name"],
                 COMBUSTION_DATASET["targets"],
@@ -580,8 +657,8 @@ def generate_mvnet() -> int:
 
 
 def generate_stsr_inr() -> int:
-    def main_model() -> dict:
-        return {
+    def main_model(dataset: str) -> dict:
+        payload = {
             "name": "stsr_inr",
             "in_features": 4,
             "init_features": 64,
@@ -591,6 +668,8 @@ def generate_stsr_inr() -> int:
             "outermost_linear": True,
             "use_global_latent": True,
         }
+        payload.update(deepcopy(STSR_MAIN_PROFILES[dataset]))
+        return payload
 
     count = 0
     for dataset in DATASETS:
@@ -599,7 +678,7 @@ def generate_stsr_inr() -> int:
             "exp_id": f"stsr-inr-{dataset}",
             "experiment_root": repo_path("runs"),
             "data": unified_data(dataset, False),
-            "model": main_model(),
+            "model": main_model(dataset),
             "training": mvnet_training(),
             "evaluation": evaluation(),
             "log": log_config(),
@@ -613,7 +692,7 @@ def generate_stsr_inr() -> int:
         "exp_id": f"stsr-inr-{combustion_name}",
         "experiment_root": repo_path("runs"),
         "data": combustion_data(four_coordinates=True),
-        "model": main_model(),
+        "model": main_model(combustion_name),
         "training": mvnet_training(),
         "evaluation": evaluation(),
         "log": log_config(),
@@ -623,7 +702,16 @@ def generate_stsr_inr() -> int:
     for size, profile in STSR_SIZE_PROFILES.items():
         if size == "Size163":
             training = mvnet_training()
-            model = main_model()
+            model = {
+                "name": "stsr_inr",
+                "in_features": 4,
+                "init_features": 64,
+                "num_res": 5,
+                "omega_0": 5.0,
+                "embedding_dims": 256,
+                "outermost_linear": True,
+                "use_global_latent": True,
+            }
         else:
             training = common_training()
             training["lr"] = 1.0e-5
@@ -697,6 +785,10 @@ def generate_unified_single() -> int:
                     if family == "MoE-INR"
                     else deepcopy(defaults[meta["kind"]])
                 )
+                if family in MAIN_SINGLE_MODEL_PROFILES:
+                    model.update(
+                        deepcopy(MAIN_SINGLE_MODEL_PROFILES[family][dataset])
+                    )
                 training = common_training()
                 if family == "CoordNet":
                     training["lr"] = 1.0e-5
@@ -718,6 +810,14 @@ def generate_unified_single() -> int:
                 if family == "MoE-INR"
                 else deepcopy(defaults["volume"])
             )
+            if family in MAIN_SINGLE_MODEL_PROFILES:
+                combustion_model.update(
+                    deepcopy(
+                        MAIN_SINGLE_MODEL_PROFILES[family][
+                            COMBUSTION_DATASET["name"]
+                        ]
+                    )
+                )
             combustion_model["in_features"] = len(COMBUSTION_DATASET["coordinate_axes"])
             training = common_training()
             if family == "CoordNet":
@@ -917,7 +1017,15 @@ def generate_mc() -> int:
     return count
 
 
-def neural_model(dataset: str, dim: int, nested: bool, target: str, manager_pretrain: bool, size: str | None) -> dict:
+def neural_model(
+    dataset: str,
+    dim: int,
+    nested: bool,
+    target: str,
+    manager_pretrain: bool,
+    size: str | None,
+    profile: dict | None = None,
+) -> dict:
     model_name = (
         "inr_moe_ionization"
         if dataset in {"ionization", COMBUSTION_DATASET["name"]}
@@ -928,17 +1036,28 @@ def neural_model(dataset: str, dim: int, nested: bool, target: str, manager_pret
         f"{rel_prefix(nested)}runs/neural_expert/pretrained_managers/{dataset}/{size_token}/"
         f"pt_{model_name}_{target}_managerpretraining.pth"
     )
+    profile = profile or {}
+    decoder_hidden_dim = int(profile.get("decoder_hidden_dim", dim))
+    decoder_encoding_dim = int(
+        profile.get("decoder_encoding_dim", decoder_hidden_dim * 8)
+    )
+    manager_hidden_dim = int(
+        profile.get("manager_hidden_dim", decoder_hidden_dim * 2)
+    )
+    manager_encoding_dim = int(
+        profile.get("manager_encoding_dim", decoder_hidden_dim * 2)
+    )
     return {
         "model_name": model_name,
         "in_dim": 4,
         "out_dim": target_dimension(dataset, target),
-        "decoder_hidden_dim": dim, "decoder_n_hidden_layers": 2,
-        "decoder_input_encoding": f"learned_{dim * 8}_2_sine_siren_none",
+        "decoder_hidden_dim": decoder_hidden_dim, "decoder_n_hidden_layers": 2,
+        "decoder_input_encoding": f"learned_{decoder_encoding_dim}_2_sine_siren_none",
         "decoder_nl": "sine", "decoder_init_type": "siren", "n_experts": 8,
         "outermost_linear": True, "input_encoding": "none", "decoder_freqs": 30.0,
         "decoder_trainable_freqs": False, "top_k": 1,
-        "manager_hidden_dim": dim * 2, "manager_n_hidden_layers": 2,
-        "manager_input_encoding": f"learned_{dim * 2}_2_sine_siren_none",
+        "manager_hidden_dim": manager_hidden_dim, "manager_n_hidden_layers": 2,
+        "manager_input_encoding": f"learned_{manager_encoding_dim}_2_sine_siren_none",
         "manager_nl": "sine", "manager_init": "siren", "manager_type": "standard",
         "experts_bias_std": 0.1, "experts_bias_weight": 1.0,
         "manager_softmax_temperature": 1.0, "manager_softmax_temp_trainable": False,
@@ -977,7 +1096,15 @@ def neural_data(dataset: str, target: str, nested: bool) -> dict:
     return data
 
 
-def neural_payload(dataset: str, target: str, nested: bool, manager_pretrain: bool, dim: int, size: str | None) -> dict:
+def neural_payload(
+    dataset: str,
+    target: str,
+    nested: bool,
+    manager_pretrain: bool,
+    dim: int,
+    size: str | None,
+    profile: dict | None = None,
+) -> dict:
     suffix = "-managerpretrain" if manager_pretrain else ""
     exp_size = f"-{size.lower()}" if size else ""
     loss_name = "1000segmentation" if manager_pretrain else "1000valrecon"
@@ -1001,7 +1128,15 @@ def neural_payload(dataset: str, target: str, nested: bool, manager_pretrain: bo
         "experiment": f"neural_expert_{dataset}{exp_size}_{target}{suffix}",
         "exp_id": f"neural-expert-{dataset}{exp_size}-{target}{suffix}",
         "experiment_root": f"{rel_prefix(nested)}runs/neural_expert",
-        "MODEL": neural_model(dataset, dim, nested, target, manager_pretrain, size),
+        "MODEL": neural_model(
+            dataset,
+            dim,
+            nested,
+            target,
+            manager_pretrain,
+            size,
+            profile,
+        ),
         "LOSS": {
             "scale_by_q_grad": False, "loss_type": loss_name,
             "segmentation_type": (
@@ -1019,14 +1154,24 @@ def neural_payload(dataset: str, target: str, nested: bool, manager_pretrain: bo
 def generate_neural() -> int:
     count = 0
     for dataset, meta in DATASETS.items():
+        profile = NEURAL_MAIN_PROFILES[dataset]
         for target in meta["targets"]:
             for pretrain in (True, False):
                 suffix = "__managerpretrain" if pretrain else ""
                 dump(
                     MAIN_CONFIGS / "NeuralExpert" / f"{dataset}__{target}{suffix}.yaml",
-                    neural_payload(dataset, target, False, pretrain, 64, None),
+                    neural_payload(
+                        dataset,
+                        target,
+                        False,
+                        pretrain,
+                        int(profile["decoder_hidden_dim"]),
+                        None,
+                        profile,
+                    ),
                 )
                 count += 1
+    profile = NEURAL_MAIN_PROFILES[COMBUSTION_DATASET["name"]]
     for target in COMBUSTION_DATASET["targets"]:
         for pretrain in (True, False):
             suffix = "__managerpretrain" if pretrain else ""
@@ -1037,8 +1182,9 @@ def generate_neural() -> int:
                     target,
                     False,
                     pretrain,
-                    64,
+                    int(profile["decoder_hidden_dim"]),
                     None,
+                    profile,
                 ),
             )
             count += 1
@@ -1072,7 +1218,7 @@ def apmg_payload(
     size: str | None,
     dataset: str = "ionization",
 ) -> dict:
-    sizing = APMG_SIZE[size] if size else APMG_MAIN_MODEL
+    sizing = APMG_SIZE[size] if size else APMG_MAIN_PROFILES[dataset]
     tag = f"-{size.lower()}" if size else ""
     data = volume_data(target, nested, dataset=dataset)
     return {
@@ -1113,7 +1259,9 @@ def fv_payload(
     size: str | None,
     dataset: str = "ionization",
 ) -> dict:
-    resolution, channels = FV_SIZE[size] if size else (32, 16)
+    resolution, channels = (
+        FV_SIZE[size] if size else FV_MAIN_PROFILES[dataset]
+    )
     tag = f"-{size.lower()}" if size else ""
     return {
         "experiment": f"fv_srn_{dataset}{tag}_{target}",
@@ -1139,12 +1287,12 @@ def fv_payload(
                 12000 if dataset == COMBUSTION_DATASET["name"] else 240000
             ),
             "validation_fraction": 0.0, "batch_size": 16000,
-            "prediction_batch_size": 16000, "lr": 5.0e-3,
-            "beta_1": 0.9, "beta_2": 0.999, "lr_step": 20,
-            "lr_gamma": 0.5, "l1_weight": 1.0, "l2_weight": 0.0,
+            "prediction_batch_size": 16000, "lr": 1.0e-2,
+            "beta_1": 0.9, "beta_2": 0.99, "eps": 1.0e-14,
+            "lr_scheduler": "constant", "l1_weight": 1.0, "l2_weight": 0.0,
             "importance_floor": 0.01, "rebuild_every": 51,
             "rebuild_grid_size": 32, "rebuild_samples_per_cell": 2,
-            "save_every": 20, "log_every": 1, "seed": 42, "device": "cuda",
+            "save_every": 300, "log_every": 1, "seed": 42, "device": "cuda",
         },
         "evaluation": {**evaluation(), "run_after_training": False, "default_model": "compact"},
     }

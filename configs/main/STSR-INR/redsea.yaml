@@ -14,10 +14,10 @@ data:
 model:
   name: stsr_inr
   in_features: 4
-  init_features: 64
+  init_features: 12
   num_res: 5
   omega_0: 5.0
-  embedding_dims: 256
+  embedding_dims: 655
   outermost_linear: true
   use_global_latent: true
 training:

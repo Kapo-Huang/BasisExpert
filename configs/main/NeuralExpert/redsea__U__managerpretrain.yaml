@@ -7,9 +7,9 @@ MODEL:
   model_name: inr_moe_mesh
   in_dim: 4
   out_dim: 1
-  decoder_hidden_dim: 64
+  decoder_hidden_dim: 8
   decoder_n_hidden_layers: 2
-  decoder_input_encoding: learned_512_2_sine_siren_none
+  decoder_input_encoding: learned_76_2_sine_siren_none
   decoder_nl: sine
   decoder_init_type: siren
   n_experts: 8
@@ -18,9 +18,9 @@ MODEL:
   decoder_freqs: 30.0
   decoder_trainable_freqs: false
   top_k: 1
-  manager_hidden_dim: 128
+  manager_hidden_dim: 16
   manager_n_hidden_layers: 2
-  manager_input_encoding: learned_128_2_sine_siren_none
+  manager_input_encoding: learned_15_2_sine_siren_none
   manager_nl: sine
   manager_init: siren
   manager_type: standard

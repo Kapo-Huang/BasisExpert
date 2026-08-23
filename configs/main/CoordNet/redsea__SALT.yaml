@@ -15,8 +15,8 @@ data:
 model:
   name: coordnet
   in_features: 4
-  init_features: 7
-  num_res: 8
+  init_features: 10
+  num_res: 7
 training:
   epochs: 600
   batch_size: 16000

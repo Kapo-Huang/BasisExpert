@@ -102,23 +102,24 @@ class MVNet4D(nn.Module):
             "omega_0": float(omega_0),
             "bias": bool(bias),
         }
-        expected = {
+        fixed = {
             "in_features": MVNET_IN_FEATURES,
-            "hidden_features": MVNET_HIDDEN_FEATURES,
             "num_residual_blocks": MVNET_RESIDUAL_BLOCKS,
             "omega_0": MVNET_OMEGA_0,
             "bias": MVNET_BIAS,
         }
         mismatches = [
             f"{key}={actual[key]} (expected {value})"
-            for key, value in expected.items()
+            for key, value in fixed.items()
             if actual[key] != value
         ]
         if mismatches:
             raise ValueError(
-                "MVNet4D uses a fixed architecture: "
+                "MVNet4D uses a fixed core architecture: "
                 + ", ".join(mismatches)
             )
+        if actual["hidden_features"] <= 0:
+            raise ValueError("MVNet4D hidden_features must be positive")
         self.num_variables = int(num_variables)
         if self.num_variables < 2:
             raise ValueError("MVNet4D requires at least two variables")

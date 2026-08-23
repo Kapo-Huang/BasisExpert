@@ -28,7 +28,7 @@ model:
   name: mvnet
   in_features: 4
   out_features: 15
-  hidden_features: 206
+  hidden_features: 237
   num_residual_blocks: 10
   omega_0: 30.0
   bias: true

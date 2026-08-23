@@ -243,10 +243,16 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
             model.parameters(),
             lr=float(cfg["training"]["lr"]),
             betas=(float(cfg["training"]["beta_1"]), float(cfg["training"]["beta_2"])),
+            eps=float(cfg["training"]["eps"]),
         )
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=int(cfg["training"]["lr_step"]), gamma=float(cfg["training"]["lr_gamma"])
-        )
+        if cfg["training"]["lr_scheduler"] == "constant":
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
+        else:
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=int(cfg["training"]["lr_step"]),
+                gamma=float(cfg["training"]["lr_gamma"]),
+            )
         start_epoch = 0
         rng = np.random.default_rng(int(cfg["training"]["seed"]))
         if resume:
