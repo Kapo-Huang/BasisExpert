@@ -53,8 +53,7 @@ DEFAULT_CLUSTERING = {
 DEFAULT_TRAINING = {
     "epochs_per_scale": 500,
     "batch_size": 3200,
-    "batches_per_epoch_budget": 3000,
-    "primary_sample_budget": 14_400_000_000,
+    "passes_per_epoch": 1,
     "lr": 1.0e-3,
     "beta_1": 0.9,
     "beta_2": 0.999,
@@ -64,10 +63,11 @@ DEFAULT_TRAINING = {
     "pruning_loss_weight": 0.1,
     "pruning_lr_gamma": 0.75,
     "quantization_finetune_epochs": 75,
-    "quantization_finetune_batches_per_epoch": 0,
+    "quantization_finetune_passes_per_epoch": 1,
     "quantization_finetune_lr": 1.0e-5,
     "save_every": 0,
-    "log_every": 10,
+    "log_every": 1,
+    "progress_log_seconds": 60,
     "seed": 42,
     "device": "cuda",
 }
@@ -212,13 +212,16 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     training = {**DEFAULT_TRAINING, **_mapping(cfg.get("training"), "training")}
     _reject(training, set(DEFAULT_TRAINING), "training")
     for key in (
-        "epochs_per_scale", "batch_size", "batches_per_epoch_budget",
-        "primary_sample_budget", "quantization_finetune_epochs",
-        "quantization_finetune_batches_per_epoch", "save_every", "log_every", "seed",
+        "epochs_per_scale", "batch_size", "passes_per_epoch",
+        "quantization_finetune_epochs", "quantization_finetune_passes_per_epoch",
+        "save_every", "log_every", "progress_log_seconds", "seed",
     ):
         training[key] = int(training[key])
         if training[key] < 0:
             raise ValueError(f"training.{key} must be non-negative")
+    for key in ("batch_size", "passes_per_epoch", "quantization_finetune_passes_per_epoch"):
+        if training[key] == 0:
+            raise ValueError(f"training.{key} must be positive")
     for key in (
         "lr", "beta_1", "beta_2", "weight_decay", "pruning_loss_weight",
         "pruning_lr_gamma", "quantization_finetune_lr",
@@ -236,12 +239,6 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
         raise ValueError("pruning_sparsities must be cumulative and non-decreasing")
     training["pruning_epochs"] = pruning_epochs
     training["pruning_sparsities"] = pruning_sparsities
-    expected_budget = 3 * training["epochs_per_scale"] * training["batch_size"] * training["batches_per_epoch_budget"]
-    if training["primary_sample_budget"] != expected_budget:
-        raise ValueError(
-            "training.primary_sample_budget must equal "
-            f"3*epochs_per_scale*batch_size*batches_per_epoch_budget={expected_budget}"
-        )
     cfg["training"] = training
 
     quantization = {**DEFAULT_QUANTIZATION, **_mapping(cfg.get("quantization"), "quantization")}

@@ -21,14 +21,14 @@ STRUCTURE = "official_main"
 SMOKE_TRAINING = {
     "epochs_per_scale": 50,
     "batch_size": 3_200,
-    "batches_per_epoch_budget": 300,
-    "primary_sample_budget": 144_000_000,
+    "passes_per_epoch": 1,
     "pruning_epochs": [15, 23, 30, 38],
     "pruning_sparsities": [0.30, 0.40, 0.45, 0.50],
     "quantization_finetune_epochs": 8,
-    "quantization_finetune_batches_per_epoch": 300,
+    "quantization_finetune_passes_per_epoch": 1,
     "save_every": 0,
-    "log_every": 5,
+    "log_every": 1,
+    "progress_log_seconds": 60,
     "seed": 42,
 }
 

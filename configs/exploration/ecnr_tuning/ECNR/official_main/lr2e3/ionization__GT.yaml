@@ -51,8 +51,7 @@ clustering:
 training:
   epochs_per_scale: 50
   batch_size: 3200
-  batches_per_epoch_budget: 300
-  primary_sample_budget: 144000000
+  passes_per_epoch: 1
   lr: 0.002
   beta_1: 0.9
   beta_2: 0.999
@@ -70,10 +69,11 @@ training:
   pruning_loss_weight: 0.1
   pruning_lr_gamma: 0.75
   quantization_finetune_epochs: 8
-  quantization_finetune_batches_per_epoch: 300
+  quantization_finetune_passes_per_epoch: 1
   quantization_finetune_lr: 1.0e-05
   save_every: 0
-  log_every: 5
+  log_every: 1
+  progress_log_seconds: 60
   seed: 42
   device: cuda
 quantization:

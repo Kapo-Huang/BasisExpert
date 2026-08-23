@@ -137,31 +137,6 @@ def _axis_for_blocks(blocks: ScaleBlocks, max_slots: int) -> tuple[torch.Tensor,
     return coordinates, slots
 
 
-def _epoch_batches(
-    axis_length: int,
-    *,
-    batch_size: int,
-    batch_count: int,
-    rng: np.random.Generator,
-):
-    required = int(batch_size) * int(batch_count)
-    emitted = 0
-    while emitted < required:
-        permutation = rng.permutation(axis_length)
-        take = min(axis_length, required - emitted)
-        selected = permutation[:take]
-        for start in range(0, take, int(batch_size)):
-            batch = selected[start : min(start + int(batch_size), take)]
-            if batch.size < int(batch_size):
-                needed = int(batch_size) - int(batch.size)
-                supplement = rng.choice(axis_length, size=needed, replace=needed > axis_length)
-                batch = np.concatenate([batch, supplement])
-            yield batch.astype(np.int64, copy=False)
-            emitted += int(batch_size)
-            if emitted >= required:
-                return
-
-
 def _full_pass_batches(
     axis_length: int,
     *,
@@ -235,31 +210,74 @@ def _train_scale(
     scale_started = time.perf_counter()
     primary_started = scale_started
     logical_samples = actual_predictions = optimizer_steps = 0
+    batch_size = int(training["batch_size"])
+    passes_per_epoch = int(training["passes_per_epoch"])
+    axis_length = int(coordinates.shape[0])
+    batches_per_pass = (axis_length + batch_size - 1) // batch_size
+    epochs_per_scale = int(training["epochs_per_scale"])
+    planned_optimizer_steps = epochs_per_scale * passes_per_epoch * batches_per_pass
+    planned_logical_samples = epochs_per_scale * passes_per_epoch * axis_length
+    progress_log_seconds = int(training["progress_log_seconds"])
+    last_progress_log = time.perf_counter()
+    logger.info(
+        "ECNR scale=%d start effective_blocks=%d mlps=%d max_slots=%d axis_length=%d "
+        "batches_per_pass=%d passes_per_epoch=%d epochs=%d planned_optimizer_steps=%d",
+        level,
+        blocks.effective_count,
+        model.mlp_count,
+        max_slots,
+        axis_length,
+        batches_per_pass,
+        passes_per_epoch,
+        epochs_per_scale,
+        planned_optimizer_steps,
+    )
 
-    for epoch in range(1, int(training["epochs_per_scale"]) + 1):
+    for epoch in range(1, epochs_per_scale + 1):
         model.train()
         epoch_loss = 0.0
-        for indices in _epoch_batches(
-            coordinates.shape[0],
-            batch_size=int(training["batch_size"]),
-            batch_count=int(training["batches_per_epoch_budget"]),
-            rng=rng,
-        ):
-            coord_batch = coordinates[indices].to(device)
-            slot_batch = slots[indices].to(device)
-            target_batch = torch.from_numpy(np.asarray(flat_targets[:, indices], dtype=np.float32)).to(device)
-            mask_batch = model.expanded_slot_mask(slot_batch).to(device)
-            optimizer.zero_grad(set_to_none=True)
-            prediction = model(coord_batch, slot_batch)
-            loss = _masked_loss(prediction, target_batch, mask_batch)
-            loss.backward()
-            model.mask_pruned_gradients(masks)
-            optimizer.step()
-            model.apply_pruning_masks(masks)
-            epoch_loss += float(loss.detach())
-            logical_samples += int(indices.size)
-            actual_predictions += int(indices.size) * model.mlp_count
-            optimizer_steps += 1
+        epoch_batches = 0
+        for pass_index in range(1, passes_per_epoch + 1):
+            for batch_index, indices in enumerate(
+                _full_pass_batches(
+                    axis_length,
+                    batch_size=batch_size,
+                    rng=rng,
+                ),
+                start=1,
+            ):
+                coord_batch = coordinates[indices].to(device)
+                slot_batch = slots[indices].to(device)
+                target_batch = torch.from_numpy(np.asarray(flat_targets[:, indices], dtype=np.float32)).to(device)
+                mask_batch = model.expanded_slot_mask(slot_batch).to(device)
+                optimizer.zero_grad(set_to_none=True)
+                prediction = model(coord_batch, slot_batch)
+                loss = _masked_loss(prediction, target_batch, mask_batch)
+                loss.backward()
+                model.mask_pruned_gradients(masks)
+                optimizer.step()
+                model.apply_pruning_masks(masks)
+                epoch_loss += float(loss.detach())
+                epoch_batches += 1
+                logical_samples += int(indices.size)
+                actual_predictions += int(indices.size) * model.mlp_count
+                optimizer_steps += 1
+                now = time.perf_counter()
+                if progress_log_seconds and now - last_progress_log >= progress_log_seconds:
+                    logger.info(
+                        "ECNR scale=%d progress epoch=%d/%d pass=%d/%d batch=%d/%d "
+                        "optimizer_steps=%d elapsed_seconds=%.1f",
+                        level,
+                        epoch,
+                        epochs_per_scale,
+                        pass_index,
+                        passes_per_epoch,
+                        batch_index,
+                        batches_per_pass,
+                        optimizer_steps,
+                        now - scale_started,
+                    )
+                    last_progress_log = now
         if epoch in pruning_schedule:
             losses = _mlp_losses(
                 model,
@@ -291,8 +309,8 @@ def _train_scale(
                 "ECNR scale=%d epoch=%d/%d loss=%.7g lr=%.7g",
                 level,
                 epoch,
-                training["epochs_per_scale"],
-                epoch_loss / max(int(training["batches_per_epoch_budget"]), 1),
+                epochs_per_scale,
+                epoch_loss / max(epoch_batches, 1),
                 optimizer.param_groups[0]["lr"],
             )
 
@@ -305,54 +323,110 @@ def _train_scale(
         seed=int(training["seed"]) + int(level) * 10_000,
     )
     finetune_epochs = int(training["quantization_finetune_epochs"])
-    finetune_batches = int(training["quantization_finetune_batches_per_epoch"])
-    finetune_full_pass = finetune_batches == 0
+    finetune_passes = int(training["quantization_finetune_passes_per_epoch"])
+    finetune_logical_samples = 0
+    finetune_actual_predictions = 0
+    finetune_optimizer_steps = 0
     if finetune_epochs:
+        logger.info(
+            "ECNR scale=%d QAT start epochs=%d passes_per_epoch=%d batches_per_pass=%d "
+            "planned_optimizer_steps=%d",
+            level,
+            finetune_epochs,
+            finetune_passes,
+            batches_per_pass,
+            finetune_epochs * finetune_passes * batches_per_pass,
+        )
         finetune_optimizer = torch.optim.Adam(
             [*quantization.codebook_parameters(), *unquantized_parameters(model)],
             lr=float(training["quantization_finetune_lr"]),
             betas=(float(training["beta_1"]), float(training["beta_2"])),
             weight_decay=0.0,
         )
-        for _ in range(finetune_epochs):
-            if finetune_full_pass:
-                batches = _full_pass_batches(
-                    coordinates.shape[0],
-                    batch_size=int(training["batch_size"]),
-                    rng=rng,
+        for finetune_epoch in range(1, finetune_epochs + 1):
+            finetune_epoch_loss = 0.0
+            finetune_epoch_batches = 0
+            for pass_index in range(1, finetune_passes + 1):
+                for batch_index, indices in enumerate(
+                    _full_pass_batches(
+                        axis_length,
+                        batch_size=batch_size,
+                        rng=rng,
+                    ),
+                    start=1,
+                ):
+                    quantization.materialize(model)
+                    finetune_optimizer.zero_grad(set_to_none=True)
+                    coord_batch = coordinates[indices].to(device)
+                    slot_batch = slots[indices].to(device)
+                    target_batch = torch.from_numpy(np.asarray(flat_targets[:, indices], dtype=np.float32)).to(device)
+                    mask_batch = model.expanded_slot_mask(slot_batch).to(device)
+                    loss = _masked_loss(model(coord_batch, slot_batch), target_batch, mask_batch)
+                    loss.backward()
+                    quantization.collect_codebook_gradients(model)
+                    finetune_optimizer.step()
+                    quantization.materialize(model)
+                    finetune_epoch_loss += float(loss.detach())
+                    finetune_epoch_batches += 1
+                    finetune_logical_samples += int(indices.size)
+                    finetune_actual_predictions += int(indices.size) * model.mlp_count
+                    finetune_optimizer_steps += 1
+                    now = time.perf_counter()
+                    if progress_log_seconds and now - last_progress_log >= progress_log_seconds:
+                        logger.info(
+                            "ECNR scale=%d QAT progress epoch=%d/%d pass=%d/%d batch=%d/%d "
+                            "optimizer_steps=%d elapsed_seconds=%.1f",
+                            level,
+                            finetune_epoch,
+                            finetune_epochs,
+                            pass_index,
+                            finetune_passes,
+                            batch_index,
+                            batches_per_pass,
+                            finetune_optimizer_steps,
+                            now - quantization_started,
+                        )
+                        last_progress_log = now
+            if int(training["log_every"]) and finetune_epoch % int(training["log_every"]) == 0:
+                logger.info(
+                    "ECNR scale=%d QAT epoch=%d/%d loss=%.7g",
+                    level,
+                    finetune_epoch,
+                    finetune_epochs,
+                    finetune_epoch_loss / max(finetune_epoch_batches, 1),
                 )
-            else:
-                batches = _epoch_batches(
-                    coordinates.shape[0],
-                    batch_size=int(training["batch_size"]),
-                    batch_count=finetune_batches,
-                    rng=rng,
-                )
-            for indices in batches:
-                quantization.materialize(model)
-                finetune_optimizer.zero_grad(set_to_none=True)
-                coord_batch = coordinates[indices].to(device)
-                slot_batch = slots[indices].to(device)
-                target_batch = torch.from_numpy(np.asarray(flat_targets[:, indices], dtype=np.float32)).to(device)
-                mask_batch = model.expanded_slot_mask(slot_batch).to(device)
-                loss = _masked_loss(model(coord_batch, slot_batch), target_batch, mask_batch)
-                loss.backward()
-                quantization.collect_codebook_gradients(model)
-                finetune_optimizer.step()
-                quantization.materialize(model)
-                cost["quantization_finetune_logical_samples"] += int(indices.size)
-                cost["quantization_finetune_actual_predictions"] += int(indices.size) * model.mlp_count
-                cost["quantization_finetune_optimizer_steps"] += 1
+        cost["quantization_finetune_logical_samples"] += finetune_logical_samples
+        cost["quantization_finetune_actual_predictions"] += finetune_actual_predictions
+        cost["quantization_finetune_optimizer_steps"] += finetune_optimizer_steps
     quantization.materialize(model)
     quantization_seconds = float(time.perf_counter() - quantization_started)
     cost["quantization_and_finetune_seconds"] += quantization_seconds
     cost["scales"].append(
         {
             "level": int(level),
+            "effective_blocks": int(blocks.effective_count),
             "mlp_count": int(model.mlp_count),
+            "max_slots": max_slots,
+            "axis_length": axis_length,
+            "batches_per_pass": batches_per_pass,
+            "passes_per_epoch": passes_per_epoch,
+            "epochs": epochs_per_scale,
+            "planned_logical_samples": planned_logical_samples,
+            "planned_optimizer_steps": planned_optimizer_steps,
             "logical_samples": int(logical_samples),
             "actual_scalar_predictions": int(actual_predictions),
             "optimizer_steps": int(optimizer_steps),
+            "quantization_finetune_passes_per_epoch": finetune_passes,
+            "quantization_finetune_epochs": finetune_epochs,
+            "quantization_finetune_planned_logical_samples": (
+                finetune_epochs * finetune_passes * axis_length
+            ),
+            "quantization_finetune_planned_optimizer_steps": (
+                finetune_epochs * finetune_passes * batches_per_pass
+            ),
+            "quantization_finetune_logical_samples": finetune_logical_samples,
+            "quantization_finetune_actual_predictions": finetune_actual_predictions,
+            "quantization_finetune_optimizer_steps": finetune_optimizer_steps,
             "seconds": float(time.perf_counter() - scale_started),
             "primary_training_seconds": primary_seconds,
             "quantization_and_finetune_seconds": quantization_seconds,
@@ -728,16 +802,26 @@ def run_train(
         save_config(cfg, dirs["configs"] / "config.yaml")
         set_random_seed(int(cfg["training"]["seed"]))
         device = _device(cfg["training"]["device"])
+        logger.info(
+            "ECNR run start target=%s volume_shape=%s device=%s",
+            cfg["data"]["target"],
+            cfg["data"]["volume_shape"],
+            device,
+        )
         if torch.cuda.is_available() and device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
+        logger.info("ECNR loading volume path=%s", cfg["data"]["target_path"])
         volume = _load_volume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
+        logger.info("ECNR volume loaded shape=%s dtype=%s", volume.shape, volume.dtype)
         pyramid_started = time.perf_counter()
+        logger.info("ECNR pyramid construction start")
         pyramid = build_three_scale_pyramid(
             volume,
             sigma=float(cfg["model"]["gaussian_sigma"]),
             cache_dir=dirs["cache"],
         )
         pyramid_seconds = float(time.perf_counter() - pyramid_started)
+        logger.info("ECNR pyramid construction complete seconds=%.1f", pyramid_seconds)
         scale_payloads: list[dict[str, Any]] = (
             list(resume_payload.get("scale_payloads", [])) if resume_payload is not None else []
         )
@@ -746,9 +830,12 @@ def run_train(
         cost: dict[str, Any] = (
             copy.deepcopy(resume_payload.get("cost", {})) if resume_payload is not None else {}
         )
+        cost.setdefault("primary_sampling_mode", "full_pass")
+        cost.setdefault("primary_passes_per_epoch", int(cfg["training"]["passes_per_epoch"]))
+        cost.setdefault("quantization_finetune_sampling_mode", "full_pass")
         cost.setdefault(
-            "primary_logical_sample_budget",
-            int(cfg["training"]["primary_sample_budget"]),
+            "quantization_finetune_passes_per_epoch",
+            int(cfg["training"]["quantization_finetune_passes_per_epoch"]),
         )
         cost.setdefault("scales", [])
         cost.setdefault("quantization_finetune_logical_samples", 0)
@@ -805,6 +892,8 @@ def run_train(
             if level in completed_levels:
                 continue
             scale: PyramidScale = pyramid[level]
+            logger.info("ECNR scale=%d preparation start shape=%s", level, scale.values.shape)
+            block_preparation_started = time.perf_counter()
             if previous_reconstruction is None:
                 target_values = scale.values
             else:
@@ -828,6 +917,15 @@ def run_train(
                 keep_all=level == 2,
                 normalized_blocks_path=dirs["cache"] / f"normalized_blocks_scale_{level}.npy",
             )
+            logger.info(
+                "ECNR scale=%d block preparation complete effective_blocks=%d total_blocks=%d "
+                "block_voxels=%d seconds=%.1f",
+                level,
+                blocks.effective_count,
+                blocks.effective_mask.size,
+                blocks.block_voxels,
+                time.perf_counter() - block_preparation_started,
+            )
             if blocks.effective_count == 0:
                 logger.info("ECNR scale=%d contains no effective residual blocks", level)
                 scale_payload = _serialize_scale(
@@ -847,6 +945,18 @@ def run_train(
                 residual_reconstruction.flush()
             else:
                 target_per_mlp = int(cfg["model"]["target_blocks_per_mlp"][2 - level])
+                expected_mlp_count = (
+                    blocks.effective_count + target_per_mlp - 1
+                ) // target_per_mlp
+                clustering_started = time.perf_counter()
+                logger.info(
+                    "ECNR scale=%d clustering start effective_blocks=%d target_blocks_per_mlp=%d "
+                    "expected_mlps=%d",
+                    level,
+                    blocks.effective_count,
+                    target_per_mlp,
+                    expected_mlp_count,
+                )
                 clustering = balanced_kmeans(
                     blocks.normalized_blocks,
                     target_blocks_per_mlp=target_per_mlp,
@@ -854,6 +964,13 @@ def run_train(
                     n_init=int(cfg["clustering"]["n_init"]),
                     max_iter=int(cfg["clustering"]["max_iter"]),
                     tol=float(cfg["clustering"]["tol"]),
+                )
+                logger.info(
+                    "ECNR scale=%d clustering complete mlps=%d max_slots=%d seconds=%.1f",
+                    level,
+                    clustering.cluster_sizes.size,
+                    int(clustering.cluster_sizes.max()),
+                    time.perf_counter() - clustering_started,
                 )
                 attach_clustering(blocks, clustering)
                 targets = build_training_targets(
@@ -958,11 +1075,17 @@ def run_train(
         cost["primary_logical_samples_executed"] = int(
             sum(item["logical_samples"] for item in cost["scales"])
         )
+        cost["primary_planned_logical_samples"] = int(
+            sum(item["planned_logical_samples"] for item in cost["scales"])
+        )
         cost["primary_actual_scalar_predictions"] = int(
             sum(item["actual_scalar_predictions"] for item in cost["scales"])
         )
         cost["primary_optimizer_steps"] = int(
             sum(item["optimizer_steps"] for item in cost["scales"])
+        )
+        cost["primary_planned_optimizer_steps"] = int(
+            sum(item["planned_optimizer_steps"] for item in cost["scales"])
         )
         cost["total_seconds"] = elapsed_before_resume + float(time.perf_counter() - started)
         cost.pop("elapsed_active_seconds", None)

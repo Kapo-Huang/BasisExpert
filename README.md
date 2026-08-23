@@ -128,7 +128,12 @@ MVNet jointly models those 12 scalar fields, while MC-INR, STSR-INR, and
 VarExpert jointly model all 13 fields. The formal Ionization SIZE matrix contains `Size082`,
 `Size163`, `Size326`, and `Size652` for VarExpert, CoordNet, MoE-INR, fV-SRN,
 MINER, and STSR-INR, plus a VarExpert DWA loss-balancing main config.
-All primary training stages except MVNet, NeuralExpert, and STSR-INR consume 14.4 billion physical samples. NeuralExpert uses 960 million sampled points (60,000 optimizer steps at 16,000 points per step).
+All primary training stages except ECNR, MVNet, NeuralExpert, and STSR-INR
+consume 14.4 billion physical samples. ECNR follows its source training
+semantics instead: every epoch shuffles and traverses each scale's complete
+packed coordinate axis once, so its optimizer-step and prediction costs adapt
+to the effective blocks produced by the dataset. NeuralExpert uses 960 million
+sampled points (60,000 optimizer steps at 16,000 points per step).
 InstantVNR accumulates four 16,000-sample batches into an approximately
 paper-sized 64,000-sample optimizer update; other unified baselines retain their
 configured update batches. MVNet and the STSR-INR Combustion experiment use
@@ -415,12 +420,16 @@ volumes. It clusters normalized spatial blocks deterministically, trains packed
 local SIREN MLPs from coarse content to fine residuals, applies block-guided
 pruning and global codebook quantization, then runs a halo-correct tiled 3D CNN.
 Its `.ecnr` artifact Huffman-encodes masks, assignments, and quantization
-labels. The three primary scale stages consume the standard 14.4-billion-sample
-experiment budget. Scale-boundary checkpoints can be resumed with
+labels. Primary training and quantization-aware fine-tuning each perform a
+configured number of complete shuffled passes over the current scale per
+epoch. The final partial batch is not padded, and the resulting cost scales
+with the effective block count and packed MLP count instead of using a fixed
+14.4-billion-sample budget. Scale-boundary checkpoints can be resumed with
 `train --config <config> --resume <scale_checkpoint.pth>`; compact inference
 uses `predict/evaluate --config <config> --artifact <model.ecnr>`. Each run also
-writes `metrics/training_cost.json`, including logical samples, packed-MLP
-prediction counts, optimizer steps, phase timings, and peak CUDA memory.
+writes `metrics/training_cost.json`, including full-pass plans, logical samples,
+packed-MLP prediction counts, optimizer steps, phase timings, and peak CUDA
+memory. Long-running epochs emit time-based progress heartbeats.
 
 The checked-in Ionization configs describe a full 100-timestep
 `(T,Z,Y,X)=(100,248,248,600)` sequence. The sample target files currently in
