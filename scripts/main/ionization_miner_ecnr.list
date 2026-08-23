@@ -1,0 +1,13 @@
+# MINER: all 5 scalar Ionization targets.
+configs/main/MINER/ionization__GT.yaml
+configs/main/MINER/ionization__H2.yaml
+configs/main/MINER/ionization__H_plus.yaml
+configs/main/MINER/ionization__He.yaml
+configs/main/MINER/ionization__PD.yaml
+
+# ECNR: all 5 scalar Ionization targets.
+configs/main/ECNR/ionization__GT.yaml
+configs/main/ECNR/ionization__H2.yaml
+configs/main/ECNR/ionization__H_plus.yaml
+configs/main/ECNR/ionization__He.yaml
+configs/main/ECNR/ionization__PD.yaml

@@ -1,0 +1,20 @@
+# fV-SRN: all 5 scalar Ionization targets.
+configs/main/fV-SRN/ionization__GT.yaml
+configs/main/fV-SRN/ionization__H2.yaml
+configs/main/fV-SRN/ionization__H_plus.yaml
+configs/main/fV-SRN/ionization__He.yaml
+configs/main/fV-SRN/ionization__PD.yaml
+
+# APMGSRN: all 5 scalar Ionization targets.
+configs/main/APMGSRN/ionization__GT.yaml
+configs/main/APMGSRN/ionization__H2.yaml
+configs/main/APMGSRN/ionization__H_plus.yaml
+configs/main/APMGSRN/ionization__He.yaml
+configs/main/APMGSRN/ionization__PD.yaml
+
+# InstantVNR: all 5 scalar Ionization targets.
+configs/main/InstantVNR/ionization__GT.yaml
+configs/main/InstantVNR/ionization__H2.yaml
+configs/main/InstantVNR/ionization__H_plus.yaml
+configs/main/InstantVNR/ionization__He.yaml
+configs/main/InstantVNR/ionization__PD.yaml
