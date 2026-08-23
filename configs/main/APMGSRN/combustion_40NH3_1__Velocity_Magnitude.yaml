@@ -43,9 +43,15 @@ TRAINING:
   iterations: 450
   points_per_iteration: 16000
   prediction_points_per_batch: 16000
-  lr: 0.01
+  lr: 5.0e-05
   beta_1: 0.9
-  beta_2: 0.99
+  beta_2: 0.999
+  eps: 1.0e-08
+  weight_decay: 0.0
+  lr_scheduler: var_expert_progress
+  lr_step: 40
+  lr_gamma: 0.92
+  scheduler_reference_epochs: 600
   device: cuda:0
   data_device: same
   save_every: 0

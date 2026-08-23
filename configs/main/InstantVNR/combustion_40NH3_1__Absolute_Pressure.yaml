@@ -28,7 +28,7 @@ training:
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
-  lr: 0.001
+  lr: 5.0e-05
   val_split: 0.0
   log_every: 10
   log_psnr_every: 100
@@ -41,15 +41,14 @@ training:
   batches_per_epoch_budget: 1500
   scheduler:
     enabled: true
-    interval: optimizer_step
-    step_size: 1000
-    decay_start: 2000
-    gamma: 0.99
+    interval: epoch
+    step_size: 40
+    gamma: 0.92
   gradient_accumulation_steps: 4
   beta_1: 0.9
   beta_2: 0.999
-  epsilon: 1.0e-15
-  weight_decay: 1.0e-06
+  epsilon: 1.0e-08
+  weight_decay: 0.0
   pretrain:
     enabled: false
 evaluation:

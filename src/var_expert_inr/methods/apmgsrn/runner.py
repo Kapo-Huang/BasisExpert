@@ -202,23 +202,42 @@ def _train_single_timestep(
         model.get_model_parameters(),
         lr=float(cfg["TRAINING"]["lr"]),
         betas=(float(cfg["TRAINING"]["beta_1"]), float(cfg["TRAINING"]["beta_2"])),
-        eps=1.0e-14,
+        eps=float(cfg["TRAINING"]["eps"]),
+        weight_decay=float(cfg["TRAINING"]["weight_decay"]),
     )
     optimizer_grid = torch.optim.Adam(
         model.get_transform_parameters(),
         lr=float(cfg["TRAINING"]["lr"]) * 0.05,
         betas=(float(cfg["TRAINING"]["beta_1"]), float(cfg["TRAINING"]["beta_2"])),
-        eps=1.0e-14,
+        eps=float(cfg["TRAINING"]["eps"]),
+        weight_decay=float(cfg["TRAINING"]["weight_decay"]),
     )
-    scheduler_model = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer_model,
-        mode="min",
-        patience=500,
-        threshold=1.0e-4,
-        threshold_mode="rel",
-        cooldown=250,
-        factor=0.1,
-    )
+    scheduler_name = str(cfg["TRAINING"]["lr_scheduler"])
+    if scheduler_name == "var_expert_progress":
+        scheduler_step_iterations = max(
+            1,
+            round(
+                int(cfg["TRAINING"]["iterations"])
+                * int(cfg["TRAINING"]["lr_step"])
+                / int(cfg["TRAINING"]["scheduler_reference_epochs"])
+            ),
+        )
+        scheduler_model = torch.optim.lr_scheduler.StepLR(
+            optimizer_model,
+            step_size=scheduler_step_iterations,
+            gamma=float(cfg["TRAINING"]["lr_gamma"]),
+        )
+    else:
+        scheduler_step_iterations = None
+        scheduler_model = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer_model,
+            mode="min",
+            patience=500,
+            threshold=1.0e-4,
+            threshold_mode="rel",
+            cooldown=250,
+            factor=0.1,
+        )
     scheduler_grid = torch.optim.lr_scheduler.LinearLR(
         optimizer_grid,
         start_factor=1.0,
@@ -256,12 +275,15 @@ def _train_single_timestep(
     probe_recorder = ExplorationProbeRecorder(run_dir / "metrics", probe_cfg) if probe_cfg.enabled else None
 
     logger.info(
-        "APMGSRN timestep %s start: iterations=%d points_per_iteration=%d device=%s data_device=%s",
+        "APMGSRN timestep %s start: iterations=%d points_per_iteration=%d "
+        "device=%s data_device=%s lr_scheduler=%s step_iterations=%s",
         _timestep_token(time_index),
         iterations,
         points_per_iteration,
         train_device,
         data_device,
+        scheduler_name,
+        scheduler_step_iterations,
     )
 
     for iteration in range(iterations):
@@ -320,7 +342,9 @@ def _train_single_timestep(
                 early_stop_grid = threshold_met and grid_convergence_streak > 1
 
         optimizer_model.step()
-        if early_stop_grid and iteration >= 1000:
+        if scheduler_name == "var_expert_progress":
+            scheduler_model.step()
+        elif early_stop_grid and iteration >= 1000:
             scheduler_model.step(float(reconstruction_losses[iteration - 1000 : iteration].mean().item()))
 
         if log_every > 0 and ((iteration + 1) % log_every == 0 or iteration == 0):

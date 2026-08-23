@@ -50,6 +50,12 @@ TRAINING_KEYS = {
     "lr",
     "beta_1",
     "beta_2",
+    "eps",
+    "weight_decay",
+    "lr_scheduler",
+    "lr_step",
+    "lr_gamma",
+    "scheduler_reference_epochs",
     "device",
     "data_device",
     "save_every",
@@ -238,6 +244,16 @@ def _normalize_training_section(training_cfg: dict[str, Any], *, time_count: int
         "lr": float(training_cfg.get("lr", 1.0e-2)),
         "beta_1": float(training_cfg.get("beta_1", 0.9)),
         "beta_2": float(training_cfg.get("beta_2", 0.99)),
+        "eps": float(training_cfg.get("eps", 1.0e-14)),
+        "weight_decay": float(training_cfg.get("weight_decay", 0.0)),
+        "lr_scheduler": str(
+            training_cfg.get("lr_scheduler", "method_default")
+        ).strip().lower(),
+        "lr_step": int(training_cfg.get("lr_step", 40)),
+        "lr_gamma": float(training_cfg.get("lr_gamma", 0.92)),
+        "scheduler_reference_epochs": int(
+            training_cfg.get("scheduler_reference_epochs", 600)
+        ),
         "device": str(training_cfg.get("device", "cuda:0")),
         "data_device": str(training_cfg.get("data_device", "same")),
         "save_every": int(training_cfg.get("save_every", 0)),
@@ -258,6 +274,24 @@ def _normalize_training_section(training_cfg: dict[str, Any], *, time_count: int
         raise ValueError("TRAINING.beta_1 must be in (0, 1)")
     if not (0.0 < normalized["beta_2"] < 1.0):
         raise ValueError("TRAINING.beta_2 must be in (0, 1)")
+    if normalized["eps"] <= 0.0:
+        raise ValueError("TRAINING.eps must be positive")
+    if normalized["weight_decay"] < 0.0:
+        raise ValueError("TRAINING.weight_decay must be non-negative")
+    if normalized["lr_scheduler"] not in {
+        "method_default",
+        "var_expert_progress",
+    }:
+        raise ValueError(
+            "TRAINING.lr_scheduler must be 'method_default' or "
+            "'var_expert_progress'"
+        )
+    if normalized["lr_step"] <= 0:
+        raise ValueError("TRAINING.lr_step must be positive")
+    if not (0.0 < normalized["lr_gamma"] <= 1.0):
+        raise ValueError("TRAINING.lr_gamma must be in (0, 1]")
+    if normalized["scheduler_reference_epochs"] <= 0:
+        raise ValueError("TRAINING.scheduler_reference_epochs must be positive")
     if normalized["save_every"] < 0:
         raise ValueError("TRAINING.save_every must be non-negative")
     if normalized["log_every"] < 0:
