@@ -13,15 +13,12 @@ def parse_args() -> argparse.Namespace:
     train = commands.add_parser("train", help="Train an RMDSRN model")
     train.add_argument("--config", required=True)
     train.add_argument("--target", default=None)
-    train.add_argument("--resume", default=None)
 
     for name in ("predict", "evaluate"):
         command = commands.add_parser(name, help=f"{name.title()} an RMDSRN model")
         command.add_argument("--config", required=name != "evaluate")
         command.add_argument("--target", default=None)
-        source = command.add_mutually_exclusive_group()
-        source.add_argument("--artifact", default=None)
-        source.add_argument("--checkpoint", default=None)
+        command.add_argument("--checkpoint", default=None)
         if name == "evaluate":
             add_run_evaluation_arguments(command, run_required=False, include_source_paths=False)
     return parser.parse_args()
@@ -30,12 +27,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.command == "train":
-        run_train(args.config, target=args.target, resume=args.resume)
+        run_train(args.config, target=args.target)
     elif args.command == "predict":
         run_predict(
             args.config,
             target=args.target,
-            artifact=args.artifact,
             checkpoint=args.checkpoint,
         )
     else:
@@ -47,7 +43,6 @@ def main() -> None:
         run_evaluate(
             args.config,
             target=args.target,
-            artifact=args.artifact,
             checkpoint=args.checkpoint,
         )
 

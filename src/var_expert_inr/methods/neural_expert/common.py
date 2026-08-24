@@ -35,9 +35,10 @@ def load_state_dict_payload(path: str | Path, device: torch.device | str = "cpu"
         payload = torch.load(str(path), map_location=device, weights_only=False)
     except TypeError:
         payload = torch.load(str(path), map_location=device)
-    if isinstance(payload, dict) and "model_state" in payload:
-        return payload["model_state"]
-    return payload
+    if not isinstance(payload, dict) or payload.get("format") != "neural_expert_inference_v1":
+        checkpoint_format = payload.get("format") if isinstance(payload, dict) else None
+        raise ValueError(f"Unsupported NeuralExpert checkpoint: {checkpoint_format!r}")
+    return payload["model_state"]
 
 
 def dump_config(cfg: dict, path: str | Path) -> None:

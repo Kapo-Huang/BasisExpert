@@ -49,6 +49,7 @@ training:
   seed: 42
   device: cuda
   log_every: 25
+  save_intermediate_checkpoints: false
 evaluation:
   save_predictions: false
   run_after_training: false

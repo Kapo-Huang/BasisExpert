@@ -77,7 +77,7 @@ TRAINING:
   batch_size: 1
   num_workers: 0
   grad_clip_norm: 10.0
-  save_every: 500
+  save_every: 0
   segmentation_mode: false
   log_every: 100
   stages:

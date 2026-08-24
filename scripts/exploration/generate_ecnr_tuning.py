@@ -64,7 +64,7 @@ def _profile_payload(source: dict, *, target: str, profile: str) -> dict:
         {
             "save_predictions": False,
             "run_after_training": True,
-            "default_model": "artifact",
+            "default_model": "checkpoint",
         }
     )
     return payload

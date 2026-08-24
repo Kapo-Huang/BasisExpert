@@ -223,7 +223,7 @@ def reconstruct_from_normalized_blocks(
         if hasattr(values, "flush"):
             values.flush()
         return cropped
-    # A .npy memmap cannot expose a cropped view as a standalone artifact.
+    # A .npy memmap cannot expose a cropped view as an independent array.
     cropped_path = Path(output_path).with_name(f"{Path(output_path).stem}_cropped.npy")
     output = open_memmap(cropped_path, mode="w+", dtype=np.float32, shape=blocks.original_shape_tzyx)
     for time_index in range(blocks.original_shape_tzyx[0]):

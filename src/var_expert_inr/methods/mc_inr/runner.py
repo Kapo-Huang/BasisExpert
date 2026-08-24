@@ -19,7 +19,7 @@ from sklearn.cluster import MiniBatchKMeans
 from ...data import build_dataset
 from ...evaluation.metrics import EPS, save_metrics
 from ...pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
-from ...utils.io import resolve_path, sha256_payload
+from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.model_stats import collect_model_statistics, format_fp16_size_megabytes, format_param_count
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
@@ -43,6 +43,14 @@ from .model import ClusterCoordNet, MCINR
 logger = logging.getLogger(__name__)
 TIMESTAMP_RUN_PATTERN = re.compile(r"^\d{8}_\d{6}_\d{6}$")
 NODE_CLUSTER_CHUNK_SIZE = 50_000
+
+
+def _config_hash(config: MCExperimentConfig) -> str:
+    payload = config.to_dict()
+    training = dict(payload["training"])
+    training.pop("save_intermediate_checkpoints", None)
+    payload["training"] = training
+    return sha256_payload(payload)
 VOLUME_CENTROID_CHUNK_SIZE = 1_000_000
 
 
@@ -605,7 +613,6 @@ def _run_meta_initialization(
     device: torch.device,
     config_hash: str,
     checkpoint_dir: Path,
-    resume_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     logger.info("%s", "#" * 60)
     logger.info("PHASE 1: META INITIALIZATION")
@@ -615,27 +622,6 @@ def _run_meta_initialization(
     start_iteration = 1
     best_loss = float("inf")
     epochs_no_improve = 0
-    if resume_payload is not None and str(resume_payload.get("mc_stage", "")) == "meta_init":
-        template_model.load_state_dict(resume_payload["template_model_state"])
-        start_iteration = int(resume_payload.get("iteration", resume_payload.get("epoch", 0))) + 1
-        best_loss = float(resume_payload.get("best_loss", best_loss))
-        epochs_no_improve = int(resume_payload.get("epochs_no_improve", 0))
-
-    if start_iteration > int(config.training.meta_iterations):
-        logger.info(
-            "Meta initialization already reached iteration %d (target=%d). Skipping.",
-            start_iteration - 1,
-            int(config.training.meta_iterations),
-        )
-        return {
-            "template_model": template_model,
-            "last_iteration": start_iteration - 1,
-            "stage_checkpoint_path": None,
-            "last_interval_checkpoint_path": None,
-            "best_loss": best_loss,
-            "epochs_no_improve": epochs_no_improve,
-            "loss_history": [],
-        }
 
     started_at = time.time()
     cluster_ids = np.unique(np.asarray(assignments, dtype=np.int64))
@@ -644,7 +630,6 @@ def _run_meta_initialization(
         raise RuntimeError("Meta initialization requires at least one non-empty cluster")
 
     loss_history: list[float] = []
-    last_interval_checkpoint_path: Path | None = None
     final_iteration = start_iteration - 1
     for iteration in range(start_iteration, int(config.training.meta_iterations) + 1):
         final_iteration = iteration
@@ -743,27 +728,6 @@ def _run_meta_initialization(
                 time.time() - started_at,
             )
 
-        if config.training.save_every > 0 and iteration % int(config.training.save_every) == 0:
-            last_interval_checkpoint_path = save_mc_checkpoint(
-                path=checkpoint_dir / f"{config.exp_id}_meta_init_iteration{iteration}.pth",
-                model=None,
-                optimizer=None,
-                scheduler=None,
-                epoch=iteration,
-                stage="meta_init",
-                config_hash=config_hash,
-                target_names=dataset.target_names(),
-                target_layout=layout,
-                assignments=assignments,
-                centroids=centroids,
-                best_loss=best_loss,
-                epochs_no_improve=epochs_no_improve,
-                extra_payload={
-                    "template_model_state": template_model.state_dict(),
-                    "iteration": int(iteration),
-                },
-            )
-
         if int(config.training.convergence_patience) > 0 and epochs_no_improve >= int(config.training.convergence_patience):
             logger.info(
                 "Meta initialization early stop at iteration %d after %d unimproved iterations.",
@@ -772,30 +736,9 @@ def _run_meta_initialization(
             )
             break
 
-    stage_checkpoint_path = save_mc_checkpoint(
-        path=checkpoint_dir / f"{config.exp_id}_meta_init.pth",
-        model=None,
-        optimizer=None,
-        scheduler=None,
-        epoch=final_iteration,
-        stage="meta_init",
-        config_hash=config_hash,
-        target_names=dataset.target_names(),
-        target_layout=layout,
-        assignments=assignments,
-        centroids=centroids,
-        best_loss=best_loss,
-        epochs_no_improve=epochs_no_improve,
-        extra_payload={
-            "template_model_state": template_model.state_dict(),
-            "iteration": int(final_iteration),
-        },
-    )
     return {
         "template_model": template_model,
         "last_iteration": final_iteration,
-        "stage_checkpoint_path": stage_checkpoint_path,
-        "last_interval_checkpoint_path": last_interval_checkpoint_path,
         "best_loss": best_loss,
         "epochs_no_improve": epochs_no_improve,
         "loss_history": loss_history,
@@ -817,7 +760,6 @@ def _run_stage(
     config_hash: str,
     checkpoint_dir: Path,
     split_round: int,
-    resume_payload: dict[str, Any] | None = None,
     metrics_dir: Path | None = None,
 ) -> dict[str, Any]:
     optimizer = torch.optim.Adam(
@@ -834,32 +776,6 @@ def _run_stage(
     start_epoch = 1
     best_loss = float("inf")
     epochs_no_improve = 0
-    if resume_payload is not None and str(resume_payload.get("mc_stage", "")) == stage_name:
-        if resume_payload.get("optimizer_state") is not None:
-            optimizer.load_state_dict(resume_payload["optimizer_state"])
-        if scheduler is not None and resume_payload.get("scheduler_state") is not None:
-            scheduler.load_state_dict(resume_payload["scheduler_state"])
-        start_epoch = int(resume_payload.get("epoch", 0)) + 1
-        best_loss = float(resume_payload.get("best_loss", best_loss))
-        epochs_no_improve = int(resume_payload.get("epochs_no_improve", 0))
-
-    if start_epoch > int(epochs):
-        logger.info(
-            "%s already reached epoch %d (target=%d). Skipping.",
-            stage_display_name,
-            start_epoch - 1,
-            int(epochs),
-        )
-        return {
-            "last_epoch": start_epoch - 1,
-            "stage_checkpoint_path": None,
-            "best_loss": best_loss,
-            "epochs_no_improve": epochs_no_improve,
-            "optimizer": optimizer,
-            "scheduler": scheduler,
-            "sample_counts": [],
-            "batch_cluster_unique_counts": [],
-        }
 
     normalized_sampling_ratio = float(sampling_ratio)
     if normalized_sampling_ratio <= 0.0:
@@ -868,7 +784,6 @@ def _run_stage(
 
     model.to(device)
     started_at = time.time()
-    last_checkpoint_path: Path | None = None
     final_epoch = start_epoch - 1
     sample_counts: list[int] = []
     batch_cluster_unique_counts: list[int] = []
@@ -953,21 +868,18 @@ def _run_stage(
                 time.time() - started_at,
             )
 
-        if config.training.save_every > 0 and epoch % int(config.training.save_every) == 0:
-            last_checkpoint_path = save_mc_checkpoint(
+        if (
+            config.training.save_intermediate_checkpoints
+            and config.training.save_every > 0
+            and epoch % int(config.training.save_every) == 0
+        ):
+            save_mc_checkpoint(
                 path=checkpoint_dir / f"{config.exp_id}_{stage_name}_round{split_round}_epoch{epoch}.pth",
                 model=model,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                epoch=epoch,
-                stage=stage_name,
                 config_hash=config_hash,
                 target_names=dataset.target_names(),
                 target_layout=layout,
                 assignments=assignments,
-                best_loss=best_loss,
-                epochs_no_improve=epochs_no_improve,
-                extra_payload={"split_round": int(split_round)},
             )
 
         if probe_recorder is not None and probe_due(epoch, int(epochs), probe_cfg):
@@ -1011,29 +923,21 @@ def _run_stage(
             )
             break
 
-    stage_checkpoint_path = save_mc_checkpoint(
-        path=checkpoint_dir / f"{config.exp_id}_{stage_name}_round{split_round}.pth",
-        model=model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        epoch=final_epoch,
-        stage=stage_name,
-        config_hash=config_hash,
-        target_names=dataset.target_names(),
-        target_layout=layout,
-        assignments=assignments,
-        best_loss=best_loss,
-        epochs_no_improve=epochs_no_improve,
-        extra_payload={"split_round": int(split_round)},
-    )
+    if config.training.save_intermediate_checkpoints:
+        save_mc_checkpoint(
+            path=checkpoint_dir / f"{config.exp_id}_{stage_name}_round{split_round}.pth",
+            model=model,
+            config_hash=config_hash,
+            target_names=dataset.target_names(),
+            target_layout=layout,
+            assignments=assignments,
+        )
     return {
         "last_epoch": final_epoch,
-        "stage_checkpoint_path": stage_checkpoint_path,
         "best_loss": best_loss,
         "epochs_no_improve": epochs_no_improve,
         "optimizer": optimizer,
         "scheduler": scheduler,
-        "last_interval_checkpoint_path": last_checkpoint_path,
         "sample_counts": sample_counts,
         "batch_cluster_unique_counts": batch_cluster_unique_counts,
     }
@@ -1336,7 +1240,7 @@ def _predict_and_save_streaming(
     return result
 
 
-def _load_resume_payload(
+def _load_checkpoint_payload(
     *,
     config: MCExperimentConfig,
     dataset,
@@ -1355,81 +1259,42 @@ def _load_resume_payload(
     return payload
 
 
-def run_train(config_path: str | Path, *, resume_path: str | Path | None = None) -> dict[str, Any]:
+def run_train(config_path: str | Path) -> dict[str, Any]:
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device = _prepare_runtime(config_path, create_run=True)
         set_random_seed(int(config.training.seed))
-        config_hash = sha256_payload(config.to_dict())
+        config_hash = _config_hash(config)
         layout = target_layout_from_dataset(dataset)
 
-        resolved_resume = (
-            resolve_path(str(resume_path), base_dir=Path(config_path).resolve().parent)
-            if resume_path is not None
-            else config.training.resume_path
-        )
-
-        resume_payload = None
         model: MCINR | None = None
-        template_model: ClusterCoordNet | None = None
-        assignments: np.ndarray
-        centroids: np.ndarray
-        resume_stage = ""
         current_split_round = 0
-
-        if resolved_resume:
-            resume_payload = _load_resume_payload(
-                config=config,
-                dataset=dataset,
-                config_hash=config_hash,
-                checkpoint_path=resolved_resume,
-            )
-            resume_stage = str(resume_payload.get("mc_stage", "") or "")
-            logger.info("Resuming MC-INR training from %s (stage=%s)", resolved_resume, resume_stage)
-            assignments = np.asarray(resume_payload["cluster_assignments"], dtype=np.int32)
-            centroids = np.asarray(resume_payload["centroids"], dtype=np.float32)
-            layout = restore_target_layout(resume_payload)
-            if resume_stage == "meta_init":
-                template_model = _build_template_model(config, dataset, target_layout=layout).to(device)
-                template_model.load_state_dict(resume_payload["template_model_state"])
-            else:
-                model, layout, assignments = _build_model_from_payload(config, dataset, resume_payload)
-                centroids = np.asarray(model.centroids.detach().cpu().numpy(), dtype=np.float32)
-                current_split_round = int(resume_payload.get("split_round", 0))
-        else:
-            assignments, centroids = _initialize_clusters(dataset, config.training)
-
-        stage_checkpoints: dict[str, Any] = {"meta_init": None, "finetune": None, "split": []}
+        assignments, centroids = _initialize_clusters(dataset, config.training)
         training_summary: dict[str, Any] = {
             "meta_init": None,
             "finetune_rounds": [],
             "split_rounds": [],
         }
 
-        if model is None:
-            meta_result = _run_meta_initialization(
-                dataset=dataset,
-                layout=layout,
-                assignments=assignments,
-                centroids=centroids,
-                config=config,
-                device=device,
-                config_hash=config_hash,
-                checkpoint_dir=Path(dirs["checkpoint_dir"]),
-                resume_payload=resume_payload if resume_stage == "meta_init" else None,
-            )
-            template_model = meta_result["template_model"]
-            stage_checkpoints["meta_init"] = (
-                str(meta_result["stage_checkpoint_path"]) if meta_result["stage_checkpoint_path"] is not None else None
-            )
-            training_summary["meta_init"] = {
-                "last_iteration": int(meta_result["last_iteration"]),
-                "best_loss": float(meta_result["best_loss"]),
-                "loss_history": [float(loss) for loss in meta_result["loss_history"]],
-            }
+        meta_result = _run_meta_initialization(
+            dataset=dataset,
+            layout=layout,
+            assignments=assignments,
+            centroids=centroids,
+            config=config,
+            device=device,
+            config_hash=config_hash,
+            checkpoint_dir=Path(dirs["checkpoint_dir"]),
+        )
+        template_model = meta_result["template_model"]
+        training_summary["meta_init"] = {
+            "last_iteration": int(meta_result["last_iteration"]),
+            "best_loss": float(meta_result["best_loss"]),
+            "loss_history": [float(loss) for loss in meta_result["loss_history"]],
+        }
 
-            model = _build_model(config, dataset, centroids=centroids, target_layout=layout)
-            _copy_template_to_all_clusters(model, template_model)
+        model = _build_model(config, dataset, centroids=centroids, target_layout=layout)
+        _copy_template_to_all_clusters(model, template_model)
 
         stats = collect_model_statistics(model)
         if config.log.model_stats:
@@ -1438,13 +1303,6 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
                 format_param_count(int(stats["param_count"])),
                 format_param_count(int(stats["trainable_param_count"])),
                 format_fp16_size_megabytes(int(stats["fp16_size_bytes"])),
-            )
-
-        finetune_resume_payload = resume_payload if resume_stage == "finetune" else None
-        if resume_stage == "split":
-            logger.info(
-                "Resuming from split checkpoint at split_round=%d; starting next fine-tune round.",
-                current_split_round,
             )
 
         finetune_result = _run_stage(
@@ -1461,11 +1319,7 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
             config_hash=config_hash,
             checkpoint_dir=Path(dirs["checkpoint_dir"]),
             split_round=int(current_split_round),
-            resume_payload=finetune_resume_payload,
             metrics_dir=Path(dirs["metrics_dir"]),
-        )
-        stage_checkpoints["finetune"] = (
-            str(finetune_result["stage_checkpoint_path"]) if finetune_result["stage_checkpoint_path"] is not None else None
         )
         training_summary["finetune_rounds"].append(
             {
@@ -1496,25 +1350,15 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
                 break
 
             current_split_round += 1
-            split_checkpoint = save_mc_checkpoint(
-                path=Path(dirs["checkpoint_dir"]) / f"{config.exp_id}_split_round{current_split_round}.pth",
-                model=model,
-                optimizer=None,
-                scheduler=None,
-                epoch=int(finetune_result["last_epoch"]),
-                stage="split",
-                config_hash=config_hash,
-                target_names=dataset.target_names(),
-                target_layout=layout,
-                assignments=assignments,
-                best_loss=float(finetune_result["best_loss"]),
-                epochs_no_improve=int(finetune_result["epochs_no_improve"]),
-                extra_payload={
-                    "split_round": int(current_split_round),
-                    "split_results": split_results,
-                },
-            )
-            stage_checkpoints["split"].append(str(split_checkpoint))
+            if config.training.save_intermediate_checkpoints:
+                save_mc_checkpoint(
+                    path=Path(dirs["checkpoint_dir"]) / f"{config.exp_id}_split_round{current_split_round}.pth",
+                    model=model,
+                    config_hash=config_hash,
+                    target_names=dataset.target_names(),
+                    target_layout=layout,
+                    assignments=assignments,
+                )
             training_summary["split_rounds"].append(
                 {
                     "split_round": int(current_split_round),
@@ -1536,10 +1380,6 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
                 config_hash=config_hash,
                 checkpoint_dir=Path(dirs["checkpoint_dir"]),
                 split_round=int(current_split_round),
-                resume_payload=None,
-            )
-            stage_checkpoints["finetune"] = (
-                str(finetune_result["stage_checkpoint_path"]) if finetune_result["stage_checkpoint_path"] is not None else None
             )
             training_summary["finetune_rounds"].append(
                 {
@@ -1553,23 +1393,26 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
         final_checkpoint = save_mc_checkpoint(
             path=Path(dirs["checkpoint_dir"]) / f"{config.exp_id}.pth",
             model=model,
-            optimizer=finetune_result["optimizer"],
-            scheduler=finetune_result["scheduler"],
-            epoch=int(finetune_result["last_epoch"]),
-            stage="finetune",
             config_hash=config_hash,
             target_names=dataset.target_names(),
             target_layout=layout,
             assignments=assignments,
-            best_loss=float(finetune_result["best_loss"]),
-            epochs_no_improve=int(finetune_result["epochs_no_improve"]),
-            extra_payload={"split_round": int(current_split_round)},
         )
+        checkpoint_bytes = int(final_checkpoint.stat().st_size)
+        raw_target_bytes = sum(
+            int(dataset.meta.n_samples) * int(dataset.meta.target_dims[name]) * 4
+            for name in dataset.target_names()
+        )
+        checkpoint_summary = {
+            "checkpoint_path": str(final_checkpoint),
+            "checkpoint_bytes": checkpoint_bytes,
+            "raw_target_bytes": int(raw_target_bytes),
+            "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
+        }
         if not bool(config.evaluation.save_predictions):
             logger.info("Skipping automatic prediction/evaluation after training.")
             return {
-                "checkpoint_path": str(final_checkpoint),
-                "stage_checkpoints": stage_checkpoints,
+                **checkpoint_summary,
                 "training_summary": training_summary,
             }
 
@@ -1586,11 +1429,10 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
         )
         metrics_path = save_metrics(Path(dirs["metrics_dir"]) / f"{config.exp_id}.json", prediction_result["metrics"])
         return {
-            "checkpoint_path": str(final_checkpoint),
+            **checkpoint_summary,
             "prediction_paths": prediction_result["prediction_paths"],
             "metrics_path": str(metrics_path),
             "metrics": prediction_result["metrics"],
-            "stage_checkpoints": stage_checkpoints,
             "training_summary": training_summary,
         }
     finally:
@@ -1604,14 +1446,12 @@ def _load_checkpoint_model_for_inference(
     checkpoint_path: str | Path,
     config_hash: str,
 ) -> tuple[MCINR, tuple[TargetLayoutEntry, ...]]:
-    payload = _load_resume_payload(
+    payload = _load_checkpoint_payload(
         config=config,
         dataset=dataset,
         config_hash=config_hash,
         checkpoint_path=checkpoint_path,
     )
-    if str(payload.get("mc_stage", "")) == "meta_init":
-        raise ValueError("meta_init checkpoints cannot be used directly for prediction/evaluation")
     model, layout, _ = _build_model_from_payload(config, dataset, payload)
     return model, layout
 
@@ -1629,7 +1469,7 @@ def run_predict(config_path: str | Path, *, checkpoint_path: str | Path | None =
             if checkpoint_path is not None
             else Path(dirs["checkpoint_dir"]) / f"{config.exp_id}.pth"
         )
-        config_hash = sha256_payload(config.to_dict())
+        config_hash = _config_hash(config)
         model, layout = _load_checkpoint_model_for_inference(
             config=config,
             dataset=dataset,
@@ -1669,7 +1509,7 @@ def run_evaluate(config_path: str | Path, *, checkpoint_path: str | Path | None 
             if checkpoint_path is not None
             else Path(dirs["checkpoint_dir"]) / f"{config.exp_id}.pth"
         )
-        config_hash = sha256_payload(config.to_dict())
+        config_hash = _config_hash(config)
         model, layout = _load_checkpoint_model_for_inference(
             config=config,
             dataset=dataset,

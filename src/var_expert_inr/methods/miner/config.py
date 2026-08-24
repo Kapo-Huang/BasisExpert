@@ -35,6 +35,7 @@ TRAINING_KEYS = {
     "seed",
     "device",
     "log_every",
+    "save_intermediate_checkpoints",
 }
 EVALUATION_KEYS = {"save_predictions", "run_after_training", "default_model"}
 LOG_KEYS = {"effective_config", "startup_timing", "epoch_summary"}
@@ -200,6 +201,7 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
         "seed": 42,
         "device": "cuda",
         "log_every": 25,
+        "save_intermediate_checkpoints": True,
     }
     raw_training = _mapping(cfg.get("training"), "training")
     _reject_unknown(raw_training, TRAINING_KEYS, "training")
@@ -219,6 +221,9 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
         raise ValueError("Adam beta values must be in [0,1)")
     training["time_indices"] = parse_time_indices(training["time_indices"], data["volume_shape"]["T"])
     training["device"] = str(training["device"])
+    training["save_intermediate_checkpoints"] = bool(
+        training["save_intermediate_checkpoints"]
+    )
     cfg["training"] = training
 
     raw_evaluation = _mapping(cfg.get("evaluation"), "evaluation")

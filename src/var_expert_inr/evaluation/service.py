@@ -58,7 +58,6 @@ class EvaluationRequest:
     targets: tuple[str, ...] | None = None
     source: str = "auto"
     checkpoint: Path | None = None
-    artifact: Path | None = None
     prediction: Path | None = None
     render: bool = False
     render_profile: Path | str | None = None
@@ -169,7 +168,6 @@ def resolve_run_config(run_dir: str | Path) -> Path:
     candidates = (
         root / "configs" / "config.yaml",
         root / "config.yaml",
-        root / "validate_artifacts" / "config.yaml",
     )
     for path in candidates:
         if path.is_file():
@@ -261,8 +259,6 @@ def _indices(indexer: slice | np.ndarray) -> np.ndarray:
 
 
 def _resolve_standard_source(request: EvaluationRequest, config) -> tuple[str, Path]:
-    if request.artifact is not None:
-        raise ValueError("Unified models do not support artifact sources; use checkpoint or prediction")
     if request.checkpoint is not None:
         return "checkpoint", request.checkpoint.resolve()
     if request.prediction is not None:
@@ -273,8 +269,6 @@ def _resolve_standard_source(request: EvaluationRequest, config) -> tuple[str, P
     checkpoints = sorted(checkpoint_dir.glob("*.pth")) if checkpoint_dir.exists() else []
     canonical = checkpoint_dir / f"{config.exp_id}.pth"
     predictions = sorted(prediction_dir.glob("*.npy")) if prediction_dir.exists() else []
-    if requested == "artifact":
-        raise ValueError("Unified models do not support artifact sources; use checkpoint or prediction")
     if requested in {"auto", "checkpoint"} and canonical.is_file():
         return "checkpoint", canonical
     if requested in {"auto", "checkpoint"} and checkpoints:
@@ -308,6 +302,8 @@ def _load_prediction_arrays(
 
 def _load_standard_model(config, dataset, device: torch.device, source: Path):
     payload = read_checkpoint_payload(source)
+    if payload.get("format") != "inference_checkpoint_v1":
+        raise ValueError(f"Unsupported inference checkpoint: {payload.get('format')!r}")
     if payload.get("target_names_order"):
         target_names = tuple(payload["target_names_order"])
         target_dims = payload.get("target_dims_order")
@@ -457,8 +453,6 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     kind, source_path = _resolve_standard_source(request, config)
     if kind == "checkpoint" and not source_path.is_file():
         raise FileNotFoundError(f"Evaluation checkpoint does not exist: {source_path}")
-    if kind == "artifact" and not source_path.exists():
-        raise FileNotFoundError(f"Evaluation artifact does not exist: {source_path}")
     if kind == "prediction" and not source_path.exists():
         raise FileNotFoundError(f"Evaluation prediction source does not exist: {source_path}")
     key_payload = {
@@ -667,7 +661,6 @@ def evaluate_run(
     targets: str | tuple[str, ...] | None = None,
     source: str | None = None,
     checkpoint: str | Path | None = None,
-    artifact: str | Path | None = None,
     prediction: str | Path | None = None,
     render: bool = False,
     render_profile: str | Path | None = None,
@@ -695,7 +688,6 @@ def evaluate_run(
         targets=parse_name_selection(selected_targets),
         source=str(selected_source or "auto"),
         checkpoint=None if checkpoint is None else Path(checkpoint),
-        artifact=None if artifact is None else Path(artifact),
         prediction=None if prediction is None else Path(prediction),
         render=bool(render), render_profile=selected_profile, overwrite=bool(overwrite), device=device,
     )

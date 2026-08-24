@@ -66,6 +66,7 @@ DEFAULT_TRAINING = {
     "quantization_finetune_passes_per_epoch": 1,
     "quantization_finetune_lr": 1.0e-5,
     "save_every": 0,
+    "save_intermediate_checkpoints": True,
     "log_every": 1,
     "progress_log_seconds": 60,
     "seed": 42,
@@ -102,7 +103,7 @@ DEFAULT_EVALUATION = {
     "batch_size": 3200,
     "save_predictions": False,
     "run_after_training": False,
-    "default_model": "artifact",
+    "default_model": "checkpoint",
 }
 
 DEFAULT_LOG = {
@@ -219,6 +220,9 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
         training[key] = int(training[key])
         if training[key] < 0:
             raise ValueError(f"training.{key} must be non-negative")
+    training["save_intermediate_checkpoints"] = bool(
+        training["save_intermediate_checkpoints"]
+    )
     for key in ("batch_size", "passes_per_epoch", "quantization_finetune_passes_per_epoch"):
         if training[key] == 0:
             raise ValueError(f"training.{key} must be positive")
@@ -262,8 +266,8 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     evaluation = {**DEFAULT_EVALUATION, **_mapping(cfg.get("evaluation"), "evaluation")}
     _reject(evaluation, set(DEFAULT_EVALUATION), "evaluation")
     evaluation["batch_size"] = int(evaluation["batch_size"])
-    if evaluation["default_model"] not in {"artifact", "checkpoint"}:
-        raise ValueError("evaluation.default_model must be artifact or checkpoint")
+    if evaluation["default_model"] != "checkpoint":
+        raise ValueError("evaluation.default_model must be checkpoint")
     cfg["evaluation"] = evaluation
     log = {**DEFAULT_LOG, **_mapping(cfg.get("log"), "log")}
     _reject(log, set(DEFAULT_LOG), "log")

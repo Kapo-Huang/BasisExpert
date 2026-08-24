@@ -98,9 +98,9 @@ class MCTrainingConfig:
     loss_type: str = "mse"
     log_every: int = 10
     save_every: int = 0
+    save_intermediate_checkpoints: bool = True
     seed: int = 42
     device: str = "cuda"
-    resume_path: str | None = None
     initial_k: int = 20
     cluster_init_method: str = "auto"
     assignments_cache_path: str = ""
@@ -206,7 +206,11 @@ def load_config(path: str | Path) -> MCExperimentConfig:
         {"name", "hidden_features", "gfe_layers", "lfe_layers"},
         label="model",
     )
-    _reject_unknown_keys(training_section, _field_names(MCTrainingConfig), label="training")
+    _reject_unknown_keys(
+        training_section,
+        _field_names(MCTrainingConfig),
+        label="training",
+    )
     _reject_unknown_keys(evaluation_section, _field_names(EvaluationConfig), label="evaluation")
     _reject_unknown_keys(log_section, _field_names(LogConfig), label="log")
     _reject_unknown_keys(exploration_probe_section, _field_names(ExplorationProbeConfig), label="exploration_probe")
@@ -255,9 +259,11 @@ def load_config(path: str | Path) -> MCExperimentConfig:
         loss_type=str(training_section.get("loss_type", "mse")),
         log_every=int(training_section.get("log_every", 10)),
         save_every=int(training_section.get("save_every", 0)),
+        save_intermediate_checkpoints=bool(
+            training_section.get("save_intermediate_checkpoints", True)
+        ),
         seed=int(training_section.get("seed", 42)),
         device=str(training_section.get("device", "cuda")),
-        resume_path=resolve_path(training_section.get("resume_path"), base_dir=config_path.parent),
         initial_k=int(training_section.get("initial_k", 20)),
         cluster_init_method=str(training_section.get("cluster_init_method", "auto")),
         assignments_cache_path=str(

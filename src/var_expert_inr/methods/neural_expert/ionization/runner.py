@@ -59,10 +59,11 @@ def _log_timing_window(log_file, start_epoch, end_epoch, max_epochs, elapsed_sec
     )
 
 
-def _save_validate_checkpoint(model, dataset, out_path):
+def _save_inference_checkpoint(model, dataset, out_path):
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "format": "neural_expert_inference_v1",
         "model_state": model.state_dict(),
         "x_mean": dataset.x_mean.cpu().numpy(),
         "x_std": dataset.x_std.cpu().numpy(),
@@ -70,78 +71,6 @@ def _save_validate_checkpoint(model, dataset, out_path):
         "y_std": dataset.y_std.cpu().numpy(),
     }
     torch.save(payload, str(out_path))
-
-
-def _build_validate_config(cfg, validate_ckpt_path):
-    data_cfg = cfg["DATA"]
-    model_cfg = cfg["MODEL"]
-    volume_shape = data_cfg["volume_shape"]
-    dataset_name = str(data_cfg["dataset_name"])
-    return {
-        "experiment": f"exp_data_{dataset_name}_neural_expert_{data_cfg['attr_name']}",
-        "exp_id": f"neural-expert-{dataset_name}-{data_cfg['attr_name']}",
-        "experiment_root": "experiments",
-        "data": {
-            "dataset_name": dataset_name,
-            "split": "train",
-            "data_root": "./data",
-            "target_path": data_cfg["target_path"],
-            "target_stats_path": data_cfg["target_stats_path"],
-            "compute_target_stats": False,
-            "volume_shape": {
-                "X": int(volume_shape["X"]),
-                "Y": int(volume_shape["Y"]),
-                "Z": int(volume_shape["Z"]),
-                "T": int(volume_shape["T"]),
-            },
-            "normalize_inputs": bool(data_cfg.get("normalize_inputs", True)),
-            "normalize_targets": bool(data_cfg.get("normalize_targets", False)),
-        },
-        "model": {
-            "name": "neural_expert",
-            "in_features": int(model_cfg["in_dim"]),
-            "out_features": int(model_cfg["out_dim"]),
-            "num_experts": int(model_cfg["n_experts"]),
-            "top_k": int(model_cfg["top_k"]),
-            "decoder_hidden_dim": int(model_cfg["decoder_hidden_dim"]),
-            "decoder_n_hidden_layers": int(model_cfg["decoder_n_hidden_layers"]),
-            "decoder_input_encoding": str(model_cfg["decoder_input_encoding"]),
-            "decoder_nl": str(model_cfg["decoder_nl"]),
-            "decoder_init_type": str(model_cfg["decoder_init_type"]),
-            "decoder_freqs": float(model_cfg["decoder_freqs"]),
-            "decoder_trainable_freqs": bool(model_cfg.get("decoder_trainable_freqs", False)),
-            "manager_hidden_dim": int(model_cfg["manager_hidden_dim"]),
-            "manager_n_hidden_layers": int(model_cfg["manager_n_hidden_layers"]),
-            "manager_input_encoding": str(model_cfg["manager_input_encoding"]),
-            "manager_nl": str(model_cfg["manager_nl"]),
-            "manager_init": str(model_cfg["manager_init"]),
-            "manager_softmax_temperature": float(model_cfg["manager_softmax_temperature"]),
-            "manager_softmax_temp_trainable": bool(model_cfg["manager_softmax_temp_trainable"]),
-            "manager_q_activation": str(model_cfg["manager_q_activation"]),
-            "manager_clamp_q": float(model_cfg["manager_clamp_q"]),
-            "manager_conditioning": str(model_cfg["manager_conditioning"]),
-            "manager_type": str(model_cfg.get("manager_type", "standard")),
-            "shared_encoder": bool(model_cfg.get("shared_encoder", False)),
-        },
-        "training": {
-            "epochs": int(cfg["TRAINING"]["num_epochs"]),
-            "batch_size": int(cfg["TRAINING"]["n_points"]),
-            "pred_batch_size": int(cfg["TRAINING"]["n_points"]),
-            "num_workers": 0,
-            "lr": float(cfg["TRAINING"]["lr"]),
-            "save_model": str(Path(validate_ckpt_path).as_posix()),
-        },
-    }
-
-
-def _export_validate_artifacts(cfg, run_dir: Path, dataset, model):
-    validate_dir = run_dir / "validate_artifacts"
-    validate_dir.mkdir(parents=True, exist_ok=True)
-    validate_ckpt_path = validate_dir / f"{cfg['exp_id']}.pth"
-    validate_cfg_path = validate_dir / "config.yaml"
-    _save_validate_checkpoint(model, dataset, validate_ckpt_path)
-    dump_config(_build_validate_config(cfg, validate_ckpt_path), validate_cfg_path)
-    return validate_cfg_path, validate_ckpt_path
 
 
 def run_train(cfg: dict, *, gpu: int = 0) -> dict:
@@ -156,7 +85,7 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             collision += 1
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "wandb").mkdir(parents=True, exist_ok=True)
-    (run_dir / "trained_models").mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
     dump_config(cfg, run_dir / "config.yaml")
 
     cfg = yaml.safe_load(yaml.safe_dump(cfg))
@@ -228,8 +157,8 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             log_string(f"Loaded pretrained manager from {manager_pt_checkpoint_path}", log_file)
 
         model.to(device)
-        model_outdir = run_dir / "trained_models"
-        save_interval = int(cfg["TRAINING"].get("save_every", 100) or 100)
+        model_outdir = run_dir / "checkpoints"
+        save_interval = int(cfg["TRAINING"].get("save_every", 100))
         probe_cfg = normalize_probe(cfg.get("exploration_probe"))
         probe_recorder = None
         probe_points = None
@@ -252,8 +181,10 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             if step >= max_epochs:
                 break
             step_timer_start = time.perf_counter() if timing_enabled else None
-            if step % save_interval == 0:
-                torch.save(model.state_dict(), str(model_outdir / f"{cfg['MODEL']['model_name']}_model_{step}.pth"))
+            if save_interval > 0 and step % save_interval == 0:
+                _save_inference_checkpoint(
+                    model, train_set, model_outdir / f"{cfg['MODEL']['model_name']}_model_{step}.pth"
+                )
 
             data = to_device(data, device)
             optimizer.zero_grad(set_to_none=True)
@@ -322,24 +253,21 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
                     timing_window_elapsed = 0.0
                     timing_window_start_epoch = completed_epochs + 1
 
-        final_state_path = model_outdir / f"{cfg['MODEL']['model_name']}_model_final.pth"
-        torch.save(model.state_dict(), str(final_state_path))
+        final_state_path = (
+            Path(cfg["MODEL"]["manager_pt_path"])
+            if cfg["TRAINING"].get("segmentation_mode", False) and cfg["MODEL"].get("manager_pt_path")
+            else model_outdir / f"{cfg['exp_id']}.pth"
+        )
+        _save_inference_checkpoint(model, train_set, final_state_path)
         log_string(f"Saved final state dict to {final_state_path}", log_file)
-
-        if cfg["TRAINING"].get("segmentation_mode", False) and cfg["MODEL"].get("manager_pt_path"):
-            manager_pt_path = Path(cfg["MODEL"]["manager_pt_path"])
-            manager_pt_path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(model.state_dict(), str(manager_pt_path))
-            log_string(f"Exported manager pretrain checkpoint to {manager_pt_path}", log_file)
-
-        validate_cfg_path, validate_ckpt_path = _export_validate_artifacts(cfg, run_dir, train_set, model)
-        log_string(f"Exported validate config to {validate_cfg_path}", log_file)
-        log_string(f"Exported validate checkpoint to {validate_ckpt_path}", log_file)
+        checkpoint_bytes = int(final_state_path.stat().st_size)
+        raw_target_bytes = int(np.asarray(train_set.target).nbytes)
         return {
             "run_dir": run_dir,
             "checkpoint_path": final_state_path,
-            "validate_config_path": validate_cfg_path,
-            "validate_checkpoint_path": validate_ckpt_path,
+            "checkpoint_bytes": checkpoint_bytes,
+            "raw_target_bytes": raw_target_bytes,
+            "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
         }
     finally:
         if timing_enabled:

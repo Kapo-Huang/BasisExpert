@@ -1357,14 +1357,8 @@ def _train_model_impl(
                     best_probe_progress = int(progress)
                     best_probe_checkpoint = save_checkpoint(
                         model=model,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
                         dataset=dataset,
-                        epoch=epoch,
                         config_hash=config_hash,
-                        global_data_step=global_data_step,
-                        global_optimizer_step=global_optimizer_step,
-                        gradient_accumulation_count=accumulation_count,
                         path=Path(checkpoint_dir) / f"{exp_id}_best_probe.pth",
                     )
                     logger.info(
@@ -1391,14 +1385,8 @@ def _train_model_impl(
             save_started_at = time.perf_counter() if timing_enabled else 0.0
             save_checkpoint(
                 model=model,
-                optimizer=optimizer,
-                scheduler=scheduler,
                 dataset=dataset,
-                epoch=epoch,
                 config_hash=config_hash,
-                global_data_step=global_data_step,
-                global_optimizer_step=global_optimizer_step,
-                gradient_accumulation_count=accumulation_count,
                 path=Path(checkpoint_dir) / f"{exp_id}_epoch{epoch}.pth",
             )
             if timing_enabled:
@@ -1454,18 +1442,19 @@ def _train_model_impl(
 
     final_ckpt = save_checkpoint(
         model=model,
-        optimizer=optimizer,
-        scheduler=scheduler,
         dataset=dataset,
-        epoch=completed_epoch,
         config_hash=config_hash,
-        global_data_step=global_data_step,
-        global_optimizer_step=global_optimizer_step,
-        gradient_accumulation_count=accumulation_count,
         path=Path(checkpoint_dir) / f"{exp_id}.pth",
     )
+    checkpoint_bytes = int(final_ckpt.stat().st_size)
+    raw_target_bytes = int(dataset.meta.n_samples) * sum(
+        int(dataset.meta.target_dims[name]) for name in dataset.target_names()
+    ) * np.dtype(np.float32).itemsize
     result = {
         "checkpoint_path": final_ckpt,
+        "checkpoint_bytes": checkpoint_bytes,
+        "raw_target_bytes": raw_target_bytes,
+        "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
         "best_probe_checkpoint_path": best_probe_checkpoint,
         "best_probe_progress": best_probe_progress,
         "best_probe_psnr": None if best_probe_progress is None else best_probe_psnr,

@@ -19,10 +19,7 @@ from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.model_stats import collect_model_statistics
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
 from .checkpoint import (
-    load_artifact,
     load_checkpoint,
-    restore_training_random_state,
-    save_artifact,
     save_checkpoint,
     validate_payload,
 )
@@ -50,7 +47,6 @@ def _dirs(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
         "run": run_dir,
         "configs": run_dir / "configs",
         "checkpoints": run_dir / "checkpoints",
-        "artifacts": run_dir / "artifacts",
         "predictions": run_dir / "predictions",
         "metrics": run_dir / "metrics",
         "logs": run_dir / "logs",
@@ -83,7 +79,7 @@ def _run_for_path(cfg: dict[str, Any], path: str | Path | None) -> dict[str, Pat
     if path is None:
         return _latest_run(cfg)
     resolved = Path(path).resolve()
-    if resolved.parent.name in {"artifacts", "checkpoints"}:
+    if resolved.parent.name == "checkpoints":
         return _dirs(resolved.parent.parent)
     return _latest_run(cfg)
 
@@ -99,21 +95,11 @@ def _load_inference_model(
     cfg: dict[str, Any],
     *,
     device: torch.device,
-    artifact: str | Path | None,
     checkpoint: str | Path | None,
     dirs: dict[str, Path],
 ) -> tuple[RMDSRN, Path, dict]:
-    if artifact is None and checkpoint is None:
-        if cfg["evaluation"]["default_model"] == "artifact":
-            artifact = dirs["artifacts"] / f"{cfg['exp_id']}.pt"
-        else:
-            checkpoint = dirs["checkpoints"] / f"{cfg['exp_id']}.pth"
-    if artifact is not None:
-        model_path = Path(artifact)
-        payload = load_artifact(model_path)
-    else:
-        model_path = Path(checkpoint)
-        payload = load_checkpoint(model_path)
+    model_path = Path(checkpoint or dirs["checkpoints"] / f"{cfg['exp_id']}.pth")
+    payload = load_checkpoint(model_path)
     validate_payload(payload, cfg, config_hash=_config_hash(cfg))
     model = RMDSRN(payload["model_config"]).to(device)
     model.load_state_dict(payload["model_state"], strict=True)
@@ -305,7 +291,7 @@ def _evaluate(
         variance_flat[sampled_indices],
         topk_fractions,
     )
-    model_bytes = int(model_path.stat().st_size)
+    checkpoint_bytes = int(model_path.stat().st_size)
     total_mse = global_psnr.total_squared_error / max(global_psnr.total_count, 1)
     return {
         "target": volume.path,
@@ -320,8 +306,8 @@ def _evaluate(
             "topk_hit_rate": topk,
             "topk_sample_count": int(sampled_indices.size),
             "raw_target_bytes": int(volume.raw_bytes),
-            "model_bytes": model_bytes,
-            "cr": float(volume.raw_bytes) / max(model_bytes, 1),
+            "checkpoint_bytes": checkpoint_bytes,
+            "cr": float(volume.raw_bytes) / max(checkpoint_bytes, 1),
         },
     }
 
@@ -330,7 +316,6 @@ def run_train(
     config_path: str | Path,
     *,
     target: str | None = None,
-    resume: str | Path | None = None,
 ) -> dict[str, Any]:
     apply_runtime_thread_limits()
     cfg = load_config(config_path, target_override=target)
@@ -360,26 +345,10 @@ def run_train(
             ),
             eta_min=float(cfg["training"]["min_lr"]),
         )
-        start_step = 0
-        if resume is not None:
-            payload = load_checkpoint(resume)
-            validate_payload(payload, cfg, config_hash=config_hash)
-            model.load_state_dict(payload["model_state"], strict=True)
-            optimizer.load_state_dict(payload["optimizer_state"])
-            scheduler.load_state_dict(payload["scheduler_state"])
-            start_step = int(payload["step"])
-            frame_sampler = restore_training_random_state(payload)
-            if frame_sampler.time_count != volume.shape["T"]:
-                raise ValueError("Checkpoint temporal sampler does not match the volume")
-        else:
-            frame_sampler = TemporalFrameSampler.create(
-                volume.shape["T"],
-                np.random.default_rng(int(cfg["training"]["seed"])),
-            )
-        if start_step >= int(cfg["training"]["steps"]):
-            raise ValueError(
-                f"Checkpoint step {start_step} has already reached configured training.steps"
-            )
+        frame_sampler = TemporalFrameSampler.create(
+            volume.shape["T"],
+            np.random.default_rng(int(cfg["training"]["seed"])),
+        )
         if cfg["log"]["model_stats"]:
             logger.info("RMDSRN model statistics: %s", collect_model_statistics(model))
 
@@ -402,7 +371,7 @@ def run_train(
         )
         final_weight = float(cfg["training"]["lambda_min"])
         started_at = time.perf_counter()
-        for step in range(start_step + 1, int(cfg["training"]["steps"]) + 1):
+        for step in range(1, int(cfg["training"]["steps"]) + 1):
             timestep = frame_sampler.next()
             coords_np, targets_np = sample_voxel_batch(
                 volume,
@@ -459,12 +428,8 @@ def run_train(
                 save_checkpoint(
                     dirs["checkpoints"] / f"step_{step:06d}.pth",
                     model=model,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    step=step,
                     cfg=cfg,
                     config_hash=config_hash,
-                    frame_sampler=frame_sampler,
                 )
             if probe_recorder is not None and probe_due(step, int(cfg["training"]["steps"]), probe_cfg):
                 probe_started = time.perf_counter()
@@ -497,12 +462,8 @@ def run_train(
                     best_probe_checkpoint = save_checkpoint(
                         dirs["checkpoints"] / f"{cfg['exp_id']}_best_probe.pth",
                         model=model,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
-                        step=step,
                         cfg=cfg,
                         config_hash=config_hash,
-                        frame_sampler=frame_sampler,
                     )
                     logger.info(
                         "Best exploration checkpoint: progress=%d psnr=%.4f path=%s",
@@ -515,25 +476,15 @@ def run_train(
         checkpoint_path = save_checkpoint(
             dirs["checkpoints"] / f"{cfg['exp_id']}.pth",
             model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            step=int(cfg["training"]["steps"]),
-            cfg=cfg,
-            config_hash=config_hash,
-            frame_sampler=frame_sampler,
-        )
-        artifact_path, artifact_payload = save_artifact(
-            dirs["artifacts"] / f"{cfg['exp_id']}.pt",
-            model=model,
             cfg=cfg,
             config_hash=config_hash,
         )
+        checkpoint_bytes = int(checkpoint_path.stat().st_size)
         summary: dict[str, Any] = {
             "checkpoint_path": str(checkpoint_path),
-            "artifact_path": str(artifact_path),
-            "artifact_bytes": int(artifact_payload["artifact_bytes"]),
+            "checkpoint_bytes": checkpoint_bytes,
             "raw_target_bytes": int(volume.raw_bytes),
-            "cr": float(volume.raw_bytes) / max(int(artifact_payload["artifact_bytes"]), 1),
+            "cr": float(volume.raw_bytes) / max(checkpoint_bytes, 1),
             "steps": int(cfg["training"]["steps"]),
             "lr_schedule_steps": int(
                 cfg["training"].get("lr_schedule_steps", cfg["training"]["steps"])
@@ -556,7 +507,7 @@ def run_train(
             evaluated = run_evaluate(
                 config_path,
                 target=target,
-                artifact=artifact_path,
+                checkpoint=checkpoint_path,
             )
             summary.update(evaluated)
         return summary
@@ -568,19 +519,16 @@ def run_predict(
     config_path: str | Path,
     *,
     target: str | None = None,
-    artifact: str | Path | None = None,
     checkpoint: str | Path | None = None,
 ) -> dict[str, Any]:
     apply_runtime_thread_limits()
     cfg = load_config(config_path, target_override=target)
-    explicit = artifact or checkpoint
-    dirs = _run_for_path(cfg, explicit)
+    dirs = _run_for_path(cfg, checkpoint)
     device = _device(cfg["training"]["device"])
     volume = TemporalVolume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
     model, model_path, _ = _load_inference_model(
         cfg,
         device=device,
-        artifact=artifact,
         checkpoint=checkpoint,
         dirs=dirs,
     )
@@ -603,17 +551,15 @@ def run_evaluate(
     config_path: str | Path,
     *,
     target: str | None = None,
-    artifact: str | Path | None = None,
     checkpoint: str | Path | None = None,
 ) -> dict[str, Any]:
     prediction = run_predict(
         config_path,
         target=target,
-        artifact=artifact,
         checkpoint=checkpoint,
     )
     cfg = load_config(config_path, target_override=target)
-    dirs = _run_for_path(cfg, artifact or checkpoint or prediction["model_path"])
+    dirs = _run_for_path(cfg, checkpoint or prediction["model_path"])
     volume = TemporalVolume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
     metrics = _evaluate(
         volume,

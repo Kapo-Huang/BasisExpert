@@ -16,11 +16,14 @@ from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.model_stats import collect_model_statistics
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
+from ...utils.temporal_checkpoint import TemporalCheckpointWriter
 from .config import config_payload, experiment_dir_from_config, load_config, save_config
 from .dataset import IonizationTargetReader, IonizationTimestepDataset
 from .model import APMGSRN
 
 logger = logging.getLogger(__name__)
+TIMESTEP_FORMAT = "apmgsrn_timestep_inference_v1"
+BUNDLE_FORMAT = "apmgsrn_temporal_inference_v1"
 
 
 def _resolve_device(requested: str) -> torch.device:
@@ -61,9 +64,9 @@ def _checkpoint_payload(
     target_name: str,
     data_min: float,
     data_max: float,
-    stats: dict[str, int | float],
 ) -> dict[str, Any]:
     return {
+        "format": TIMESTEP_FORMAT,
         "model_state": model.state_dict(),
         "config_hash": str(config_hash),
         "time_index": int(time_index),
@@ -71,15 +74,7 @@ def _checkpoint_payload(
         "model_config": dict(cfg["MODEL"]),
         "data_min": float(data_min),
         "data_max": float(data_max),
-        "stats": dict(stats),
     }
-
-
-def _save_checkpoint(path: str | Path, payload: dict[str, Any]) -> Path:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(payload, target)
-    return target
 
 
 def _build_run_dirs(run_dir: Path) -> dict[str, Path | str]:
@@ -88,6 +83,7 @@ def _build_run_dirs(run_dir: Path) -> dict[str, Path | str]:
         "run_dir": run_dir,
         "run_token": run_dir.name,
         "config_dir": run_dir / "configs",
+        "checkpoints_dir": run_dir / "checkpoints",
         "timesteps_dir": run_dir / "timesteps",
         "logs_dir": run_dir / "logs",
         "predictions_dir": run_dir / "predictions",
@@ -153,7 +149,6 @@ def _can_skip_timestep(entry: dict[str, Any] | None, *, config_hash: str) -> boo
     if str(entry.get("status", "")) != "completed":
         return False
     required_paths = (
-        entry.get("checkpoint_path"),
         entry.get("prediction_path"),
         entry.get("metrics_path"),
     )
@@ -360,22 +355,6 @@ def _train_single_timestep(
                 time.time() - started_at,
             )
 
-        if save_every > 0 and (iteration + 1) % save_every == 0:
-            interval_checkpoint_path = timestep_dir / f"checkpoint_iter{iteration + 1:06d}.pth"
-            _save_checkpoint(
-                interval_checkpoint_path,
-                _checkpoint_payload(
-                    model=model,
-                    cfg=cfg,
-                    config_hash=config_hash,
-                    time_index=time_index,
-                    target_name=cfg["DATA"]["target"],
-                    data_min=dataset.data_min,
-                    data_max=dataset.data_max,
-                    stats=stats,
-                ),
-            )
-
         if probe_recorder is not None and probe_due(iteration + 1, iterations, probe_cfg):
             probe_started = time.perf_counter()
             predictions: list[np.ndarray] = []
@@ -395,34 +374,28 @@ def _train_single_timestep(
             )
             model.train()
 
-    checkpoint_path = _save_checkpoint(
-        timestep_dir / "checkpoint.pth",
-        _checkpoint_payload(
-            model=model,
-            cfg=cfg,
-            config_hash=config_hash,
-            time_index=time_index,
-            target_name=cfg["DATA"]["target"],
-            data_min=dataset.data_min,
-            data_max=dataset.data_max,
-            stats=stats,
-        ),
+    checkpoint_payload = _checkpoint_payload(
+        model=model,
+        cfg=cfg,
+        config_hash=config_hash,
+        time_index=time_index,
+        target_name=cfg["DATA"]["target"],
+        data_min=dataset.data_min,
+        data_max=dataset.data_max,
     )
     if not bool(cfg["EVALUATION"]["run_after_training"]):
         logger.info(
-            "APMGSRN timestep %s complete: checkpoint=%s prediction=<skipped>",
+            "APMGSRN timestep %s complete: prediction=<skipped>",
             _timestep_token(time_index),
-            checkpoint_path,
         )
         return {
             "time_index": int(time_index),
             "status": "completed",
             "config_hash": str(config_hash),
-            "checkpoint_path": str(checkpoint_path),
             "prediction_path": None,
             "metrics_path": None,
-            "checkpoint_bytes": int(checkpoint_path.stat().st_size),
             "model_stats": dict(stats),
+            "checkpoint_payload": checkpoint_payload,
         }
     prediction = dataset.reconstruct(model, batch_size=prediction_batch_size, model_device=train_device)
     prediction_path = timestep_dir / "prediction.npy"
@@ -434,15 +407,13 @@ def _train_single_timestep(
         "mse": mse(dataset.target_array(), prediction),
         "mae": mae(dataset.target_array(), prediction),
         "psnr": psnr(dataset.target_array(), prediction),
-        "checkpoint_bytes": int(checkpoint_path.stat().st_size),
         "elapsed_seconds": float(time.time() - started_at),
     }
     metrics_path = save_metrics(timestep_dir / "metrics.json", timestep_metrics)
     logger.info(
-        "APMGSRN timestep %s complete: psnr=%.4f checkpoint=%s prediction=%s",
+        "APMGSRN timestep %s complete: psnr=%.4f prediction=%s",
         _timestep_token(time_index),
         float(timestep_metrics["psnr"]),
-        checkpoint_path,
         prediction_path,
     )
 
@@ -450,23 +421,23 @@ def _train_single_timestep(
         "time_index": int(time_index),
         "status": "completed",
         "config_hash": str(config_hash),
-        "checkpoint_path": str(checkpoint_path),
         "prediction_path": str(prediction_path),
         "metrics_path": str(metrics_path),
-        "checkpoint_bytes": int(checkpoint_path.stat().st_size),
         "model_stats": dict(stats),
+        "checkpoint_payload": checkpoint_payload,
         "psnr": float(timestep_metrics["psnr"]),
         "mse": float(timestep_metrics["mse"]),
         "mae": float(timestep_metrics["mae"]),
     }
 
 
-def _build_aggregate_artifacts(
+def _build_aggregate_outputs(
     *,
     cfg: dict[str, Any],
     reader: IonizationTargetReader,
     manifest: dict[str, Any],
     run_dir: Path,
+    checkpoint_path: Path,
 ) -> tuple[Path, Path, dict[str, Any]]:
     time_indices = [int(value) for value in cfg["TRAINING"]["time_indices"]]
     spatial_shape = reader.spatial_shape
@@ -481,14 +452,13 @@ def _build_aggregate_artifacts(
     accumulator = PSNRAccumulator()
     total_abs_error = 0.0
     total_count = 0
-    total_checkpoint_bytes = 0
     per_time: list[dict[str, Any]] = []
 
     for position, time_index in enumerate(time_indices):
         token = _timestep_token(time_index)
         entry = manifest["timesteps"].get(token)
         if not _can_skip_timestep(entry, config_hash=str(manifest["config_hash"])):
-            raise FileNotFoundError(f"Missing completed timestep artifacts for {token}")
+            raise FileNotFoundError(f"Missing completed timestep outputs for {token}")
         prediction_slice = np.asarray(np.load(entry["prediction_path"], mmap_mode="r"), dtype=np.float32)
         if tuple(int(value) for value in prediction_slice.shape) != spatial_shape:
             raise ValueError(
@@ -500,7 +470,6 @@ def _build_aggregate_artifacts(
         diff = prediction_slice.astype(np.float64) - target_slice.astype(np.float64)
         total_abs_error += float(np.abs(diff).sum())
         total_count += int(diff.size)
-        total_checkpoint_bytes += int(entry["checkpoint_bytes"])
         per_time.append(
             {
                 "t": int(time_index),
@@ -525,8 +494,8 @@ def _build_aggregate_artifacts(
             "mse": total_squared_error / max(total_count, 1),
             "mae": total_abs_error / max(total_count, 1),
             "psnr": accumulator.compute(),
-            "cr": float(reader.raw_bytes_for_indices(time_indices) / max(total_checkpoint_bytes, 1)),
-            "checkpoint_bytes": int(total_checkpoint_bytes),
+            "cr": float(reader.raw_bytes_for_indices(time_indices) / max(checkpoint_path.stat().st_size, 1)),
+            "checkpoint_bytes": int(checkpoint_path.stat().st_size),
             "raw_target_bytes": int(reader.raw_bytes_for_indices(time_indices)),
         },
         "time_indices": time_indices,
@@ -564,28 +533,53 @@ def run_train(config_path: str | Path, *, target: str | None = None, identifier:
 
         completed_timesteps: list[int] = []
         skipped_timesteps: list[int] = []
-        for time_index in cfg["TRAINING"]["time_indices"]:
-            token = _timestep_token(time_index)
-            result = _train_single_timestep(
-                cfg=cfg,
-                reader=reader,
-                time_index=int(time_index),
-                run_dir=run_dir,
-                config_hash=config_hash,
-                train_device=train_device,
-                data_device=data_device,
-            )
-            manifest["timesteps"][token] = result
-            manifest["status"] = "running"
-            _json_dump(manifest_file, manifest)
-            completed_timesteps.append(int(time_index))
+        checkpoint_path = Path(dirs["checkpoints_dir"]) / f"{cfg['exp_id']}.pth"
+        with TemporalCheckpointWriter(
+            checkpoint_path,
+            metadata={
+                "format": BUNDLE_FORMAT,
+                "model_name": "apmgsrn",
+                "config_hash": config_hash,
+                "target_name": str(cfg["DATA"]["target"]),
+                "volume_shape": dict(cfg["DATA"]["volume_shape"]),
+                "model_config": dict(cfg["MODEL"]),
+            },
+        ) as checkpoint_writer:
+            for time_index in cfg["TRAINING"]["time_indices"]:
+                token = _timestep_token(time_index)
+                result = _train_single_timestep(
+                    cfg=cfg,
+                    reader=reader,
+                    time_index=int(time_index),
+                    run_dir=run_dir,
+                    config_hash=config_hash,
+                    train_device=train_device,
+                    data_device=data_device,
+                )
+                checkpoint_writer.write_timestep(
+                    int(time_index), result.pop("checkpoint_payload")
+                )
+                manifest["timesteps"][token] = result
+                manifest["status"] = "running"
+                _json_dump(manifest_file, manifest)
+                completed_timesteps.append(int(time_index))
+
+        checkpoint_bytes = int(checkpoint_path.stat().st_size)
+        raw_target_bytes = int(reader.raw_bytes_for_indices(cfg["TRAINING"]["time_indices"]))
+        checkpoint_summary = {
+            "checkpoint_path": str(checkpoint_path),
+            "checkpoint_bytes": checkpoint_bytes,
+            "raw_target_bytes": raw_target_bytes,
+            "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
+        }
 
         if bool(cfg["EVALUATION"]["run_after_training"]):
-            prediction_path, metrics_path, aggregate_payload = _build_aggregate_artifacts(
+            prediction_path, metrics_path, aggregate_payload = _build_aggregate_outputs(
                 cfg=cfg,
                 reader=reader,
                 manifest=manifest,
                 run_dir=run_dir,
+                checkpoint_path=checkpoint_path,
             )
             manifest["aggregate"] = {
                 "prediction_path": str(prediction_path),
@@ -606,6 +600,7 @@ def run_train(config_path: str | Path, *, target: str | None = None, identifier:
             )
             result_payload: dict[str, Any] = {
                 "run_dir": str(run_dir),
+                **checkpoint_summary,
                 "manifest_path": str(manifest_file),
                 "prediction_path": str(prediction_path),
                 "metrics_path": str(metrics_path),
@@ -613,24 +608,19 @@ def run_train(config_path: str | Path, *, target: str | None = None, identifier:
                 "skipped_timesteps": skipped_timesteps,
             }
         else:
-            total_checkpoint_bytes = sum(
-                int(entry.get("checkpoint_bytes", 0))
-                for entry in manifest["timesteps"].values()
-                if isinstance(entry, dict)
-            )
             manifest["aggregate"] = {
                 "prediction_path": None,
                 "metrics_path": None,
-                "checkpoint_bytes": int(total_checkpoint_bytes),
-                "raw_target_bytes": int(reader.raw_bytes_for_indices(cfg["TRAINING"]["time_indices"])),
+                **checkpoint_summary,
             }
             logger.info(
                 "APMGSRN aggregate prediction skipped: completed=%d checkpoint_bytes=%d",
                 len(completed_timesteps),
-                int(total_checkpoint_bytes),
+                checkpoint_bytes,
             )
             result_payload = {
                 "run_dir": str(run_dir),
+                **checkpoint_summary,
                 "manifest_path": str(manifest_file),
                 "completed_timesteps": completed_timesteps,
                 "skipped_timesteps": skipped_timesteps,

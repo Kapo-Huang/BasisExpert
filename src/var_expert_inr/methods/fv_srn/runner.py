@@ -18,11 +18,10 @@ from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.model_stats import collect_model_statistics
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
-from .checkpoint import load_payload, restore_rng, save_checkpoint, validate
 from .config import load_config, save_config
 from .data import SamplePool, TemporalVolume, build_sample_pool
 from .model import TemporalFVSRN
-from .quantization import export_compact, load_compact
+from .quantization import load_inference_checkpoint, save_inference_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,6 @@ def _dirs(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
         "run": run_dir,
         "configs": run_dir / "configs",
         "checkpoints": run_dir / "checkpoints",
-        "artifacts": run_dir / "artifacts",
         "predictions": run_dir / "predictions",
         "metrics": run_dir / "metrics",
         "logs": run_dir / "logs",
@@ -78,7 +76,7 @@ def _run_for_path(cfg: dict, path: str | Path | None) -> dict[str, Path]:
     if path is None:
         return _latest_run(cfg)
     resolved = Path(path).resolve()
-    if resolved.parent.name in {"artifacts", "checkpoints"}:
+    if resolved.parent.name == "checkpoints":
         return _dirs(resolved.parent.parent)
     return _latest_run(cfg)
 
@@ -149,24 +147,13 @@ def _load_inference_model(
     cfg: dict,
     *,
     device: torch.device,
-    artifact: str | Path | None,
     checkpoint: str | Path | None,
     dirs: dict[str, Path],
 ):
-    if artifact is None and checkpoint is None:
-        if cfg["evaluation"]["default_model"] == "compact":
-            artifact = dirs["artifacts"] / f"{cfg['exp_id']}.pt"
-        else:
-            checkpoint = dirs["checkpoints"] / f"{cfg['exp_id']}.pth"
-    if artifact is not None:
-        model, payload = load_compact(artifact, device=device)
-        if payload["target_name"] != cfg["data"]["target"] or payload["volume_shape"] != cfg["data"]["volume_shape"]:
-            raise ValueError("Compact fV-SRN artifact does not match target or volume shape")
-        return model, Path(artifact), payload
-    payload = load_payload(checkpoint)
-    validate(payload, cfg)
-    model = TemporalFVSRN(cfg["model"]).to(device)
-    model.load_state_dict(payload["model_state"])
+    checkpoint = checkpoint or dirs["checkpoints"] / f"{cfg['exp_id']}.pth"
+    model, payload = load_inference_checkpoint(checkpoint, device=device)
+    if payload["target_name"] != cfg["data"]["target"] or payload["volume_shape"] != cfg["data"]["volume_shape"]:
+        raise ValueError("fV-SRN checkpoint does not match target or volume shape")
     return model, Path(checkpoint), payload
 
 
@@ -212,7 +199,7 @@ def _evaluate(volume: TemporalVolume, prediction_path: Path, model_path: Path) -
         absolute_error += float(np.sum(np.abs(diff)))
         total_count += int(diff.size)
         per_time.append({"t": t, "mse": mse(gt, pred), "mae": mae(gt, pred), "psnr": psnr(gt, pred)})
-    model_bytes = int(model_path.stat().st_size)
+    checkpoint_bytes = int(model_path.stat().st_size)
     return {
         "target": volume.path,
         "per_time": per_time,
@@ -221,13 +208,13 @@ def _evaluate(volume: TemporalVolume, prediction_path: Path, model_path: Path) -
             "mae": absolute_error / total_count,
             "psnr": accumulator.compute(),
             "raw_target_bytes": int(volume.raw_bytes),
-            "model_bytes": model_bytes,
-            "cr": float(volume.raw_bytes / max(model_bytes, 1)),
+            "checkpoint_bytes": checkpoint_bytes,
+            "cr": float(volume.raw_bytes / max(checkpoint_bytes, 1)),
         },
     }
 
 
-def run_train(config_path: str | Path, *, target: str | None = None, resume: str | Path | None = None) -> dict:
+def run_train(config_path: str | Path, *, target: str | None = None) -> dict:
     apply_runtime_thread_limits()
     cfg = load_config(config_path, target_override=target)
     config_hash = _hash(cfg)
@@ -254,26 +241,14 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
                 step_size=int(cfg["training"]["lr_step"]),
                 gamma=float(cfg["training"]["lr_gamma"]),
             )
-        start_epoch = 0
         rng = np.random.default_rng(int(cfg["training"]["seed"]))
-        if resume:
-            payload = load_payload(resume)
-            validate(payload, cfg, config_hash=config_hash)
-            model.load_state_dict(payload["model_state"])
-            optimizer.load_state_dict(payload["optimizer_state"])
-            scheduler.load_state_dict(payload["scheduler_state"])
-            pool = SamplePool.from_state_dict(payload["sample_pool"])
-            start_epoch = int(payload["epoch"])
-            restore_rng(payload)
-            rng.bit_generator.state = payload["sampler_rng_state"]
-        else:
-            pool = build_sample_pool(
-                volume,
-                count_per_timestep=int(cfg["training"]["samples_per_timestep"]),
-                validation_fraction=float(cfg["training"]["validation_fraction"]),
-                floor=float(cfg["training"]["importance_floor"]),
-                rng=rng,
-            )
+        pool = build_sample_pool(
+            volume,
+            count_per_timestep=int(cfg["training"]["samples_per_timestep"]),
+            validation_fraction=float(cfg["training"]["validation_fraction"]),
+            floor=float(cfg["training"]["importance_floor"]),
+            rng=rng,
+        )
         logger.info("fV-SRN model statistics: %s", collect_model_statistics(model))
         from ...utils.exploration_probe import (
             ExplorationProbeRecorder,
@@ -285,7 +260,7 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
 
         probe_cfg = normalize_probe(cfg.get("exploration_probe"))
         probe_recorder = ExplorationProbeRecorder(dirs["metrics"], probe_cfg) if probe_cfg.enabled else None
-        for epoch in range(start_epoch, int(cfg["training"]["epochs"])):
+        for epoch in range(int(cfg["training"]["epochs"])):
             if cfg["training"]["rebuild_every"] and (epoch + 1) % int(cfg["training"]["rebuild_every"]) == 0:
                 errors = _error_grids(model, volume, cfg["training"], device=device, rng=rng)
                 pool = build_sample_pool(
@@ -319,11 +294,11 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
                     val_loss, scheduler.get_last_lr()[0],
                 )
             if cfg["training"]["save_every"] and (epoch + 1) % int(cfg["training"]["save_every"]) == 0:
-                save_checkpoint(
-                    dirs["checkpoints"] / f"epoch_{epoch + 1:04d}.pth",
-                    model=model, optimizer=optimizer, scheduler=scheduler, epoch=epoch + 1,
-                    cfg=cfg, config_hash=config_hash, sample_pool=pool,
-                    sampler_rng_state=rng.bit_generator.state,
+                save_inference_checkpoint(
+                    model=model, cfg=cfg, target_name=cfg["data"]["target"],
+                    volume_shape=cfg["data"]["volume_shape"],
+                    path=dirs["checkpoints"] / f"epoch_{epoch + 1:04d}.pth",
+                    config_hash=config_hash,
                 )
             if probe_recorder is not None and probe_due(epoch + 1, int(cfg["training"]["epochs"]), probe_cfg):
                 probe_started = time.perf_counter()
@@ -342,27 +317,20 @@ def run_train(config_path: str | Path, *, target: str | None = None, resume: str
                     elapsed_seconds=time.perf_counter() - probe_started,
                 )
                 model.train()
-        checkpoint = save_checkpoint(
-            dirs["checkpoints"] / f"{cfg['exp_id']}.pth",
-            model=model, optimizer=optimizer, scheduler=scheduler, epoch=int(cfg["training"]["epochs"]),
-            cfg=cfg, config_hash=config_hash, sample_pool=pool,
-            sampler_rng_state=rng.bit_generator.state,
-        )
-        artifact, artifact_payload = export_compact(
+        checkpoint, checkpoint_payload = save_inference_checkpoint(
             model=model, cfg=cfg, target_name=cfg["data"]["target"],
             volume_shape=cfg["data"]["volume_shape"],
-            path=dirs["artifacts"] / f"{cfg['exp_id']}.pt", config_hash=config_hash,
+            path=dirs["checkpoints"] / f"{cfg['exp_id']}.pth", config_hash=config_hash,
         )
         summary = {
             "checkpoint_path": str(checkpoint),
-            "artifact_path": str(artifact),
-            "artifact_bytes": int(artifact_payload["artifact_bytes"]),
+            "checkpoint_bytes": int(checkpoint_payload["checkpoint_bytes"]),
             "raw_target_bytes": int(volume.raw_bytes),
-            "compact_cr": float(volume.raw_bytes / artifact_payload["artifact_bytes"]),
+            "cr": float(volume.raw_bytes / checkpoint_payload["checkpoint_bytes"]),
         }
         (dirs["metrics"] / "training_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         if cfg["evaluation"]["run_after_training"]:
-            evaluated = run_evaluate(config_path, target=target, artifact=artifact)
+            evaluated = run_evaluate(config_path, target=target, checkpoint=checkpoint)
             summary.update(evaluated)
         return summary
     finally:
@@ -373,16 +341,14 @@ def run_predict(
     config_path: str | Path,
     *,
     target: str | None = None,
-    artifact: str | Path | None = None,
     checkpoint: str | Path | None = None,
 ) -> dict:
     cfg = load_config(config_path, target_override=target)
-    explicit = artifact or checkpoint
-    dirs = _run_for_path(cfg, explicit)
+    dirs = _run_for_path(cfg, checkpoint)
     device = _device(cfg["training"]["device"])
     volume = TemporalVolume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
     model, model_path, _ = _load_inference_model(
-        cfg, device=device, artifact=artifact, checkpoint=checkpoint, dirs=dirs
+        cfg, device=device, checkpoint=checkpoint, dirs=dirs
     )
     prediction_path = _predict(
         model, volume, device=device, batch_size=int(cfg["evaluation"]["batch_size"]),
@@ -395,14 +361,13 @@ def run_evaluate(
     config_path: str | Path,
     *,
     target: str | None = None,
-    artifact: str | Path | None = None,
     checkpoint: str | Path | None = None,
 ) -> dict:
     prediction_result = run_predict(
-        config_path, target=target, artifact=artifact, checkpoint=checkpoint
+        config_path, target=target, checkpoint=checkpoint
     )
     cfg = load_config(config_path, target_override=target)
-    dirs = _run_for_path(cfg, artifact or checkpoint or prediction_result["model_path"])
+    dirs = _run_for_path(cfg, checkpoint or prediction_result["model_path"])
     volume = TemporalVolume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
     metrics = _evaluate(
         volume, Path(prediction_result["prediction_path"]), Path(prediction_result["model_path"])

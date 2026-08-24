@@ -167,9 +167,9 @@ class EvaluationConfig:
         if isinstance(self.targets, list):
             object.__setattr__(self, "targets", tuple(str(item) for item in self.targets))
         normalized_source = str(self.source).strip().lower()
-        if normalized_source not in {"auto", "checkpoint", "artifact", "prediction"}:
+        if normalized_source not in {"auto", "checkpoint", "prediction"}:
             raise ValueError(
-                "evaluation.source must be auto, checkpoint, artifact, or prediction"
+                "evaluation.source must be auto, checkpoint, or prediction"
             )
         object.__setattr__(self, "source", normalized_source)
         if int(self.batch_size) <= 0:

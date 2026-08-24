@@ -67,10 +67,10 @@ MINER is integrated as a self-contained PyTorch subsystem. It trains one
 scalar spatial field per timestep: Ionization uses the published 3D path with
 four scales and `16^3` blocks, while the `128x128` Combustion fields use the
 published 2D `32x32` blocks and automatically reduce to three compatible
-scales. Training writes scale-complete and final timestep checkpoints under
-the timestamped run. Resume a partial run with `--resume <run-or-scale-path>`;
-run-based evaluation decodes only the requested timesteps. The external
-reference checkout is not required at runtime.
+scales. Formal training streams every timestep payload into one atomic
+`checkpoints/<exp_id>.pth` bundle; it does not write scale or timestep
+checkpoints. Run-based evaluation reads only the requested bundle members. The
+external reference checkout is not required at runtime.
 
 ## Evaluation
 
@@ -275,8 +275,8 @@ epoch-equivalent budgets and fixed 1% PSNR probes are isolated under
 `batch_logs/exploration/<timestamp>/`. Each run writes
 `metrics/exploration_psnr.tsv` at progress `5/50` through `50/50`. The batch
 also writes `exploration_summary.tsv`, including the averaged trajectory,
-final PSNR, NaN/Inf flag, scope count, and final training status. Resume works
-the same way by setting `BATCH_LOG_ROOT` to an existing exploration batch.
+final PSNR, NaN/Inf flag, scope count, and final training status. Reusing an
+existing `BATCH_LOG_ROOT` continues batch bookkeeping without resuming models.
 
 When running without installation, this repository ships a small package shim so
 `python -m var_expert_inr.cli` works directly from the repo root.
@@ -403,8 +403,8 @@ registry or training engine.
 `var_expert_inr.methods.apmgsrn`. It currently only supports single-target `ionization`
 volume training by fitting one 3D APMGSRN model per timestep. Each training run
 creates a fresh `runs/<exp_id>/<timestamp>/` directory containing `manifest.json`,
-`configs/config.yaml`, aggregate outputs, and per-timestep artifacts under
-`timesteps/`, and it does not participate in the main `var_expert_inr.cli`
+`configs/config.yaml`, aggregate outputs, per-timestep metrics/cache, and one
+atomic `checkpoints/<exp_id>.pth` inference bundle. It does not participate in the main `var_expert_inr.cli`
 model registry.
 
 `fv_srn` is a standalone, pure-PyTorch reproduction of temporal fV-SRN.
@@ -412,17 +412,17 @@ It uses NeRF spatial Fourier features, a small SnakeAlt MLP, and learned
 volumetric feature grids at configurable temporal keyframes. Intermediate
 timesteps linearly interpolate their two neighboring grids. Training uses
 world-space L1/L2 losses, density-guided initial sampling, and periodic
-error-guided resampling. Runs save resumable FP32 checkpoints and compact
-inference artifacts containing FP16 network weights and per-channel uint8
-latent grids.
+error-guided resampling. The final checkpoint is the compact inference model:
+FP16 network weights and per-channel uint8 latent grids, with no optimizer,
+sampling-pool, scheduler, RNG, or training-progress state.
 
 `rmdsrn` is a standalone temporal RMDSRN built on the same keyframe-interpolated
 fV-SRN encoder. Five independent SnakeAlt decoders share the feature grid and
 produce a reconstruction mean and unbiased ensemble variance. Training combines
 per-member MSE with a detached-error KL variance regularizer whose weight grows
-exponentially while the learning rate follows cosine annealing. Checkpoints are
-resumable; FP32 inference artifacts contain only the shared encoder and decoder
-parameters. Prediction writes separate `_mean.npy` and `_variance.npy` volumes,
+exponentially while the learning rate follows cosine annealing. Its final
+checkpoint contains only the shared encoder and decoder inference parameters.
+Prediction writes separate `_mean.npy` and `_variance.npy` volumes,
 and evaluation reports reconstruction quality, variance-error Pearson
 correlation, and sampled top-1%/top-5% hit rates.
 
@@ -430,14 +430,13 @@ correlation, and sampled top-1%/top-5% hit rates.
 volumes. It clusters normalized spatial blocks deterministically, trains packed
 local SIREN MLPs from coarse content to fine residuals, applies block-guided
 pruning and global codebook quantization, then runs a halo-correct tiled 3D CNN.
-Its `.ecnr` artifact Huffman-encodes masks, assignments, and quantization
+Its final `.pth` checkpoint Huffman-encodes masks, assignments, and quantization
 labels. Primary training and quantization-aware fine-tuning each perform a
 configured number of complete shuffled passes over the current scale per
 epoch. The final partial batch is not padded, and the resulting cost scales
 with the effective block count and packed MLP count instead of using a fixed
-14.4-billion-sample budget. Scale-boundary checkpoints can be resumed with
-`train --config <config> --resume <scale_checkpoint.pth>`; compact inference
-uses `predict/evaluate --config <config> --artifact <model.ecnr>`. Each run also
+14.4-billion-sample budget. Formal training saves only the completed inference
+checkpoint. Inference uses `predict/evaluate --config <config> --checkpoint <model.pth>`. Each run also
 writes `metrics/training_cost.json`, including full-pass plans, logical samples,
 packed-MLP prediction counts, optimizer steps, phase timings, and peak CUDA
 memory. Long-running epochs emit time-based progress heartbeats.

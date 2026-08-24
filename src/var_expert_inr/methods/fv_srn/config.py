@@ -54,7 +54,7 @@ DEFAULT_EVALUATION = {
     "batch_size": 65536,
     "save_predictions": True,
     "run_after_training": True,
-    "default_model": "compact",
+    "default_model": "checkpoint",
 }
 DEFAULT_LOG = {
     "effective_config": True,
@@ -196,8 +196,8 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     evaluation = {**DEFAULT_EVALUATION, **_mapping(cfg.get("evaluation"), "evaluation")}
     _reject(evaluation, set(DEFAULT_EVALUATION), "evaluation")
     evaluation["batch_size"] = _positive(evaluation["batch_size"], "evaluation.batch_size", integer=True)
-    if evaluation["default_model"] not in {"compact", "checkpoint"}:
-        raise ValueError("evaluation.default_model must be compact or checkpoint")
+    if evaluation["default_model"] != "checkpoint":
+        raise ValueError("evaluation.default_model must be checkpoint")
     cfg["evaluation"] = evaluation
     log = {**DEFAULT_LOG, **_mapping(cfg.get("log"), "log")}
     _reject(log, set(DEFAULT_LOG), "log")

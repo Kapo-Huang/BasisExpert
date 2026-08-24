@@ -67,7 +67,7 @@ evaluation:
   batch_size: 16000
   save_predictions: false
   run_after_training: false
-  default_model: compact
+  default_model: checkpoint
 exploration_probe:
   enabled: true
   total_epoch_equivalents: 50

@@ -193,6 +193,8 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
     if checkpoint_path is None:
         checkpoint_path = dirs["checkpoint_dir"] / f"{config.exp_id}.pth"
     payload = read_checkpoint_payload(checkpoint_path)
+    if payload.get("format") != "inference_checkpoint_v1":
+        raise ValueError(f"Unsupported inference checkpoint: {payload.get('format')!r}")
     validate_checkpoint_target_order(payload, dataset.target_names())
     model.load_state_dict(payload["model_state"])
     predictions = predict_dataset(
@@ -206,18 +208,16 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
     return {"checkpoint_path": checkpoint_path, "predictions": predictions, "prediction_paths": prediction_paths}
 
 
-def run_train(config_path: str | Path, *, resume_path: str | Path | None = None) -> dict:
+def run_train(config_path: str | Path) -> dict:
     configured_method = _configured_method(config_path)
     if configured_method == "ecnr":
         from .methods.ecnr.runner import run_train as run_ecnr_train
 
-        return run_ecnr_train(config_path, resume=resume_path)
+        return run_ecnr_train(config_path)
     if configured_method == "miner":
         from .methods.miner.runner import run_train as run_miner_train
 
-        return run_miner_train(config_path, resume=resume_path)
-    if resume_path is not None:
-        raise ValueError("--resume is currently supported by ECNR and MINER only in the unified CLI")
+        return run_miner_train(config_path)
     apply_runtime_thread_limits()
     train_started_at = time.perf_counter()
     try:
@@ -274,25 +274,16 @@ def run_train(config_path: str | Path, *, resume_path: str | Path | None = None)
 def run_predict(
     config_path: str | Path,
     checkpoint_path: str | Path | None = None,
-    artifact_path: str | Path | None = None,
 ) -> dict:
     configured_method = _configured_method(config_path)
     if configured_method == "ecnr":
         from .methods.ecnr.runner import run_predict as run_ecnr_predict
 
-        return run_ecnr_predict(
-            config_path,
-            checkpoint=checkpoint_path,
-            artifact=artifact_path,
-        )
+        return run_ecnr_predict(config_path, checkpoint=checkpoint_path)
     if configured_method == "miner":
-        if artifact_path is not None:
-            raise ValueError("MINER does not define a compact artifact format")
         from .methods.miner.runner import run_predict as run_miner_predict
 
         return run_miner_predict(config_path, checkpoint=checkpoint_path)
-    if artifact_path is not None:
-        raise ValueError("artifact_path is supported by ECNR only")
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(
@@ -311,25 +302,16 @@ def run_predict(
 def run_evaluate(
     config_path: str | Path,
     checkpoint_path: str | Path | None = None,
-    artifact_path: str | Path | None = None,
 ) -> dict:
     configured_method = _configured_method(config_path)
     if configured_method == "ecnr":
         from .methods.ecnr.runner import run_evaluate as run_ecnr_evaluate
 
-        return run_ecnr_evaluate(
-            config_path,
-            checkpoint=checkpoint_path,
-            artifact=artifact_path,
-        )
+        return run_ecnr_evaluate(config_path, checkpoint=checkpoint_path)
     if configured_method == "miner":
-        if artifact_path is not None:
-            raise ValueError("MINER does not define a compact artifact format")
         from .methods.miner.runner import run_evaluate as run_miner_evaluate
 
         return run_miner_evaluate(config_path, checkpoint=checkpoint_path)
-    if artifact_path is not None:
-        raise ValueError("artifact_path is supported by ECNR only")
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device, _ = _prepare_runtime(
@@ -358,13 +340,10 @@ def parse_args() -> argparse.Namespace:
 
     train_parser = subparsers.add_parser("train", help="Train a model")
     train_parser.add_argument("--config", required=True, help="Path to the experiment config")
-    train_parser.add_argument("--resume", default=None, help="Optional ECNR scale checkpoint to resume")
 
     predict_parser = subparsers.add_parser("predict", help="Generate predictions from a checkpoint")
     predict_parser.add_argument("--config", required=True, help="Path to the experiment config")
-    predict_source = predict_parser.add_mutually_exclusive_group()
-    predict_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
-    predict_source.add_argument("--artifact", default=None, help="Optional inference artifact (.ecnr for ECNR)")
+    predict_parser.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a run or checkpoint")
     eval_identity = eval_parser.add_mutually_exclusive_group(required=True)
@@ -372,9 +351,8 @@ def parse_args() -> argparse.Namespace:
     eval_identity.add_argument("--run", help="Path to an existing run directory")
     eval_source = eval_parser.add_mutually_exclusive_group()
     eval_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
-    eval_source.add_argument("--artifact", default=None, help="Optional inference artifact (.ecnr for ECNR)")
     eval_source.add_argument("--prediction", default=None, help="Optional prediction file or directory")
-    eval_parser.add_argument("--source", choices=("auto", "checkpoint", "artifact", "prediction"), default=None)
+    eval_parser.add_argument("--source", choices=("auto", "checkpoint", "prediction"), default=None)
     eval_parser.add_argument("--metrics", default=None, help="Comma-separated: psnr,ssim,lpips,decode_time,memory")
     eval_parser.add_argument("--timesteps", default=None, help="all, N, start:end[:step], or comma combinations")
     eval_parser.add_argument("--targets", default=None, help="all or comma-separated target names")
@@ -388,14 +366,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.command == "train":
-        result = run_train(args.config, resume_path=args.resume)
+        result = run_train(args.config)
         logger.info("Training completed. Checkpoint: %s", result["checkpoint_path"])
         return
     if args.command == "predict":
         result = run_predict(
             args.config,
             checkpoint_path=args.checkpoint,
-            artifact_path=args.artifact,
         )
         logger.info(
             "Predictions saved: %s",
@@ -409,10 +386,10 @@ def main() -> None:
             run_dir = Path(args.run)
         else:
             loaded = load_experiment_config(args.config)
-            source_path = args.checkpoint or args.artifact
+            source_path = args.checkpoint
             if source_path:
                 candidate = Path(source_path).resolve()
-                run_dir = candidate.parent.parent if candidate.parent.name in {"checkpoints", "artifacts"} else candidate.parent
+                run_dir = candidate.parent.parent if candidate.parent.name == "checkpoints" else candidate.parent
             else:
                 run_dir = _resolve_latest_run_dir(loaded)
         result = evaluate_run(
@@ -422,7 +399,6 @@ def main() -> None:
             targets=args.targets,
             source=args.source,
             checkpoint=args.checkpoint,
-            artifact=args.artifact,
             prediction=args.prediction,
             render=args.render,
             render_profile=args.eval_config,

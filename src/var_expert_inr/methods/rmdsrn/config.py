@@ -67,7 +67,7 @@ EVALUATION_DEFAULTS = {
     "save_mean": True,
     "save_variance": True,
     "run_after_training": True,
-    "default_model": "artifact",
+    "default_model": "checkpoint",
     "uncertainty_sample_size": 1_000_000,
     "topk_fractions": [0.01, 0.05],
     "seed": 42,
@@ -261,8 +261,8 @@ def _normalize_evaluation(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("RMDSRN evaluation requires save_mean=true and save_variance=true")
     evaluation["run_after_training"] = bool(evaluation["run_after_training"])
     evaluation["default_model"] = str(evaluation["default_model"]).strip().lower()
-    if evaluation["default_model"] not in {"artifact", "checkpoint"}:
-        raise ValueError("evaluation.default_model must be 'artifact' or 'checkpoint'")
+    if evaluation["default_model"] != "checkpoint":
+        raise ValueError("evaluation.default_model must be 'checkpoint'")
     fractions = [float(value) for value in evaluation["topk_fractions"]]
     if not fractions or any(value <= 0.0 or value >= 1.0 for value in fractions):
         raise ValueError("evaluation.topk_fractions must contain values in (0, 1)")

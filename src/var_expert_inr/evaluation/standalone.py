@@ -76,24 +76,13 @@ def _target_paths(raw: dict[str, Any], *, repo_root: Path, config_path: Path) ->
     return {str(selected): result[str(selected)]} if selected and str(selected) in result else result
 
 
-def _find_source(run_dir: Path, subsystem: str, requested: str, checkpoint, artifact, prediction):
+def _find_source(run_dir: Path, subsystem: str, requested: str, checkpoint, prediction):
     if prediction:
         return "prediction", Path(prediction).resolve()
-    if artifact:
-        return "artifact", Path(artifact).resolve()
     if checkpoint:
         return "checkpoint", Path(checkpoint).resolve()
     predictions = sorted((run_dir / "predictions").glob("*.npy")) if (run_dir / "predictions").exists() else []
-    artifacts = sorted((run_dir / "artifacts").glob("*")) if (run_dir / "artifacts").exists() else []
     checkpoints = sorted((run_dir / "checkpoints").glob("*.pth")) if (run_dir / "checkpoints").exists() else []
-    if subsystem in {"apmgsrn", "miner"}:
-        timestep_checkpoints = sorted((run_dir / "timesteps").glob("t*/checkpoint.pth"))
-        if requested in {"auto", "checkpoint"} and timestep_checkpoints:
-            return "checkpoint", run_dir / "timesteps"
-    if requested in {"auto", "artifact"} and artifacts:
-        return "artifact", artifacts[-1]
-    if requested == "artifact":
-        raise FileNotFoundError(f"No artifact found under {run_dir / 'artifacts'}")
     if requested in {"auto", "checkpoint"} and checkpoints:
         finals = [path for path in checkpoints if "epoch" not in path.stem and "iter" not in path.stem]
         return "checkpoint", (finals[-1] if finals else checkpoints[-1])
@@ -101,11 +90,6 @@ def _find_source(run_dir: Path, subsystem: str, requested: str, checkpoint, arti
         raise FileNotFoundError(f"No checkpoint found under {run_dir / 'checkpoints'}")
     if predictions:
         return "prediction", predictions[0]
-    if subsystem == "neural_expert":
-        validate = run_dir / "validate_artifacts"
-        candidates = sorted(validate.glob("*.pth")) if validate.exists() else []
-        if candidates:
-            return "checkpoint", candidates[-1]
     raise FileNotFoundError(f"No evaluation source found for {subsystem} under {run_dir}")
 
 
@@ -133,15 +117,11 @@ def _decode_miner_frames(
         raise ValueError("MINER checkpoints contain one scalar target per run")
     decoded: dict[tuple[str, int], np.ndarray] = {}
     for timestep in timesteps:
-        if source_root.is_file():
-            checkpoint_path = source_root
-        else:
-            checkpoint_path = source_root / f"t{int(timestep):04d}" / "checkpoint.pth"
-        if not checkpoint_path.is_file():
+        if not source_root.is_file():
             raise FileNotFoundError(
-                f"Missing MINER checkpoint for timestep {timestep}: {checkpoint_path}"
+                f"Missing MINER checkpoint bundle: {source_root}"
             )
-        frame = decode_checkpoint(checkpoint_path, device=device)
+        frame = decode_checkpoint(source_root, time_index=timestep, device=device)
         if shape_tzyx[1] == 1 and frame.ndim == 2:
             frame = frame[None, ...]
         expected = tuple(int(value) for value in shape_tzyx[1:])
@@ -169,6 +149,7 @@ def _decode_apmgsrn_frames(
     device: torch.device,
 ) -> dict[tuple[str, int], np.ndarray]:
     from ..methods.apmgsrn.model import APMGSRN
+    from ..utils.temporal_checkpoint import TemporalCheckpointReader
 
     if len(targets) != 1:
         raise ValueError("APMGSRN checkpoints contain one target per run")
@@ -177,47 +158,51 @@ def _decode_apmgsrn_frames(
     _, z_size, y_size, x_size = shape_tzyx
     spatial_size = int(z_size * y_size * x_size)
     decoded: dict[tuple[str, int], np.ndarray] = {}
-    for timestep in timesteps:
-        checkpoint_path = source_root if source_root.is_file() else source_root / f"t{int(timestep):03d}" / "checkpoint.pth"
-        if not checkpoint_path.is_file():
-            raise FileNotFoundError(f"Missing APMGSRN checkpoint for timestep {timestep}: {checkpoint_path}")
-        payload = _load_torch_payload(checkpoint_path, device)
-        if int(payload.get("time_index", timestep)) != int(timestep):
-            raise ValueError(f"APMGSRN checkpoint time_index mismatch: {checkpoint_path}")
-        checkpoint_target = str(payload.get("target_name", targets[0]))
-        if checkpoint_target != targets[0]:
-            raise ValueError(
-                f"APMGSRN checkpoint target mismatch: expected {targets[0]!r}, got {checkpoint_target!r}"
-            )
-        model_cfg = dict(payload.get("model_config") or raw.get("MODEL") or {})
-        state = payload["model_state"]
-        uses_tcnn_state = any(str(key).startswith("decoder.params") for key in state)
-        model = APMGSRN(
-            model_cfg,
-            data_min=float(payload["data_min"]),
-            data_max=float(payload["data_max"]),
-            use_tcnn=uses_tcnn_state,
-        ).to(device)
-        model.load_state_dict(state, strict=True)
-        model.eval()
-        flat_output = np.empty((spatial_size, int(model.n_outputs)), dtype=np.float32)
-        with torch.inference_mode():
-            for start in range(0, spatial_size, batch_size):
-                stop = min(spatial_size, start + batch_size)
-                rows = np.arange(start, stop, dtype=np.int64)
-                x = rows % x_size
-                remaining = rows // x_size
-                y = remaining % y_size
-                z = remaining // y_size
-                coords = np.stack(
-                    [_normalized_axis(x, x_size), _normalized_axis(y, y_size), _normalized_axis(z, z_size)],
-                    axis=1,
+    with TemporalCheckpointReader(
+        source_root, expected_format="apmgsrn_temporal_inference_v1"
+    ) as checkpoint_reader:
+        for timestep in timesteps:
+            payload = checkpoint_reader.load_timestep(timestep, map_location=device)
+            if payload.get("format") != "apmgsrn_timestep_inference_v1":
+                raise ValueError(
+                    f"Unsupported APMGSRN timestep payload: {payload.get('format')!r}"
                 )
-                batch = torch.from_numpy(coords).to(device, non_blocking=True)
-                flat_output[start:stop] = model(batch).detach().cpu().numpy().astype(np.float32, copy=False)
-        frame = flat_output.reshape(z_size, y_size, x_size, int(model.n_outputs))
-        decoded[(targets[0], int(timestep))] = frame[..., 0] if int(model.n_outputs) == 1 else frame
-        del model
+            if int(payload.get("time_index", timestep)) != int(timestep):
+                raise ValueError(f"APMGSRN checkpoint time_index mismatch: {timestep}")
+            checkpoint_target = str(payload.get("target_name", targets[0]))
+            if checkpoint_target != targets[0]:
+                raise ValueError(
+                    f"APMGSRN checkpoint target mismatch: expected {targets[0]!r}, got {checkpoint_target!r}"
+                )
+            model_cfg = dict(payload.get("model_config") or raw.get("MODEL") or {})
+            state = payload["model_state"]
+            uses_tcnn_state = any(str(key).startswith("decoder.params") for key in state)
+            model = APMGSRN(
+                model_cfg,
+                data_min=float(payload["data_min"]),
+                data_max=float(payload["data_max"]),
+                use_tcnn=uses_tcnn_state,
+            ).to(device)
+            model.load_state_dict(state, strict=True)
+            model.eval()
+            flat_output = np.empty((spatial_size, int(model.n_outputs)), dtype=np.float32)
+            with torch.inference_mode():
+                for start in range(0, spatial_size, batch_size):
+                    stop = min(spatial_size, start + batch_size)
+                    rows = np.arange(start, stop, dtype=np.int64)
+                    x = rows % x_size
+                    remaining = rows // x_size
+                    y = remaining % y_size
+                    z = remaining // y_size
+                    coords = np.stack(
+                        [_normalized_axis(x, x_size), _normalized_axis(y, y_size), _normalized_axis(z, z_size)],
+                        axis=1,
+                    )
+                    batch = torch.from_numpy(coords).to(device, non_blocking=True)
+                    flat_output[start:stop] = model(batch).detach().cpu().numpy().astype(np.float32, copy=False)
+            frame = flat_output.reshape(z_size, y_size, x_size, int(model.n_outputs))
+            decoded[(targets[0], int(timestep))] = frame[..., 0] if int(model.n_outputs) == 1 else frame
+            del model
     return decoded
 
 
@@ -265,7 +250,9 @@ def _decode_neural_expert_frames(
             raise ValueError(f"Unsupported NeuralExpert mesh model: {model_name!r}")
     model = ModelClass(raw)
     payload = _load_torch_payload(source_path, device)
-    state = payload.get("model_state", payload)
+    if payload.get("format") != "neural_expert_inference_v1":
+        raise ValueError(f"Unsupported NeuralExpert checkpoint: {payload.get('format')!r}")
+    state = payload["model_state"]
     model.load_state_dict(state, strict=True)
     model = model.to(device).eval()
     x_mean = np.asarray(payload.get("x_mean", 0.0), dtype=np.float32).reshape(1, -1)
@@ -319,13 +306,13 @@ def _invoke_predict(subsystem: str, config_path: Path, source_kind: str, source_
         return run_predict(config_path, checkpoint_path=source_path if source_kind == "checkpoint" else None)
     if subsystem == "fv_srn":
         from ..methods.fv_srn.runner import run_predict
-        return run_predict(config_path, target=target, artifact=source_path if source_kind == "artifact" else None, checkpoint=source_path if source_kind == "checkpoint" else None)
+        return run_predict(config_path, target=target, checkpoint=source_path)
     if subsystem == "rmdsrn":
         from ..methods.rmdsrn.runner import run_predict
-        return run_predict(config_path, target=target, artifact=source_path if source_kind == "artifact" else None, checkpoint=source_path if source_kind == "checkpoint" else None)
+        return run_predict(config_path, target=target, checkpoint=source_path)
     if subsystem == "ecnr":
         from ..methods.ecnr.runner import run_predict
-        return run_predict(config_path, target=target, artifact=source_path if source_kind == "artifact" else None, checkpoint=source_path if source_kind == "checkpoint" else None)
+        return run_predict(config_path, target=target, checkpoint=source_path)
     raise RuntimeError(
         f"{subsystem} has no standalone decode API; evaluate it from an exported prediction array"
     )
@@ -441,17 +428,12 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         )
     source_kind, source_path = _find_source(
         request.run_dir, subsystem, request.source, request.checkpoint,
-        request.artifact, request.prediction,
+        request.prediction,
     )
-    directory_checkpoint_subsystems = {"apmgsrn", "miner"}
-    if source_kind == "checkpoint" and subsystem not in directory_checkpoint_subsystems and not source_path.is_file():
+    if source_kind == "checkpoint" and not source_path.is_file():
         raise FileNotFoundError(f"Evaluation checkpoint does not exist: {source_path}")
-    if source_kind == "checkpoint" and subsystem in directory_checkpoint_subsystems and not source_path.exists():
-        raise FileNotFoundError(f"Evaluation {subsystem} checkpoint source does not exist: {source_path}")
-    if source_kind in {"artifact", "prediction"} and not source_path.exists():
+    if source_kind == "prediction" and not source_path.exists():
         raise FileNotFoundError(f"Evaluation {source_kind} does not exist: {source_path}")
-    if source_kind == "artifact" and subsystem in {"apmgsrn", "miner", "neural_expert"}:
-        raise ValueError(f"{subsystem} does not define a compact artifact format; use checkpoint or prediction")
     key_payload = {
         "schema_version": 1,
         "config": path_fingerprint(config_path),

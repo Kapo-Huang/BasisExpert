@@ -16,10 +16,9 @@ def add_run_evaluation_arguments(
     parser.add_argument("--metrics", default=None, help="Comma-separated psnr,ssim,lpips,decode_time,memory")
     parser.add_argument("--timesteps", default="all", help="all or comma-separated inclusive selections")
     parser.add_argument("--targets", default="all", help="all or comma-separated target names")
-    parser.add_argument("--source", choices=("auto", "checkpoint", "artifact", "prediction"), default=None)
+    parser.add_argument("--source", choices=("auto", "checkpoint", "prediction"), default=None)
     if include_source_paths:
         parser.add_argument("--checkpoint", default=None)
-        parser.add_argument("--artifact", default=None)
     parser.add_argument("--prediction", default=None)
     parser.add_argument("--render", action="store_true", help="Render selected predictions")
     parser.add_argument("--eval-config", default=None, help="Render/evaluation profile YAML")
@@ -35,7 +34,6 @@ def execute_run_evaluation(args: argparse.Namespace) -> dict:
         targets=args.targets,
         source=args.source,
         checkpoint=getattr(args, "checkpoint", None),
-        artifact=getattr(args, "artifact", None),
         prediction=getattr(args, "prediction", None),
         render=bool(args.render),
         render_profile=args.eval_config,

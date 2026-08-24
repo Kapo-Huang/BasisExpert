@@ -95,7 +95,7 @@ class CompactFVSRN(nn.Module):
         return self.mlp(encoded).float()
 
 
-def export_compact(
+def save_inference_checkpoint(
     *,
     model,
     cfg: dict,
@@ -106,7 +106,7 @@ def export_compact(
 ) -> tuple[Path, dict]:
     quantized, minimum, scale = quantize_grids(model.feature_grids)
     payload = {
-        "format": "fv_srn_compact_v1",
+        "format": "fv_srn_inference_v1",
         "model_name": "fv_srn",
         "model_config": dict(cfg["model"]),
         "target_name": str(target_name),
@@ -121,15 +121,15 @@ def export_compact(
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, output)
-    payload["artifact_bytes"] = int(output.stat().st_size)
+    payload["checkpoint_bytes"] = int(output.stat().st_size)
     return output, payload
 
 
-def load_compact(path: str | Path, *, device: torch.device) -> tuple[CompactFVSRN, dict]:
+def load_inference_checkpoint(path: str | Path, *, device: torch.device) -> tuple[CompactFVSRN, dict]:
     try:
         payload = torch.load(path, map_location="cpu", weights_only=False)
     except TypeError:
         payload = torch.load(path, map_location="cpu")
-    if payload.get("format") != "fv_srn_compact_v1":
-        raise ValueError(f"Unsupported compact fV-SRN artifact: {payload.get('format')!r}")
+    if payload.get("format") != "fv_srn_inference_v1":
+        raise ValueError(f"Unsupported fV-SRN inference checkpoint: {payload.get('format')!r}")
     return CompactFVSRN(payload, device=device).to(device), payload

@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.utils as nn_utils
 import torch.optim as optim
@@ -49,10 +50,11 @@ def _format_elapsed(seconds: float) -> str:
     return f"{int(minutes):02d}:{secs:05.2f}"
 
 
-def _save_validate_checkpoint(model, dataset, out_path):
+def _save_inference_checkpoint(model, dataset, out_path):
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "format": "neural_expert_inference_v1",
         "model_state": model.state_dict(),
         "x_mean": dataset.x_mean.cpu().numpy(),
         "x_std": dataset.x_std.cpu().numpy(),
@@ -64,32 +66,11 @@ def _save_validate_checkpoint(model, dataset, out_path):
     torch.save(payload, str(out_path))
 
 
-def _export_validate_artifacts(cfg, run_dir: Path, dataset, model):
-    validate_dir = run_dir / "validate_artifacts"
-    validate_dir.mkdir(parents=True, exist_ok=True)
-    validate_ckpt_path = validate_dir / f"{cfg['exp_id']}.pth"
-    validate_cfg_path = validate_dir / "config.yaml"
-    _save_validate_checkpoint(model, dataset, validate_ckpt_path)
-    serializable_cfg = dict(cfg)
-    if "device" in serializable_cfg:
-        serializable_cfg["device"] = str(serializable_cfg["device"])
-    validate_cfg = yaml.safe_load(yaml.safe_dump(serializable_cfg))
-    validate_cfg["MODEL"]["in_dim"] = int(dataset.input_dim)
-    validate_cfg["MODEL"]["out_dim"] = int(dataset.target_dim)
-    validate_cfg["VALIDATION"] = {
-        "checkpoint_path": str(validate_ckpt_path),
-        "attr_name": dataset.attr_name,
-        "association": dataset.association,
-    }
-    dump_config(validate_cfg, validate_cfg_path)
-    return validate_cfg_path, validate_ckpt_path
-
-
 def run_train(cfg: dict, *, gpu: int = 0) -> dict:
     run_dir = run_dir_from_config(cfg)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "wandb").mkdir(parents=True, exist_ok=True)
-    (run_dir / "trained_models").mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     cfg = yaml.safe_load(yaml.safe_dump(cfg))
     cfg["TRAINING"]["n_samples"] = int(cfg["TRAINING"]["num_epochs"])
@@ -158,8 +139,8 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
         log_string(f"Loaded pretrained manager from {manager_pt_checkpoint_path}", log_file)
 
     model.to(device)
-    model_outdir = run_dir / "trained_models"
-    save_interval = int(cfg["TRAINING"].get("save_every", 100) or 100)
+    model_outdir = run_dir / "checkpoints"
+    save_interval = int(cfg["TRAINING"].get("save_every", 100))
     log_interval = int(cfg["TRAINING"].get("log_every", 100) or 100)
     grad_clip_norm = float(cfg["TRAINING"].get("grad_clip_norm", 0.0) or 0.0)
     train_started_at = time.perf_counter()
@@ -169,8 +150,10 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
     for step, data in enumerate(train_dataloader):
         if step >= int(cfg["TRAINING"]["num_epochs"]):
             break
-        if step % save_interval == 0:
-            torch.save(model.state_dict(), str(model_outdir / f"{cfg['MODEL']['model_name']}_model_{step}.pth"))
+        if save_interval > 0 and step % save_interval == 0:
+            _save_inference_checkpoint(
+                model, train_set, model_outdir / f"{cfg['MODEL']['model_name']}_model_{step}.pth"
+            )
 
         data = to_device(data, device)
         optimizer.zero_grad(set_to_none=True)
@@ -226,23 +209,20 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
         log_file,
     )
 
-    final_state_path = model_outdir / f"{cfg['MODEL']['model_name']}_model_final.pth"
-    torch.save(model.state_dict(), str(final_state_path))
+    final_state_path = (
+        Path(cfg["MODEL"]["manager_pt_path"])
+        if cfg["TRAINING"].get("segmentation_mode", False) and cfg["MODEL"].get("manager_pt_path")
+        else model_outdir / f"{cfg['exp_id']}.pth"
+    )
+    _save_inference_checkpoint(model, train_set, final_state_path)
     log_string(f"Saved final state dict to {final_state_path}", log_file)
-
-    if cfg["TRAINING"].get("segmentation_mode", False) and cfg["MODEL"].get("manager_pt_path"):
-        manager_pt_path = Path(cfg["MODEL"]["manager_pt_path"])
-        manager_pt_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), str(manager_pt_path))
-        log_string(f"Exported manager pretrain checkpoint to {manager_pt_path}", log_file)
-
-    validate_cfg_path, validate_ckpt_path = _export_validate_artifacts(cfg, run_dir, train_set, model)
-    log_string(f"Exported validate config to {validate_cfg_path}", log_file)
-    log_string(f"Exported validate checkpoint to {validate_ckpt_path}", log_file)
+    checkpoint_bytes = int(final_state_path.stat().st_size)
+    raw_target_bytes = int(np.asarray(train_set.target).nbytes)
     log_file.close()
     return {
         "run_dir": run_dir,
         "checkpoint_path": final_state_path,
-        "validate_config_path": validate_cfg_path,
-        "validate_checkpoint_path": validate_ckpt_path,
+        "checkpoint_bytes": checkpoint_bytes,
+        "raw_target_bytes": raw_target_bytes,
+        "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
     }

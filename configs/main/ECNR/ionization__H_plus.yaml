@@ -72,6 +72,7 @@ training:
   quantization_finetune_passes_per_epoch: 1
   quantization_finetune_lr: 1.0e-05
   save_every: 0
+  save_intermediate_checkpoints: false
   log_every: 1
   progress_log_seconds: 60
   seed: 42
@@ -105,7 +106,7 @@ evaluation:
   batch_size: 3200
   save_predictions: false
   run_after_training: false
-  default_model: artifact
+  default_model: checkpoint
 log:
   effective_config: true
   epoch_summary: true

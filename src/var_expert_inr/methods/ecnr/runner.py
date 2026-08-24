@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import random
 import time
 from datetime import datetime
 from pathlib import Path
@@ -17,8 +16,8 @@ from ...evaluation.metrics import PSNRAccumulator, mae, mse, psnr, save_metrics
 from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
-from .artifact import FORMAT as ARTIFACT_FORMAT
-from .artifact import load_artifact, save_artifact
+from .checkpoint_codec import FORMAT as INFERENCE_FORMAT
+from .checkpoint_codec import load_inference_checkpoint, save_inference_checkpoint
 from .blocks import (
     ScaleBlocks,
     attach_clustering,
@@ -48,7 +47,6 @@ from .quantization import (
 
 
 logger = logging.getLogger(__name__)
-CHECKPOINT_FORMAT = "ecnr_checkpoint_v1"
 
 
 def _device(requested: str) -> torch.device:
@@ -69,7 +67,6 @@ def _dirs(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
         "run": run_dir,
         "configs": run_dir / "configs",
         "checkpoints": run_dir / "checkpoints",
-        "artifacts": run_dir / "artifacts",
         "predictions": run_dir / "predictions",
         "metrics": run_dir / "metrics",
         "logs": run_dir / "logs",
@@ -102,7 +99,7 @@ def _latest_run(cfg: dict[str, Any]) -> dict[str, Path]:
 def _run_for_path(cfg: dict[str, Any], explicit: str | Path | None) -> dict[str, Path]:
     if explicit is not None:
         resolved = Path(explicit).resolve()
-        if resolved.parent.name in {"artifacts", "checkpoints"}:
+        if resolved.parent.name == "checkpoints":
             return _dirs(resolved.parent.parent)
     return _latest_run(cfg)
 
@@ -684,7 +681,7 @@ def _cnn_from_payload(payload: dict[str, Any], device: torch.device) -> Boundary
     return model
 
 
-def decode_artifact_payload(
+def decode_checkpoint_payload(
     payload: dict[str, Any],
     *,
     device: torch.device,
@@ -692,8 +689,8 @@ def decode_artifact_payload(
     work_dir: str | Path | None = None,
     output_path: str | Path | None = None,
 ) -> np.ndarray:
-    if payload.get("format") != ARTIFACT_FORMAT:
-        raise ValueError("Invalid ECNR payload")
+    if payload.get("format") != INFERENCE_FORMAT:
+        raise ValueError("Invalid ECNR inference checkpoint payload")
     work = None if work_dir is None else Path(work_dir)
     if work is not None:
         work.mkdir(parents=True, exist_ok=True)
@@ -757,45 +754,15 @@ def decode_artifact_payload(
     return output
 
 
-def _checkpoint_save(path: Path, payload: dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(payload, path)
-    return path
-
-
-def _checkpoint_load(path: str | Path) -> dict[str, Any]:
-    try:
-        payload = torch.load(path, map_location="cpu", weights_only=False)
-    except TypeError:
-        payload = torch.load(path, map_location="cpu")
-    if payload.get("format") != CHECKPOINT_FORMAT:
-        raise ValueError("Unsupported ECNR checkpoint")
-    return payload
-
-
 def run_train(
     config_path: str | Path,
     *,
     target: str | None = None,
-    resume: str | Path | None = None,
 ) -> dict[str, Any]:
     apply_runtime_thread_limits()
     cfg = load_config(config_path, target_override=target)
     config_hash = _config_hash(cfg)
-    resume_payload: dict[str, Any] | None = None
-    if resume is not None:
-        resume_payload = _checkpoint_load(resume)
-        if resume_payload.get("config_hash") != config_hash:
-            raise ValueError("ECNR resume checkpoint config mismatch")
-        if resume_payload.get("artifact_payload") is not None:
-            dirs = _run_for_path(cfg, resume)
-            artifact = save_artifact(
-                dirs["artifacts"] / f"{cfg['exp_id']}.ecnr",
-                resume_payload["artifact_payload"],
-            )
-            return {"checkpoint_path": str(resume), "artifact_path": str(artifact), "resumed_complete": True}
-
-    dirs = _run_for_path(cfg, resume) if resume_payload is not None else _new_run(cfg)
+    dirs = _new_run(cfg)
     setup_logging(log_dir=dirs["logs"], log_file="run.log")
     started = time.perf_counter()
     try:
@@ -822,14 +789,10 @@ def run_train(
         )
         pyramid_seconds = float(time.perf_counter() - pyramid_started)
         logger.info("ECNR pyramid construction complete seconds=%.1f", pyramid_seconds)
-        scale_payloads: list[dict[str, Any]] = (
-            list(resume_payload.get("scale_payloads", [])) if resume_payload is not None else []
-        )
+        scale_payloads: list[dict[str, Any]] = []
         previous_reconstruction: np.ndarray | None = None
         previous_times: np.ndarray | None = None
-        cost: dict[str, Any] = (
-            copy.deepcopy(resume_payload.get("cost", {})) if resume_payload is not None else {}
-        )
+        cost: dict[str, Any] = {}
         cost.setdefault("primary_sampling_mode", "full_pass")
         cost.setdefault("primary_passes_per_epoch", int(cfg["training"]["passes_per_epoch"]))
         cost.setdefault("quantization_finetune_sampling_mode", "full_pass")
@@ -844,53 +807,9 @@ def run_train(
         cost.setdefault("quantization_and_finetune_seconds", 0.0)
         cost.setdefault("cnn", {})
         cost["pyramid_seconds"] = float(cost.get("pyramid_seconds", 0.0)) + pyramid_seconds
-        elapsed_before_resume = float(cost.pop("elapsed_active_seconds", 0.0))
         block_shape = tuple(int(value) for value in cfg["model"]["block_shape_xyz"])
-        completed_levels = {int(item["level"]) for item in scale_payloads}
-
-        # Recreate the exact quantized coarse-to-fine state at a scale-boundary
-        # checkpoint. No dense pre-quantization model is used for later residuals.
-        for saved_scale in sorted(scale_payloads, key=lambda item: int(item["level"]), reverse=True):
-            saved_level = int(saved_scale["level"])
-            residual = _decode_scale_payload(
-                saved_scale,
-                device=device,
-                batch_size=int(cfg["evaluation"]["batch_size"]),
-                output_path=dirs["cache"] / f"resume_residual_scale_{saved_level}.npy",
-            )
-            current_times = np.asarray(saved_scale["time_indices"], dtype=np.int64)
-            if previous_reconstruction is None:
-                previous_reconstruction = residual
-            else:
-                upsampled_resume = upsample_to_scale(
-                    previous_reconstruction,
-                    previous_times,
-                    fine_shape_tzyx=tuple(residual.shape),
-                    fine_time_indices=current_times,
-                    output_path=dirs["cache"] / f"resume_upsampled_scale_{saved_level}.npy",
-                )
-                previous_reconstruction = _framewise_binary(
-                    upsampled_resume,
-                    residual,
-                    dirs["cache"] / f"resume_composite_scale_{saved_level}.npy",
-                    operation="add",
-                )
-            previous_times = current_times
-
-        # Deserializing packed SIRENs constructs temporary initialized modules.
-        # Restore RNG only after that reconstruction so continuation is bitwise
-        # equivalent to starting the next scale in the uninterrupted run.
-        if resume_payload is not None:
-            if resume_payload.get("torch_rng_state") is not None:
-                torch.set_rng_state(resume_payload["torch_rng_state"])
-            if resume_payload.get("numpy_rng_state") is not None:
-                np.random.set_state(resume_payload["numpy_rng_state"])
-            if resume_payload.get("python_rng_state") is not None:
-                random.setstate(resume_payload["python_rng_state"])
 
         for level in (2, 1, 0):
-            if level in completed_levels:
-                continue
             scale: PyramidScale = pyramid[level]
             logger.info("ECNR scale=%d preparation start shape=%s", level, scale.values.shape)
             block_preparation_started = time.perf_counter()
@@ -1022,24 +941,6 @@ def run_train(
                 )
             previous_times = scale.time_indices
             scale_payloads.append(scale_payload)
-            cost["elapsed_active_seconds"] = (
-                elapsed_before_resume + float(time.perf_counter() - started)
-            )
-            _checkpoint_save(
-                dirs["checkpoints"] / f"scale_{level}_complete.pth",
-                {
-                    "format": CHECKPOINT_FORMAT,
-                    "config_hash": config_hash,
-                    "completed_levels": [item["level"] for item in scale_payloads],
-                    "scale_payloads": scale_payloads,
-                    "cost": cost,
-                    "artifact_payload": None,
-                    "torch_rng_state": torch.get_rng_state(),
-                    "numpy_rng_state": np.random.get_state(),
-                    "python_rng_state": random.getstate(),
-                },
-            )
-
         mlp_reconstruction = _clip_to_memmap(
             previous_reconstruction,
             dirs["cache"] / "mlp_reconstruction_clipped.npy",
@@ -1087,13 +988,13 @@ def run_train(
         cost["primary_planned_optimizer_steps"] = int(
             sum(item["planned_optimizer_steps"] for item in cost["scales"])
         )
-        cost["total_seconds"] = elapsed_before_resume + float(time.perf_counter() - started)
+        cost["total_seconds"] = float(time.perf_counter() - started)
         cost.pop("elapsed_active_seconds", None)
         cost_path = dirs["metrics"] / "training_cost.json"
         cost_path.write_text(json.dumps(cost, indent=2), encoding="utf-8")
 
-        artifact_payload = {
-            "format": ARTIFACT_FORMAT,
+        checkpoint_payload = {
+            "format": INFERENCE_FORMAT,
             "model_name": "ecnr",
             "target_name": cfg["data"]["target"],
             "volume_shape": dict(cfg["data"]["volume_shape"]),
@@ -1103,36 +1004,25 @@ def run_train(
             "cnn": cnn_quantization,
             "cnn_config": dict(cfg["cnn"]),
         }
-        artifact = save_artifact(
-            dirs["artifacts"] / f"{cfg['exp_id']}.ecnr",
-            artifact_payload,
-        )
-        checkpoint = _checkpoint_save(
+        checkpoint = save_inference_checkpoint(
             dirs["checkpoints"] / f"{cfg['exp_id']}.pth",
-            {
-                "format": CHECKPOINT_FORMAT,
-                "config_hash": config_hash,
-                "artifact_payload": artifact_payload,
-                "torch_rng_state": torch.get_rng_state(),
-                "numpy_rng_state": np.random.get_state(),
-                "python_rng_state": random.getstate(),
-            },
+            checkpoint_payload,
         )
         raw_bytes = int(np.prod(volume.shape, dtype=np.int64) * np.dtype(volume.dtype).itemsize)
+        checkpoint_bytes = int(checkpoint.stat().st_size)
         summary = {
             "checkpoint_path": str(checkpoint),
-            "artifact_path": str(artifact),
             "training_cost_path": str(cost_path),
             "raw_target_bytes": raw_bytes,
-            "artifact_bytes": int(artifact.stat().st_size),
-            "compact_cr": float(raw_bytes / max(artifact.stat().st_size, 1)),
+            "checkpoint_bytes": checkpoint_bytes,
+            "cr": float(raw_bytes / max(checkpoint_bytes, 1)),
         }
         (dirs["metrics"] / "training_summary.json").write_text(
             json.dumps(summary, indent=2),
             encoding="utf-8",
         )
         if cfg["evaluation"]["run_after_training"]:
-            summary.update(run_evaluate(config_path, target=target, artifact=artifact))
+            summary.update(run_evaluate(config_path, target=target, checkpoint=checkpoint))
         return summary
     finally:
         close_file_handlers()
@@ -1141,24 +1031,11 @@ def run_train(
 def _load_inference_payload(
     cfg: dict[str, Any],
     *,
-    artifact: str | Path | None,
     checkpoint: str | Path | None,
     dirs: dict[str, Path],
 ) -> tuple[dict[str, Any], Path]:
-    if artifact is None and checkpoint is None:
-        if cfg["evaluation"]["default_model"] == "artifact":
-            artifact = dirs["artifacts"] / f"{cfg['exp_id']}.ecnr"
-        else:
-            checkpoint = dirs["checkpoints"] / f"{cfg['exp_id']}.pth"
-    if artifact is not None:
-        payload = load_artifact(artifact)
-        source = Path(artifact)
-    else:
-        wrapper = _checkpoint_load(checkpoint)
-        payload = wrapper.get("artifact_payload")
-        if payload is None:
-            raise ValueError("ECNR checkpoint does not contain a completed inference payload")
-        source = Path(checkpoint)
+    source = Path(checkpoint or dirs["checkpoints"] / f"{cfg['exp_id']}.pth")
+    payload = load_inference_checkpoint(source)
     if payload["target_name"] != cfg["data"]["target"] or payload["volume_shape"] != cfg["data"]["volume_shape"]:
         raise ValueError("ECNR inference source target/shape mismatch")
     return payload, source
@@ -1168,21 +1045,18 @@ def run_predict(
     config_path: str | Path,
     *,
     target: str | None = None,
-    artifact: str | Path | None = None,
     checkpoint: str | Path | None = None,
 ) -> dict[str, Any]:
     cfg = load_config(config_path, target_override=target)
-    explicit = artifact or checkpoint
-    dirs = _run_for_path(cfg, explicit)
+    dirs = _run_for_path(cfg, checkpoint)
     device = _device(cfg["training"]["device"])
     payload, source = _load_inference_payload(
         cfg,
-        artifact=artifact,
         checkpoint=checkpoint,
         dirs=dirs,
     )
     output_path = dirs["predictions"] / f"{cfg['exp_id']}.npy"
-    decode_artifact_payload(
+    decode_checkpoint_payload(
         payload,
         device=device,
         batch_size=int(cfg["evaluation"]["batch_size"]),
@@ -1215,7 +1089,7 @@ def _evaluate(volume: np.ndarray, prediction: np.ndarray, model_path: Path) -> d
             "mae": absolute_error / count,
             "psnr": accumulator.compute(),
             "raw_target_bytes": int(volume.size * volume.dtype.itemsize),
-            "model_bytes": int(model_path.stat().st_size),
+            "checkpoint_bytes": int(model_path.stat().st_size),
             "cr": float(volume.size * volume.dtype.itemsize / max(model_path.stat().st_size, 1)),
         },
     }
@@ -1225,17 +1099,15 @@ def run_evaluate(
     config_path: str | Path,
     *,
     target: str | None = None,
-    artifact: str | Path | None = None,
     checkpoint: str | Path | None = None,
 ) -> dict[str, Any]:
     prediction_result = run_predict(
         config_path,
         target=target,
-        artifact=artifact,
         checkpoint=checkpoint,
     )
     cfg = load_config(config_path, target_override=target)
-    dirs = _run_for_path(cfg, artifact or checkpoint or prediction_result["model_path"])
+    dirs = _run_for_path(cfg, checkpoint or prediction_result["model_path"])
     volume = _load_volume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
     prediction_path = Path(prediction_result["prediction_path"])
     prediction = np.load(prediction_path, mmap_mode="r")

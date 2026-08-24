@@ -10,7 +10,7 @@ import torch
 from .huffman import HuffmanStream, decode as huffman_decode, encode as huffman_encode
 
 
-FORMAT = "ecnr_artifact_v1"
+FORMAT = "ecnr_inference_v1"
 _HUFFMAN_MARKER = "__ecnr_huffman__"
 
 
@@ -52,21 +52,21 @@ def _unpack(value: Any) -> Any:
     return value
 
 
-def save_artifact(path: str | Path, payload: dict[str, Any]) -> Path:
+def save_inference_checkpoint(path: str | Path, payload: dict[str, Any]) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"format": FORMAT, "payload": _pack(payload)}, output)
     return output
 
 
-def load_artifact(path: str | Path) -> dict[str, Any]:
+def load_inference_checkpoint(path: str | Path) -> dict[str, Any]:
     try:
         wrapper = torch.load(path, map_location="cpu", weights_only=False)
     except TypeError:
         wrapper = torch.load(path, map_location="cpu")
     if wrapper.get("format") != FORMAT:
-        raise ValueError("Unsupported ECNR artifact format")
+        raise ValueError("Unsupported ECNR inference checkpoint format")
     payload = _unpack(wrapper["payload"])
     if payload.get("format") != FORMAT:
-        raise ValueError("Invalid ECNR artifact payload")
+        raise ValueError("Invalid ECNR inference checkpoint payload")
     return payload

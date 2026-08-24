@@ -12,7 +12,6 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
     train = subparsers.add_parser("train")
     train.add_argument("--config", required=True)
-    train.add_argument("--resume", default=None)
     predict = subparsers.add_parser("predict")
     predict.add_argument("--config", required=True)
     predict.add_argument("--checkpoint", default=None)
@@ -24,7 +23,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.command == "train":
-        run_train(Path(args.config), resume=args.resume)
+        run_train(Path(args.config))
         return
     if args.command == "predict":
         run_predict(Path(args.config), checkpoint=args.checkpoint)

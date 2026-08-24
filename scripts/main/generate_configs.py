@@ -394,7 +394,7 @@ def common_training() -> dict:
         "epochs": 600, "batch_size": 16000, "pred_batch_size": 16000,
         "num_workers": 0, "lr": 5.0e-5, "val_split": 0.0,
         "log_every": 10, "log_psnr_every": 100, "psnr_sample_ratio": 0.1,
-        "save_every": 600, "early_stop_patience": 0, "loss_type": "mse",
+        "save_every": 0, "early_stop_patience": 0, "loss_type": "mse",
         "seed": 42, "sampler": "budgeted_random", "batches_per_epoch_budget": 1500,
         "scheduler": {"enabled": True, "step_size": 40, "gamma": 0.92},
     }
@@ -602,7 +602,7 @@ def mvnet_training() -> dict:
         "log_every": 10,
         "log_psnr_every": 0,
         "psnr_sample_ratio": 0.1,
-        "save_every": 300,
+        "save_every": 0,
         "early_stop_patience": 0,
         "loss_type": "mse",
         "seed": 42,
@@ -952,7 +952,7 @@ def generate_var_expert() -> int:
         training["multiview_ema_loss"].update(
             {"beta": 0.99, "w_min": 0.5, "w_max": 2.0, "warmup_steps": 75000, "alpha": 1.0}
         )
-        training.update({"log_psnr_every": 25, "save_every": 100})
+        training.update({"log_psnr_every": 25, "save_every": 0})
         payload = {
             "experiment": f"ionization_var_expert_{size.lower()}",
             "exp_id": f"var-expert-ionization-{size.lower()}",
@@ -980,6 +980,7 @@ def mc_payload(dataset: str, nested: bool, hidden: int) -> dict:
             "epochs": 60, "batch_size": 16000, "pred_batch_size": 16000,
             "num_workers": 0, "lr": 5.0e-5, "weight_decay": 0.0,
             "loss_type": "mse", "log_every": 10, "save_every": 0,
+            "save_intermediate_checkpoints": False,
             "seed": 42, "device": "cuda", "initial_k": 12,
             "cluster_init_method": "voxel_clustering" if meta["kind"] == "volume" else "coord_kmeans",
             "assignments_cache_path": f"{rel_prefix(nested)}data/cache/mc_inr/{dataset}_assignments_k12.npy",
@@ -1124,7 +1125,7 @@ def neural_payload(
         "lr_scheduler": "ExponentialLR",
         "num_epochs": 30000 if manager_pretrain else 60000,
         "batch_size": 1, "num_workers": 0, "grad_clip_norm": 10.0,
-        "save_every": 500, "segmentation_mode": manager_pretrain,
+        "save_every": 0, "segmentation_mode": manager_pretrain,
         "log_every": 100,
         "stages": [{"end_iteration_frac": 1.0, "params": "all", "loss_type": loss_name}],
     }
@@ -1310,9 +1311,9 @@ def fv_payload(
             "l1_weight": 1.0, "l2_weight": 0.0,
             "importance_floor": 0.01, "rebuild_every": 51,
             "rebuild_grid_size": 32, "rebuild_samples_per_cell": 2,
-            "save_every": 300, "log_every": 1, "seed": 42, "device": "cuda",
+            "save_every": 0, "log_every": 1, "seed": 42, "device": "cuda",
         },
-        "evaluation": {**evaluation(), "run_after_training": False, "default_model": "compact"},
+        "evaluation": {**evaluation(), "run_after_training": False, "default_model": "checkpoint"},
     }
 
 
@@ -1354,7 +1355,7 @@ def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
             "quantization_finetune_epochs": 75,
             "quantization_finetune_passes_per_epoch": 1,
             "quantization_finetune_lr": 1.0e-5,
-            "save_every": 0, "log_every": 1,
+            "save_every": 0, "save_intermediate_checkpoints": False, "log_every": 1,
             "progress_log_seconds": 60, "seed": 42, "device": "cuda",
         },
         "quantization": {
@@ -1371,7 +1372,7 @@ def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
         },
         "evaluation": {
             "batch_size": 3200, "save_predictions": False,
-            "run_after_training": False, "default_model": "artifact",
+            "run_after_training": False, "default_model": "checkpoint",
         },
         "log": {
             "effective_config": True, "epoch_summary": True,
@@ -1424,6 +1425,7 @@ def miner_payload(target: str, dataset: str = "ionization") -> dict:
             "seed": 42,
             "device": "cuda",
             "log_every": 25,
+            "save_intermediate_checkpoints": False,
         },
         "evaluation": {
             "save_predictions": False,
@@ -1502,11 +1504,11 @@ def rm_payload(
             "beta_1": 0.9, "beta_2": 0.999, "min_lr": 1.0e-7,
             "lambda_min": 0.0, "lambda_max": 10.0,
             "lambda_growth_rate": 500.0, "epsilon": 1.0e-12,
-            "save_every": 5000, "log_every": 100, "seed": 42, "device": "cuda",
+            "save_every": 0, "log_every": 100, "seed": 42, "device": "cuda",
         },
         "evaluation": {
             "batch_size": 16000, "save_mean": True, "save_variance": True,
-            "run_after_training": False, "default_model": "artifact",
+            "run_after_training": False, "default_model": "checkpoint",
             "uncertainty_sample_size": 1000000, "topk_fractions": [0.01, 0.05],
             "seed": 42,
         },

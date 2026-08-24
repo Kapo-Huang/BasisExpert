@@ -31,6 +31,7 @@ training:
   loss_type: mse
   log_every: 10
   save_every: 0
+  save_intermediate_checkpoints: false
   seed: 42
   device: cuda
   initial_k: 12

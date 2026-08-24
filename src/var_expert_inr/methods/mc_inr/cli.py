@@ -13,7 +13,6 @@ def parse_args() -> argparse.Namespace:
 
     train_parser = subparsers.add_parser("train", help="Train an MC-INR model")
     train_parser.add_argument("--config", required=True, help="Path to MC-INR config YAML")
-    train_parser.add_argument("--resume", default=None, help="Optional checkpoint path to resume from")
 
     predict_parser = subparsers.add_parser("predict", help="Generate predictions from an MC-INR checkpoint")
     predict_parser.add_argument("--config", required=True, help="Path to MC-INR config YAML")
@@ -35,7 +34,7 @@ def main() -> None:
         raise ValueError("--config is required unless evaluate uses --run")
     config_path = Path(args.config)
     if args.command == "train":
-        run_train(config_path, resume_path=args.resume)
+        run_train(config_path)
         return
     if args.command == "predict":
         run_predict(config_path, checkpoint_path=args.checkpoint)

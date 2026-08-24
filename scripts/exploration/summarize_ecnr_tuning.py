@@ -25,14 +25,14 @@ HEADER = (
     "delta_vs_control_db",
     "mse",
     "mae",
-    "artifact_bytes",
+    "checkpoint_bytes",
     "compression_ratio",
     "training_seconds",
     "peak_cuda_memory_bytes",
     "has_nonfinite",
     "needs_attention",
     "attention_reason",
-    "artifact_path",
+    "checkpoint_path",
     "metrics_path",
     "training_cost_path",
 )
@@ -47,7 +47,7 @@ PROFILE_HEADER = (
     "selection_rank",
     "median_psnr",
     "median_delta_vs_control_db",
-    "median_artifact_bytes",
+    "median_checkpoint_bytes",
     "median_compression_ratio",
     "median_training_seconds",
     "max_peak_cuda_memory_bytes",
@@ -151,7 +151,7 @@ def build_summary(
         psnr = finite_number(aggregate.get("psnr"))
         mse = finite_number(aggregate.get("mse"))
         mae = finite_number(aggregate.get("mae"))
-        artifact_bytes = finite_number(aggregate.get("model_bytes"))
+        checkpoint_bytes = finite_number(aggregate.get("checkpoint_bytes"))
         compression_ratio = finite_number(aggregate.get("cr"))
         training_seconds = finite_number(training_cost.get("total_seconds"))
         peak_memory = finite_number(training_cost.get("peak_cuda_memory_bytes"))
@@ -165,8 +165,8 @@ def build_summary(
             reasons.append("missing_metrics")
         if psnr is None:
             reasons.append("missing_psnr")
-        if artifact_bytes is None or artifact_bytes <= 0:
-            reasons.append("missing_artifact_size")
+        if checkpoint_bytes is None or checkpoint_bytes <= 0:
+            reasons.append("missing_checkpoint_size")
         if compression_ratio is None or compression_ratio <= 0:
             reasons.append("missing_compression_ratio")
         if not training_cost:
@@ -187,14 +187,14 @@ def build_summary(
                 "delta_vs_control_db": "",
                 "mse": "" if mse is None else f"{mse:.8g}",
                 "mae": "" if mae is None else f"{mae:.8g}",
-                "artifact_bytes": "" if artifact_bytes is None else int(artifact_bytes),
+                "checkpoint_bytes": "" if checkpoint_bytes is None else int(checkpoint_bytes),
                 "compression_ratio": "" if compression_ratio is None else f"{compression_ratio:.8g}",
                 "training_seconds": "" if training_seconds is None else f"{training_seconds:.8g}",
                 "peak_cuda_memory_bytes": "" if peak_memory is None else int(peak_memory),
                 "has_nonfinite": str(has_nonfinite).lower(),
                 "needs_attention": "",
                 "attention_reason": reasons,
-                "artifact_path": portable_path(training_summary.get("artifact_path"), repo_root),
+                "checkpoint_path": portable_path(training_summary.get("checkpoint_path"), repo_root),
                 "metrics_path": "" if metrics_path is None else metrics_path.relative_to(repo_root).as_posix(),
                 "training_cost_path": "" if training_cost_path is None else training_cost_path.relative_to(repo_root).as_posix(),
             }
@@ -241,7 +241,7 @@ def build_summary(
             and len(deltas) == len(EXPECTED_TARGETS)
         )
         psnrs = numbers(group, "psnr")
-        artifact_sizes = numbers(group, "artifact_bytes")
+        checkpoint_sizes = numbers(group, "checkpoint_bytes")
         ratios = numbers(group, "compression_ratio")
         seconds = numbers(group, "training_seconds")
         memories = numbers(group, "peak_cuda_memory_bytes")
@@ -256,7 +256,7 @@ def build_summary(
                 "selection_rank": "",
                 "median_psnr": "" if not psnrs else f"{median(psnrs):.8g}",
                 "median_delta_vs_control_db": "" if not deltas else f"{median(deltas):.8g}",
-                "median_artifact_bytes": "" if not artifact_sizes else f"{median(artifact_sizes):.8g}",
+                "median_checkpoint_bytes": "" if not checkpoint_sizes else f"{median(checkpoint_sizes):.8g}",
                 "median_compression_ratio": "" if not ratios else f"{median(ratios):.8g}",
                 "median_training_seconds": "" if not seconds else f"{median(seconds):.8g}",
                 "max_peak_cuda_memory_bytes": "" if not memories else int(max(memories)),

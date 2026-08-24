@@ -24,6 +24,7 @@ from ...utils.exploration_probe import (
 from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
+from ...utils.temporal_checkpoint import TemporalCheckpointReader, TemporalCheckpointWriter
 from .blocks import (
     blockify,
     build_pyramid,
@@ -46,7 +47,8 @@ from .model import (
 
 
 logger = logging.getLogger(__name__)
-CHECKPOINT_FORMAT = "miner_timestep_checkpoint_v1"
+CHECKPOINT_FORMAT = "miner_timestep_inference_v1"
+BUNDLE_FORMAT = "miner_temporal_inference_v1"
 
 
 def _device(requested: str) -> torch.device:
@@ -69,25 +71,6 @@ def _write_json(path: str | Path, payload: dict[str, Any]) -> Path:
     temporary = target.with_suffix(target.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
     temporary.replace(target)
-    return target
-
-
-def _torch_load(path: str | Path, device: torch.device | str = "cpu") -> dict[str, Any]:
-    try:
-        payload = torch.load(path, map_location=device, weights_only=False)
-    except TypeError:
-        payload = torch.load(path, map_location=device)
-    if not isinstance(payload, dict):
-        raise ValueError(f"MINER checkpoint must contain a mapping: {path}")
-    if payload.get("format") != CHECKPOINT_FORMAT:
-        raise ValueError(f"Unsupported MINER checkpoint format: {payload.get('format')!r}")
-    return payload
-
-
-def _save_checkpoint(path: str | Path, payload: dict[str, Any]) -> Path:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(payload, target)
     return target
 
 
@@ -172,6 +155,7 @@ def _run_layout(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
     result = {
         "run": run_dir,
         "configs": run_dir / "configs",
+        "checkpoints": run_dir / "checkpoints",
         "timesteps": run_dir / "timesteps",
         "predictions": run_dir / "predictions",
         "metrics": run_dir / "metrics",
@@ -199,22 +183,6 @@ def _latest_run(cfg: dict[str, Any]) -> dict[str, Path]:
     if not candidates:
         raise FileNotFoundError(f"No MINER run found under {experiment}")
     return _run_layout(candidates[-1])
-
-
-def _run_from_resume(resume: str | Path) -> dict[str, Path]:
-    path = Path(resume).resolve()
-    if path.is_dir():
-        if path.name == "timesteps":
-            return _run_layout(path.parent)
-        if path.parent.name == "timesteps":
-            return _run_layout(path.parent.parent)
-        return _run_layout(path)
-    if path.name == "manifest.json":
-        return _run_layout(path.parent)
-    for parent in path.parents:
-        if parent.name == "timesteps":
-            return _run_layout(parent.parent)
-    raise ValueError(f"Cannot resolve MINER run directory from resume path: {path}")
 
 
 def _timestep_dir(layout: dict[str, Path], time_index: int) -> Path:
@@ -299,11 +267,23 @@ def _decode_scale_payloads(
 def decode_checkpoint(
     checkpoint_path: str | Path,
     *,
+    time_index: int | None = None,
     device: torch.device | str = "cpu",
     batch_blocks: int | None = None,
 ) -> np.ndarray:
     resolved_device = torch.device(device)
-    payload = _torch_load(checkpoint_path, "cpu")
+    with TemporalCheckpointReader(
+        checkpoint_path, expected_format=BUNDLE_FORMAT
+    ) as checkpoint_reader:
+        if time_index is None:
+            if len(checkpoint_reader.time_indices) != 1:
+                raise ValueError("time_index is required for a multi-timestep MINER checkpoint")
+            time_index = checkpoint_reader.time_indices[0]
+        payload = checkpoint_reader.load_timestep(time_index, map_location="cpu")
+    if payload.get("format") != CHECKPOINT_FORMAT:
+        raise ValueError(f"Unsupported MINER timestep payload: {payload.get('format')!r}")
+    if str(payload.get("status", "")) != "complete":
+        raise ValueError("MINER inference requires a completed final timestep checkpoint")
     configured_batch = int(payload.get("max_active_blocks_per_step", 2048))
     reconstructed = _decode_scale_payloads(
         list(payload["scales"]),
@@ -431,7 +411,6 @@ def _train_timestep(
     timestep_dir: Path,
     config_hash: str,
     device: torch.device,
-    resume_checkpoint: Path | None,
 ) -> dict[str, Any]:
     set_random_seed(int(cfg["training"]["seed"]) + int(time_index))
     frame = reader.timestep(time_index)
@@ -449,52 +428,13 @@ def _train_timestep(
     pyramid = build_pyramid(padded, effective_scales)
     completed_scales: list[dict[str, Any]] = []
     carry_state: dict[str, torch.Tensor] | None = None
-    if resume_checkpoint is not None:
-        resumed = _torch_load(resume_checkpoint, "cpu")
-        if str(resumed.get("config_hash")) != str(config_hash):
-            raise ValueError("MINER resume checkpoint config hash does not match")
-        if int(resumed.get("time_index", -1)) != int(time_index):
-            raise ValueError("MINER resume checkpoint timestep does not match")
-        completed_scales = list(resumed.get("scales") or [])
-        carry_state = resumed.get("carry_state")
-        logger.info("Resuming MINER timestep %d after %d scales", time_index, len(completed_scales))
-    reconstruction = (
-        _decode_scale_payloads(
-            completed_scales,
-            device=device,
-            batch_blocks=int(cfg["training"]["max_active_blocks_per_step"]),
-        )
-        if completed_scales
-        else None
-    )
+    reconstruction = None
     probe = normalize_probe(cfg.get("exploration_probe"))
-    if probe.enabled:
-        for scale_index, scale_payload in enumerate(completed_scales):
-            if scale_payload.get("exploration_metrics") is not None:
-                continue
-            scale_reconstruction = _decode_scale_payloads(
-                completed_scales[: scale_index + 1],
-                device=device,
-                batch_blocks=int(cfg["training"]["max_active_blocks_per_step"]),
-            )
-            elapsed = sum(
-                float(item.get("training", {}).get("elapsed_seconds", 0.0))
-                for item in completed_scales[: scale_index + 1]
-            )
-            scale_payload["exploration_metrics"] = _scale_exploration_metrics(
-                cfg,
-                target=pyramid[scale_index],
-                reconstruction=scale_reconstruction,
-                time_index=time_index,
-                scale_index=scale_index,
-                effective_scales=effective_scales,
-                elapsed_seconds=elapsed,
-            )
-    total_parameters = sum(int(item.get("parameter_count", 0)) for item in completed_scales)
-    total_logical_samples = sum(int(item["training"]["logical_samples"]) for item in completed_scales)
-    total_optimizer_steps = sum(int(item["training"]["optimizer_steps"]) for item in completed_scales)
+    total_parameters = 0
+    total_logical_samples = 0
+    total_optimizer_steps = 0
     started = time.perf_counter()
-    for scale_index in range(len(completed_scales), effective_scales):
+    for scale_index in range(effective_scales):
         target = pyramid[scale_index]
         previous = torch.zeros_like(target) if reconstruction is None else resize_signal(reconstruction, tuple(target.shape))
         residual = target - previous
@@ -608,22 +548,6 @@ def _train_timestep(
         )
         completed_scales.append(scale_payload)
         carry_state = next_carry
-        progress_payload = {
-            "format": CHECKPOINT_FORMAT,
-            "status": "scale_complete",
-            "config_hash": config_hash,
-            "time_index": int(time_index),
-            "target_name": str(cfg["data"]["target"]),
-            "dimensions": int(reader.spatial_dimensions),
-            "original_shape": list(frame.shape),
-            "padded_shape": list(padded.shape),
-            "padding": [list(item) for item in padding],
-            "effective_scales": effective_scales,
-            "max_active_blocks_per_step": int(cfg["training"]["max_active_blocks_per_step"]),
-            "scales": completed_scales,
-            "carry_state": carry_state,
-        }
-        _save_checkpoint(timestep_dir / f"scale_{scale_index:02d}_complete.pth", progress_payload)
         logger.info(
             "MINER timestep=%d scale=%d/%d blocks=%d params=%d",
             time_index,
@@ -653,21 +577,32 @@ def _train_timestep(
         for item in completed_scales
         if item.get("exploration_metrics") is not None
     ]
+    inference_scales = [
+        {
+            key: scale[key]
+            for key in (
+                "shape",
+                "grid_shape",
+                "block_size",
+                "dimensions",
+                "master_indices",
+                "empty",
+                "model_config",
+                "model_state",
+            )
+        }
+        for scale in completed_scales
+    ]
     final_payload = {
         "format": CHECKPOINT_FORMAT,
         "status": "complete",
         "config_hash": config_hash,
         "time_index": int(time_index),
         "target_name": str(cfg["data"]["target"]),
-        "dimensions": int(reader.spatial_dimensions),
         "original_shape": list(frame.shape),
-        "padded_shape": list(padded.shape),
-        "padding": [list(item) for item in padding],
-        "effective_scales": effective_scales,
         "max_active_blocks_per_step": int(cfg["training"]["max_active_blocks_per_step"]),
-        "scales": completed_scales,
+        "scales": inference_scales,
     }
-    checkpoint_path = _save_checkpoint(timestep_dir / "checkpoint.pth", final_payload)
     metrics_payload = {
         "time_index": int(time_index),
         "target": str(cfg["data"]["target"]),
@@ -676,7 +611,6 @@ def _train_timestep(
         "psnr": final_psnr,
         "parameter_count": int(total_parameters),
         "fp16_size_bytes": int(total_parameters * 2),
-        "checkpoint_bytes": int(checkpoint_path.stat().st_size),
         "logical_samples": int(total_logical_samples),
         "optimizer_steps": int(total_optimizer_steps),
         "elapsed_seconds": float(time.perf_counter() - started),
@@ -688,49 +622,24 @@ def _train_timestep(
         "status": "completed",
         "config_hash": config_hash,
         "time_index": int(time_index),
-        "checkpoint_path": str(checkpoint_path),
         "metrics_path": str(metrics_path),
+        "checkpoint_payload": final_payload,
         **metrics_payload,
     }
 
 
-def _completed_entry(
-    entry: dict[str, Any] | None,
-    config_hash: str,
-    *,
-    require_scale_metrics: bool = False,
-) -> bool:
-    if not entry or entry.get("status") != "completed":
-        return False
-    if str(entry.get("config_hash")) != str(config_hash):
-        raise ValueError("Existing MINER timestep was produced by a different config")
-    if not all(Path(entry[key]).is_file() for key in ("checkpoint_path", "metrics_path")):
-        return False
-    if not require_scale_metrics:
-        return True
-    payload = json.loads(Path(entry["metrics_path"]).read_text(encoding="utf-8"))
-    return len(payload.get("scale_metrics") or []) == int(payload.get("effective_scales", -1))
-
-
 def run_train(
     config_path: str | Path,
-    *,
-    resume: str | Path | None = None,
 ) -> dict[str, Any]:
     apply_runtime_thread_limits()
     cfg = load_config(config_path)
-    layout = _run_from_resume(resume) if resume is not None else _new_run(cfg)
+    layout = _new_run(cfg)
     setup_logging(log_dir=layout["logs"], log_file="train.log")
     try:
         config_hash = _config_hash(cfg)
         saved_config = layout["configs"] / "config.yaml"
         manifest_path = layout["run"] / "manifest.json"
-        if resume is not None and saved_config.is_file():
-            existing_cfg = load_config(saved_config)
-            if _config_hash(existing_cfg) != config_hash:
-                raise ValueError("MINER resume run uses a different effective config")
-        else:
-            save_config(cfg, saved_config)
+        save_config(cfg, saved_config)
         reader = ScalarVolumeReader(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
         if cfg["log"]["effective_config"]:
             logger.info("MINER effective config: %s", json.dumps({k: v for k, v in cfg.items() if k != "CONFIG_PATH"}, default=str))
@@ -746,56 +655,53 @@ def run_train(
             "time_indices": cfg["training"]["time_indices"],
             "timesteps": {},
         }
-        if manifest_path.is_file():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if str(manifest.get("config_hash")) != config_hash:
-                raise ValueError("MINER manifest config hash does not match")
-            manifest["status"] = "running"
         _write_json(manifest_path, manifest)
         resolved_device = _device(cfg["training"]["device"])
         completed: list[int] = []
         skipped: list[int] = []
-        explicit_resume = Path(resume).resolve() if resume is not None and Path(resume).is_file() and Path(resume).name != "manifest.json" else None
-        for time_index in cfg["training"]["time_indices"]:
-            token = f"t{int(time_index):04d}"
-            entry = manifest["timesteps"].get(token)
-            if _completed_entry(
-                entry,
-                config_hash,
-                require_scale_metrics=normalize_probe(cfg.get("exploration_probe")).enabled,
-            ):
-                skipped.append(int(time_index))
-                continue
-            timestep_dir = _timestep_dir(layout, int(time_index))
-            resume_checkpoint = None
-            if explicit_resume is not None:
-                payload = _torch_load(explicit_resume, "cpu")
-                if int(payload.get("time_index", -1)) == int(time_index):
-                    resume_checkpoint = explicit_resume
-            if resume_checkpoint is None:
-                scale_candidates = sorted(timestep_dir.glob("scale_*_complete.pth"))
-                resume_checkpoint = scale_candidates[-1] if scale_candidates else None
-            manifest["timesteps"][token] = _train_timestep(
-                cfg,
-                reader,
-                time_index=int(time_index),
-                timestep_dir=timestep_dir,
-                config_hash=config_hash,
-                device=resolved_device,
-                resume_checkpoint=resume_checkpoint,
-            )
-            _write_json(manifest_path, manifest)
-            completed.append(int(time_index))
+        checkpoint_path = layout["checkpoints"] / f"{cfg['exp_id']}.pth"
+        with TemporalCheckpointWriter(
+            checkpoint_path,
+            metadata={
+                "format": BUNDLE_FORMAT,
+                "model_name": "miner",
+                "config_hash": config_hash,
+                "target": cfg["data"]["target"],
+                "volume_shape": cfg["data"]["volume_shape"],
+            },
+        ) as checkpoint_writer:
+            for time_index in cfg["training"]["time_indices"]:
+                token = f"t{int(time_index):04d}"
+                timestep_dir = _timestep_dir(layout, int(time_index))
+                result = _train_timestep(
+                    cfg,
+                    reader,
+                    time_index=int(time_index),
+                    timestep_dir=timestep_dir,
+                    config_hash=config_hash,
+                    device=resolved_device,
+                )
+                checkpoint_writer.write_timestep(
+                    int(time_index), result.pop("checkpoint_payload")
+                )
+                manifest["timesteps"][token] = result
+                _write_json(manifest_path, manifest)
+                completed.append(int(time_index))
         entries = [manifest["timesteps"][f"t{int(index):04d}"] for index in cfg["training"]["time_indices"]]
         exploration_metrics_path = _write_exploration_trajectory(
             layout["metrics"], entries, cfg
         )
+        checkpoint_bytes = int(checkpoint_path.stat().st_size)
+        raw_target_bytes = int(reader.raw_bytes(cfg["training"]["time_indices"]))
+        cr = float(raw_target_bytes / checkpoint_bytes) if checkpoint_bytes else float("inf")
         model_stats = {
             "target": cfg["data"]["target"],
             "timestep_count": len(entries),
             "parameter_count": sum(int(item["parameter_count"]) for item in entries),
             "fp16_size_bytes": sum(int(item["fp16_size_bytes"]) for item in entries),
-            "checkpoint_bytes": sum(int(item["checkpoint_bytes"]) for item in entries),
+            "checkpoint_bytes": checkpoint_bytes,
+            "raw_target_bytes": raw_target_bytes,
+            "cr": cr,
             "logical_samples": sum(int(item["logical_samples"]) for item in entries),
             "optimizer_steps": sum(int(item["optimizer_steps"]) for item in entries),
         }
@@ -804,10 +710,13 @@ def run_train(
         _write_json(manifest_path, manifest)
         prediction_path = None
         if cfg["evaluation"]["save_predictions"] or cfg["evaluation"]["run_after_training"]:
-            prediction_path = run_predict(config_path, checkpoint=layout["timesteps"])["prediction_path"]
+            prediction_path = run_predict(config_path, checkpoint=checkpoint_path)["prediction_path"]
         return {
             "run_dir": layout["run"],
-            "checkpoint_path": layout["timesteps"],
+            "checkpoint_path": checkpoint_path,
+            "checkpoint_bytes": checkpoint_bytes,
+            "raw_target_bytes": raw_target_bytes,
+            "cr": cr,
             "manifest_path": manifest_path,
             "model_stats_path": model_stats_path,
             "exploration_metrics_path": exploration_metrics_path,
@@ -819,23 +728,6 @@ def run_train(
         close_file_handlers()
 
 
-def _checkpoint_for_timestep(source: Path, time_index: int) -> Path:
-    if source.is_file():
-        payload = _torch_load(source, "cpu")
-        if int(payload.get("time_index", -1)) != int(time_index):
-            raise ValueError(f"Checkpoint {source} does not contain timestep {time_index}")
-        return source
-    if source.name == "timesteps":
-        candidate = source / f"t{int(time_index):04d}" / "checkpoint.pth"
-    elif (source / "timesteps").is_dir():
-        candidate = source / "timesteps" / f"t{int(time_index):04d}" / "checkpoint.pth"
-    else:
-        candidate = source / f"t{int(time_index):04d}" / "checkpoint.pth"
-    if not candidate.is_file():
-        raise FileNotFoundError(f"Missing MINER timestep checkpoint: {candidate}")
-    return candidate
-
-
 def run_predict(
     config_path: str | Path,
     *,
@@ -843,14 +735,15 @@ def run_predict(
 ) -> dict[str, Any]:
     cfg = load_config(config_path)
     layout = _latest_run(cfg) if checkpoint is None else None
-    source = layout["timesteps"] if layout is not None else Path(checkpoint).resolve()
+    source = (
+        layout["checkpoints"] / f"{cfg['exp_id']}.pth"
+        if layout is not None
+        else Path(checkpoint).resolve()
+    )
     if layout is not None:
         output_run = layout["run"]
-    elif source.name == "timesteps":
-        output_run = source.parent
     else:
-        timesteps_parent = next((parent for parent in source.parents if parent.name == "timesteps"), None)
-        output_run = timesteps_parent.parent if timesteps_parent is not None else source.parent
+        output_run = source.parent.parent if source.parent.name == "checkpoints" else source.parent
     prediction_dir = output_run / "predictions"
     prediction_dir.mkdir(parents=True, exist_ok=True)
     reader = ScalarVolumeReader(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
@@ -858,12 +751,17 @@ def run_predict(
     output = open_memmap(output_path, mode="w+", dtype=np.float32, shape=reader.shape_tzyx)
     resolved_device = _device(cfg["training"]["device"])
     decoded_indices: list[int] = []
-    selected = cfg["training"]["time_indices"]
-    if source.is_file():
-        selected = [int(_torch_load(source, "cpu")["time_index"])]
+    with TemporalCheckpointReader(source, expected_format=BUNDLE_FORMAT) as checkpoint_reader:
+        available = set(checkpoint_reader.time_indices)
+    selected = [
+        int(index) for index in cfg["training"]["time_indices"] if int(index) in available
+    ]
+    if not selected:
+        raise ValueError("MINER checkpoint contains none of the configured time_indices")
     for time_index in selected:
         decoded = decode_checkpoint(
-            _checkpoint_for_timestep(source, int(time_index)),
+            source,
+            time_index=int(time_index),
             device=resolved_device,
             batch_blocks=int(cfg["training"]["max_active_blocks_per_step"]),
         )

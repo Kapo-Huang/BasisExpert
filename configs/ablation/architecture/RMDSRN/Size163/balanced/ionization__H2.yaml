@@ -63,7 +63,7 @@ evaluation:
   save_mean: true
   save_variance: true
   run_after_training: false
-  default_model: artifact
+  default_model: checkpoint
   uncertainty_sample_size: 1000000
   topk_fractions:
   - 0.01
