@@ -1,6 +1,6 @@
 experiment: redsea_moe-inr_SALT
 exp_id: moe-inr-redsea-SALT
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: node
   dataset_name: redsea

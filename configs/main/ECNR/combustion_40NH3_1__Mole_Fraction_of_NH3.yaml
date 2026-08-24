@@ -1,6 +1,6 @@
 experiment: ecnr_combustion_40NH3_1_Mole_Fraction_of_NH3
 exp_id: ecnr-combustion_40NH3_1-Mole_Fraction_of_NH3
-experiment_root: ${REPO_ROOT}/runs/ecnr
+experiment_root: ${RUNS_ROOT}/ecnr
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

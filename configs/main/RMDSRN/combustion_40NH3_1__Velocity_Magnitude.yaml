@@ -1,6 +1,6 @@
 experiment: rmdsrn_combustion_40NH3_1_Velocity_Magnitude
 exp_id: rmdsrn-combustion_40NH3_1-Velocity_Magnitude
-experiment_root: ${REPO_ROOT}/runs/rmdsrn
+experiment_root: ${RUNS_ROOT}/rmdsrn
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

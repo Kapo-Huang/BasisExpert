@@ -1,6 +1,6 @@
 experiment: exploration_v6_ecnr_official_main_pruning_gamma09_GT
 exp_id: explore-v6-ecnr-official-main-pruning-gamma09-GT
-experiment_root: ${REPO_ROOT}/runs/exploration_v6
+experiment_root: ${RUNS_ROOT}/exploration_v6
 data:
   kind: volume
   dataset_name: ionization

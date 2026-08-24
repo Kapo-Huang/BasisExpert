@@ -6,6 +6,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/../lib/server_env.sh"
 server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/ablation/architecture"
+RUN_ROOT="${RUNS_ROOT}/exploration"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration/${RUN_TOKEN}}"
 STATUS_FILE="${LOG_ROOT}/status.tsv"
@@ -95,7 +96,8 @@ if [[ "${DRY_RUN}" != "1" ]]; then
         --config-root "${CONFIG_ROOT}" \
         --status "${STATUS_FILE}" \
         --output "${LOG_ROOT}/exploration_summary.tsv" \
-        --repo-root "${REPO_ROOT}"; then
+        --repo-root "${REPO_ROOT}" \
+        --run-root "${RUN_ROOT}"; then
         printf 'FAILED: could not build exploration summary.\n' >&2
         failures=$((failures + 1))
     fi

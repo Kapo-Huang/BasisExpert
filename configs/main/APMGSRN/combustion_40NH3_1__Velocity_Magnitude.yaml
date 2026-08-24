@@ -1,6 +1,6 @@
 experiment: apmgsrn_combustion_40NH3_1_Velocity_Magnitude
 exp_id: apmgsrn-combustion_40NH3_1-Velocity_Magnitude
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 MODEL:
   model_name: apmgsrn
   n_dims: 3

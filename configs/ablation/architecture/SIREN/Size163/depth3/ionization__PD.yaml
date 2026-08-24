@@ -54,7 +54,7 @@ log:
     cuda_sync: false
 experiment: exploration_siren_depth3-PD
 exp_id: explore-siren-size163-depth3-PD
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 exploration_probe:
   enabled: true
   total_epoch_equivalents: 50

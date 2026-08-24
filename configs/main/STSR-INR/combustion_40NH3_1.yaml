@@ -1,6 +1,6 @@
 experiment: combustion_40NH3_1_stsr_inr
 exp_id: stsr-inr-combustion_40NH3_1
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

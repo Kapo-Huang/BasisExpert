@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.main.generate_configs import (
-    REPO_ROOT_TOKEN,
+    RUNS_ROOT_TOKEN,
     dump,
     evaluation,
     log_config,
@@ -21,7 +21,7 @@ from scripts.main.generate_configs import (
 
 
 CONFIG_ROOT = ROOT / "configs/sensitivity/var_expert_topk"
-RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/sensitivity/var_expert_topk"
+RUN_ROOT = f"{RUNS_ROOT_TOKEN}/sensitivity/var_expert_topk"
 SIZE = "Size163"
 NUM_EXPERTS = 7
 BASE_DIM = 23

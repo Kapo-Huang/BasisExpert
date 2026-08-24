@@ -1,6 +1,6 @@
 experiment: exploration_CoordNet_size326_lr1e-5_GT
 exp_id: explore-coordnet-size326-lr1e-5-GT
-experiment_root: ${REPO_ROOT}/runs/exploration_CoordNet
+experiment_root: ${RUNS_ROOT}/exploration_CoordNet
 data:
   kind: volume
   dataset_name: ionization

@@ -61,7 +61,7 @@ log:
     cuda_sync: false
 experiment: sensitivity_varexpert_expert_num_size163_experts1_shared_enc
 exp_id: sensitivity-varexpert-expert-num-size163-experts1_shared_enc
-experiment_root: ${REPO_ROOT}/runs/sensitivity/var_expert_num
+experiment_root: ${RUNS_ROOT}/sensitivity/var_expert_num
 exploration_probe:
   enabled: true
   total_epoch_equivalents: 50

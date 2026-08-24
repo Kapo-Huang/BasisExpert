@@ -1,6 +1,6 @@
 experiment: exploration_v3_ionization_moe-inr_size163_H_plus
 exp_id: explore-v3-moe-inr-ionization-size163-H_plus
-experiment_root: ${REPO_ROOT}/runs/exploration_v3
+experiment_root: ${RUNS_ROOT}/exploration_v3
 data:
   kind: volume
   dataset_name: ionization

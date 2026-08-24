@@ -1,6 +1,6 @@
 experiment: fv_srn_combustion_40NH3_1_Velocity_Magnitude
 exp_id: fv-srn-combustion_40NH3_1-Velocity_Magnitude
-experiment_root: ${REPO_ROOT}/runs/fv_srn
+experiment_root: ${RUNS_ROOT}/fv_srn
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

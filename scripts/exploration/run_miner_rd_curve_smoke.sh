@@ -8,7 +8,7 @@ server_env_init "$@" || exit $?
 
 CONFIG_ROOT="${REPO_ROOT}/configs/exploration/rd_curve_smoke"
 MINER_CONFIG_ROOT="${CONFIG_ROOT}/MINER"
-RUN_ROOT="${REPO_ROOT}/runs/exploration_v3"
+RUN_ROOT="${RUNS_ROOT}/exploration_v3"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration_v3_miner/${RUN_TOKEN}}"
 if command -v cygpath >/dev/null 2>&1; then

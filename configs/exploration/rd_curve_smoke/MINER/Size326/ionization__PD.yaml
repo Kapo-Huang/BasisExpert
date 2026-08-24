@@ -1,6 +1,6 @@
 experiment: exploration_v3_miner_ionization_size326_PD
 exp_id: explore-v3-miner-ionization-size326-PD
-experiment_root: ${REPO_ROOT}/runs/exploration_v3
+experiment_root: ${RUNS_ROOT}/exploration_v3
 data:
   kind: volume
   dataset_name: ionization

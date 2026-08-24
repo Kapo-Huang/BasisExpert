@@ -1,6 +1,6 @@
 experiment: apmgsrn_combustion_40NH3_1_Chemistry_Heat_Release_Rate
 exp_id: apmgsrn-combustion_40NH3_1-Chemistry_Heat_Release_Rate
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 MODEL:
   model_name: apmgsrn
   n_dims: 3

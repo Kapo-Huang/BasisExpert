@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.main.generate_configs import REPO_ROOT_TOKEN, dump
+from scripts.main.generate_configs import RUNS_ROOT_TOKEN, dump
 
 FORMAL_CONFIG_ROOT = ROOT / "configs" / "rd_curve"
 CONFIG_LIST = ROOT / "scripts" / "rd_curve" / "configs.list"
 CONFIG_ROOT = ROOT / "configs/exploration/rd_curve_smoke"
-RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v3"
+RUN_ROOT = f"{RUNS_ROOT_TOKEN}/exploration_v3"
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,

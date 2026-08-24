@@ -46,6 +46,17 @@ SERVER_ENV=autodl python -m var_expert_inr.cli train \
   --config configs/main/VarExpert/ionization.yaml
 ```
 
+Experiment outputs use `${RUNS_ROOT}`. The original profile defaults to the
+repository `runs/` directory, while AutoDL defaults to
+`/root/autodl-tmp/runs`. Override either profile explicitly when needed:
+
+```bash
+RUNS_ROOT=/path/to/runs bash scripts/main/run_all.sh --env autodl
+```
+
+Batch status files and launcher logs remain under the repository
+`batch_logs/` directory unless `BATCH_LOG_ROOT` is explicitly set.
+
 On AutoDL, datasets default to `/root/autodl-tmp/Combustion`, `Ionization`,
 `RedSea`, and `Katrina`. Set `AUTODL_DATA_ROOT` to replace
 `/root/autodl-tmp`, or set `COMBUSTION_ROOT`, `IONIZATION_ROOT`,

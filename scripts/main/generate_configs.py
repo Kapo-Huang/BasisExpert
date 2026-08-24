@@ -12,6 +12,7 @@ CONFIGS_ROOT = ROOT / "configs"
 MAIN_CONFIGS = CONFIGS_ROOT / "main"
 RD_CURVE_CONFIGS = CONFIGS_ROOT / "rd_curve"
 REPO_ROOT_TOKEN = "${REPO_ROOT}"
+RUNS_ROOT_TOKEN = "${RUNS_ROOT}"
 DATASET_ROOT_TOKENS = {
     "redsea": "${REDSEA_ROOT}",
     "katrina": "${KATRINA_ROOT}",
@@ -307,6 +308,11 @@ def repo_path(relative: str) -> str:
     return f"{REPO_ROOT_TOKEN}/{relative.strip('/')}"
 
 
+def run_path(relative: str = "") -> str:
+    suffix = relative.strip("/")
+    return f"{RUNS_ROOT_TOKEN}/{suffix}" if suffix else RUNS_ROOT_TOKEN
+
+
 def targets_for(dataset: str, nested: bool) -> dict[str, str]:
     del nested
     meta = DATASETS[dataset]
@@ -445,7 +451,7 @@ def generate_instant_ngp() -> int:
         payload = {
             "experiment": f"ionization_instant_ngp_{target}",
             "exp_id": f"instant-ngp-ionization-{target}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": data,
             "model": instant_ngp_model(),
             "training": instant_ngp_training(),
@@ -461,7 +467,7 @@ def generate_instant_ngp() -> int:
         payload = {
             "experiment": f"{COMBUSTION_DATASET['name']}_instant_ngp_{target}",
             "exp_id": f"instant-ngp-{COMBUSTION_DATASET['name']}-{target}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": combustion_data(
                 target,
                 include_vector=False,
@@ -535,7 +541,7 @@ def generate_instant_vnr() -> int:
         payload = {
             "experiment": f"ionization_instant_vnr_{target}",
             "exp_id": f"instant-vnr-ionization-{target}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": data,
             "model": instant_vnr_model("ionization"),
             "training": instant_vnr_training(),
@@ -548,7 +554,7 @@ def generate_instant_vnr() -> int:
         payload = {
             "experiment": f"{COMBUSTION_DATASET['name']}_instant_vnr_{target}",
             "exp_id": f"instant-vnr-{COMBUSTION_DATASET['name']}-{target}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": combustion_data(
                 target,
                 include_vector=False,
@@ -623,7 +629,7 @@ def generate_mvnet() -> int:
         payload = {
             "experiment": f"{dataset}_mvnet",
             "exp_id": f"mvnet-{dataset}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": data,
             "model": mvnet_model(
                 dataset,
@@ -643,7 +649,7 @@ def generate_mvnet() -> int:
     payload = {
         "experiment": f"{COMBUSTION_DATASET['name']}_mvnet",
         "exp_id": f"mvnet-{COMBUSTION_DATASET['name']}",
-        "experiment_root": repo_path("runs"),
+        "experiment_root": run_path(),
         "data": combustion,
         "model": mvnet_model(
             COMBUSTION_DATASET["name"],
@@ -681,7 +687,7 @@ def generate_stsr_inr() -> int:
         payload = {
             "experiment": f"{dataset}_stsr_inr",
             "exp_id": f"stsr-inr-{dataset}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": unified_data(dataset, False),
             "model": main_model(dataset),
             "training": mvnet_training(),
@@ -695,7 +701,7 @@ def generate_stsr_inr() -> int:
     payload = {
         "experiment": f"{combustion_name}_stsr_inr",
         "exp_id": f"stsr-inr-{combustion_name}",
-        "experiment_root": repo_path("runs"),
+        "experiment_root": run_path(),
         "data": combustion_data(four_coordinates=True),
         "model": main_model(combustion_name),
         "training": mvnet_training(),
@@ -732,7 +738,7 @@ def generate_stsr_inr() -> int:
         sized_payload = {
             "experiment": f"ionization_stsr_inr_{size.lower()}",
             "exp_id": f"stsr-inr-ionization-{size.lower()}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": unified_data("ionization", True),
             "model": model,
             "training": training,
@@ -800,7 +806,7 @@ def generate_unified_single() -> int:
                 payload = {
                     "experiment": f"{dataset}_{model_slug}_{target}",
                     "exp_id": f"{model_slug}-{dataset}-{target}",
-                    "experiment_root": repo_path("runs"),
+                    "experiment_root": run_path(),
                     "data": unified_data(dataset, False, target),
                     "model": model,
                     "training": training,
@@ -830,7 +836,7 @@ def generate_unified_single() -> int:
             payload = {
                 "experiment": f"{COMBUSTION_DATASET['name']}_{model_slug}_{target}",
                 "exp_id": f"{model_slug}-{COMBUSTION_DATASET['name']}-{target}",
-                "experiment_root": repo_path("runs"),
+                "experiment_root": run_path(),
                 "data": combustion_data(target),
                 "model": deepcopy(combustion_model),
                 "training": training,
@@ -852,7 +858,7 @@ def generate_unified_single() -> int:
                 payload = {
                     "experiment": f"ionization_{model_slug}_{size.lower()}_{target}",
                     "exp_id": f"{model_slug}-ionization-{size.lower()}-{target}",
-                    "experiment_root": repo_path("runs"),
+                    "experiment_root": run_path(),
                     "data": unified_data("ionization", True, target),
                     "model": deepcopy(UNIFIED_SIZE_MODELS[family][size]),
                     "training": training,
@@ -892,7 +898,7 @@ def generate_var_expert() -> int:
         payload = {
             "experiment": f"{dataset}_var_expert",
             "exp_id": f"var-expert-{dataset}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": unified_data(dataset, False),
             "model": {"name": "var_expert", "in_features": 4, "num_experts": 6, "base_dim": base_dim, "top_k": 3},
             "training": var_training(dataset, False),
@@ -921,7 +927,7 @@ def generate_var_expert() -> int:
     combustion_payload = {
         "experiment": f"{combustion_name}_var_expert",
         "exp_id": "var-expert-combustion-40NH3-1",
-        "experiment_root": repo_path("runs"),
+        "experiment_root": run_path(),
         "data": combustion_data(),
         "model": {
             "name": "var_expert",
@@ -950,7 +956,7 @@ def generate_var_expert() -> int:
         payload = {
             "experiment": f"ionization_var_expert_{size.lower()}",
             "exp_id": f"var-expert-ionization-{size.lower()}",
-            "experiment_root": repo_path("runs"),
+            "experiment_root": run_path(),
             "data": unified_data("ionization", True),
             "model": {"name": "var_expert", "in_features": 4, **model_profile},
             "training": training,
@@ -967,7 +973,7 @@ def mc_payload(dataset: str, nested: bool, hidden: int) -> dict:
     return {
         "experiment": f"{dataset}_mc_inr",
         "exp_id": f"mc-inr-{dataset}" + (f"-h{hidden}" if nested else ""),
-        "experiment_root": repo_path("runs"),
+        "experiment_root": run_path(),
         "data": unified_data(dataset, nested),
         "model": {"name": "mc_inr", "hidden_features": hidden, "gfe_layers": 5, "lfe_layers": 6},
         "training": {
@@ -1002,7 +1008,7 @@ def generate_mc() -> int:
     payload = {
         "experiment": f"{combustion_name}_mc_inr",
         "exp_id": f"mc-inr-{combustion_name}",
-        "experiment_root": repo_path("runs"),
+        "experiment_root": run_path(),
         "data": combustion_data(),
         "model": {
             "name": "mc_inr",
@@ -1038,7 +1044,7 @@ def neural_model(
     )
     size_token = size.lower() if size else "default"
     manager_path = (
-        f"{rel_prefix(nested)}runs/neural_expert/pretrained_managers/{dataset}/{size_token}/"
+        f"{run_path('neural_expert')}/pretrained_managers/{dataset}/{size_token}/"
         f"pt_{model_name}_{target}_managerpretraining.pth"
     )
     profile = profile or {}
@@ -1132,7 +1138,7 @@ def neural_payload(
         "seed": 0, "wandb_project": f"inr_moe_{dataset}",
         "experiment": f"neural_expert_{dataset}{exp_size}_{target}{suffix}",
         "exp_id": f"neural-expert-{dataset}{exp_size}-{target}{suffix}",
-        "experiment_root": f"{rel_prefix(nested)}runs/neural_expert",
+        "experiment_root": run_path("neural_expert"),
         "MODEL": neural_model(
             dataset,
             dim,
@@ -1229,7 +1235,7 @@ def apmg_payload(
     return {
         "experiment": f"apmgsrn_{dataset}{tag}_{target}",
         "exp_id": f"apmgsrn-{dataset}{tag}-{target}",
-        "experiment_root": f"{rel_prefix(nested)}runs",
+        "experiment_root": run_path(),
         "MODEL": {
             "model_name": "apmgsrn", "n_dims": 3, "n_outputs": 1,
             "feature_grid_shape": deepcopy(sizing["feature_grid_shape"]),
@@ -1276,7 +1282,7 @@ def fv_payload(
     return {
         "experiment": f"fv_srn_{dataset}{tag}_{target}",
         "exp_id": f"fv-srn-{dataset}{tag}-{target}",
-        "experiment_root": repo_path("runs/fv_srn"),
+        "experiment_root": run_path("fv_srn"),
         "data": volume_data(target, nested, dataset=dataset),
         "model": {
             "name": "fv_srn", "grid_resolution": resolution,
@@ -1314,7 +1320,7 @@ def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
     return {
         "experiment": f"ecnr_{dataset}_{target}",
         "exp_id": f"ecnr-{dataset}-{target}",
-        "experiment_root": repo_path("runs/ecnr"),
+        "experiment_root": run_path("ecnr"),
         "data": volume_data(target, False, dataset=dataset),
         "model": {
             "name": "ecnr", "scales": 3,
@@ -1390,7 +1396,7 @@ def miner_payload(target: str, dataset: str = "ionization") -> dict:
     return {
         "experiment": f"miner_{dataset}_{target}",
         "exp_id": f"miner-{dataset}-{target}",
-        "experiment_root": repo_path("runs/miner"),
+        "experiment_root": run_path("miner"),
         "data": volume_data(target, False, dataset=dataset),
         "model": {
             "name": "miner",
@@ -1475,7 +1481,7 @@ def rm_payload(
     return {
         "experiment": f"rmdsrn_{dataset}{tag}_{target}",
         "exp_id": f"rmdsrn-{dataset}{tag}-{target}",
-        "experiment_root": repo_path("runs/rmdsrn"),
+        "experiment_root": run_path("rmdsrn"),
         "data": volume_data(target, nested, dataset=dataset),
         "model": {
             "name": "rmdsrn", "base_encoder": "temporal_fv_srn",

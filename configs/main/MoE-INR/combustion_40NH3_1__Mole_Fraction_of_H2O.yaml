@@ -1,6 +1,6 @@
 experiment: combustion_40NH3_1_moe-inr_Mole_Fraction_of_H2O
 exp_id: moe-inr-combustion_40NH3_1-Mole_Fraction_of_H2O
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

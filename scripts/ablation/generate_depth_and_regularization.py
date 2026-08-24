@@ -11,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.main.generate_configs import REPO_ROOT_TOKEN, dump
+from scripts.main.generate_configs import RUNS_ROOT_TOKEN, dump
 
 FORMAL_ROOT = ROOT / "configs" / "rd_curve"
 CONFIG_ROOT = ROOT / "configs/ablation/depth_and_regularization"
-RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v4"
+RUN_ROOT = f"{RUNS_ROOT_TOKEN}/exploration_v4"
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,

@@ -1,6 +1,6 @@
 experiment: exploration_v6_ecnr_official_main_quant_lr5e5_H2
 exp_id: explore-v6-ecnr-official-main-quant-lr5e5-H2
-experiment_root: ${REPO_ROOT}/runs/exploration_v6
+experiment_root: ${RUNS_ROOT}/exploration_v6
 data:
   kind: volume
   dataset_name: ionization

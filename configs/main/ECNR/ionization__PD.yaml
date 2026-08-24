@@ -1,6 +1,6 @@
 experiment: ecnr_ionization_PD
 exp_id: ecnr-ionization-PD
-experiment_root: ${REPO_ROOT}/runs/ecnr
+experiment_root: ${RUNS_ROOT}/ecnr
 data:
   kind: volume
   dataset_name: ionization

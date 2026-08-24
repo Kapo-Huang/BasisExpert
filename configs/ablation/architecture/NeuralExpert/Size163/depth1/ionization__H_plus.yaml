@@ -2,7 +2,7 @@ seed: 0
 wandb_project: inr_moe_ionization
 experiment: exploration_neuralexpert_depth1-H_plus
 exp_id: explore-neuralexpert-size163-depth1-H_plus
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 MODEL:
   model_name: inr_moe_ionization
   in_dim: 4
@@ -31,7 +31,7 @@ MODEL:
   manager_q_activation: softmax
   manager_clamp_q: 0.0
   manager_conditioning: cat
-  manager_pt_path: ${REPO_ROOT}/runs/exploration/neural_expert/pretrained_managers/ionization/size163/depth1/pt_inr_moe_ionization_H_plus_managerpretraining.pth
+  manager_pt_path: ${RUNS_ROOT}/exploration/neural_expert/pretrained_managers/ionization/size163/depth1/pt_inr_moe_ionization_H_plus_managerpretraining.pth
   load_pt_manager: true
   shared_encoder: false
 LOSS:

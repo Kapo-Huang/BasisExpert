@@ -1,6 +1,6 @@
 experiment: ionization_coordnet_size082_H2
 exp_id: coordnet-ionization-size082-H2
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: ionization

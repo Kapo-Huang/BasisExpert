@@ -51,7 +51,7 @@ log:
     cuda_sync: false
 experiment: exploration_coordnet_res10-PD
 exp_id: explore-coordnet-size163-res10-PD
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 exploration_probe:
   enabled: true
   total_epoch_equivalents: 50

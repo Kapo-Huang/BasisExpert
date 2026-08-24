@@ -11,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.main.generate_configs import REPO_ROOT_TOKEN, dump
+from scripts.main.generate_configs import RUNS_ROOT_TOKEN, dump
 
 FORMAL_ROOT = ROOT / "configs" / "main" / "ECNR"
 CONFIG_ROOT = ROOT / "configs/exploration/ecnr_tuning"
-RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v6"
+RUN_ROOT = f"{RUNS_ROOT_TOKEN}/exploration_v6"
 TARGETS = ("GT", "H2", "H_plus")
 STRUCTURE = "official_main"
 SMOKE_TRAINING = {

@@ -1,6 +1,6 @@
 experiment: combustion_40NH3_1_coordnet_Velocity_Magnitude
 exp_id: coordnet-combustion_40NH3_1-Velocity_Magnitude
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

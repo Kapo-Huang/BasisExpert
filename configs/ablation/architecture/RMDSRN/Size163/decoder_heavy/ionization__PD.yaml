@@ -1,6 +1,6 @@
 experiment: exploration_rmdsrn_decoder_heavy-PD
 exp_id: explore-rmdsrn-size163-decoder_heavy-PD
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 data:
   kind: volume
   dataset_name: ionization

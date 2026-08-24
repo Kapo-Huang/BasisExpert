@@ -1,6 +1,6 @@
 experiment: katrina_moe-inr_speed
 exp_id: moe-inr-katrina-speed
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: node
   dataset_name: katrina

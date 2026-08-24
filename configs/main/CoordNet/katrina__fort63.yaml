@@ -1,6 +1,6 @@
 experiment: katrina_coordnet_fort63
 exp_id: coordnet-katrina-fort63
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: node
   dataset_name: katrina

@@ -1,6 +1,6 @@
 experiment: exploration_rmdsrn_balanced-H_plus
 exp_id: explore-rmdsrn-size163-balanced-H_plus
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 data:
   kind: volume
   dataset_name: ionization

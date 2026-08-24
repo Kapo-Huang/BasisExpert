@@ -65,7 +65,17 @@ server_env_init() {
     SERVER_ENV="${selected}"
     CONDA_ENV="${CONDA_ENV:-compression}"
     PYTHON_BIN="${PYTHON_BIN:-python}"
-    export SERVER_ENV CONDA_ENV PYTHON_BIN
+    if [[ -z "${RUNS_ROOT:-}" ]]; then
+        if [[ "${SERVER_ENV}" == "autodl" ]]; then
+            RUNS_ROOT="/root/autodl-tmp/runs"
+        elif [[ -n "${REPO_ROOT:-}" ]]; then
+            RUNS_ROOT="${REPO_ROOT}/runs"
+        else
+            printf '%s\n' 'REPO_ROOT must be defined before server_env_init for the original environment.' >&2
+            return 2
+        fi
+    fi
+    export SERVER_ENV CONDA_ENV PYTHON_BIN RUNS_ROOT
     server_env_configure_threads
 }
 

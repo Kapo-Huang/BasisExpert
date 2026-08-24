@@ -38,6 +38,11 @@ Accepted forms are `--env autodl`, `--env=autodl`, `env=autodl`, and the
 `autodl`. `CONDA_ENV` overrides the original Conda environment and `PYTHON_BIN`
 overrides the Python executable.
 
+The original profile writes experiments below `<repo>/runs`; AutoDL writes
+them below `/root/autodl-tmp/runs`. Set `RUNS_ROOT` to override this location.
+Batch logs remain below `<repo>/batch_logs` by default and are controlled
+separately with `BATCH_LOG_ROOT`.
+
 AutoDL datasets default to `/root/autodl-tmp/<Dataset>`. Override the common
 directory with `AUTODL_DATA_ROOT`, or override an individual dataset with
 `COMBUSTION_ROOT`, `IONIZATION_ROOT`, `REDSEA_ROOT`, or `KATRINA_ROOT`.

@@ -1,6 +1,6 @@
 experiment: exploration_mc_inr_depth3_4
 exp_id: explore-mc_inr-size163-depth3_4
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 data:
   kind: volume
   dataset_name: ionization

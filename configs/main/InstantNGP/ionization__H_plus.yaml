@@ -1,6 +1,6 @@
 experiment: ionization_instant_ngp_H_plus
 exp_id: instant-ngp-ionization-H_plus
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: ionization

@@ -65,7 +65,7 @@ log:
     cuda_sync: false
 experiment: exploration_varexpert_experts4
 exp_id: explore-varexpert-size163-experts4
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 exploration_probe:
   enabled: true
   total_epoch_equivalents: 50

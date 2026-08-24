@@ -1,6 +1,6 @@
 experiment: apmgsrn_ionization_H_plus
 exp_id: apmgsrn-ionization-H_plus
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 MODEL:
   model_name: apmgsrn
   n_dims: 3

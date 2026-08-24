@@ -11,12 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.main.generate_configs import REPO_ROOT_TOKEN, dump
+from scripts.main.generate_configs import RUNS_ROOT_TOKEN, dump
 
 MAIN_CONFIG_ROOT = ROOT / "configs" / "main"
 RD_CURVE_CONFIG_ROOT = ROOT / "configs" / "rd_curve"
 CONFIG_ROOT = ROOT / "configs/exploration/optimizer_tuning"
-RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_v5"
+RUN_ROOT = f"{RUNS_ROOT_TOKEN}/exploration_v5"
 TARGETS = ("GT", "H2", "H_plus")
 
 PROBE = {

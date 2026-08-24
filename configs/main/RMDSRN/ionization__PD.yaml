@@ -1,6 +1,6 @@
 experiment: rmdsrn_ionization_PD
 exp_id: rmdsrn-ionization-PD
-experiment_root: ${REPO_ROOT}/runs/rmdsrn
+experiment_root: ${RUNS_ROOT}/rmdsrn
 data:
   kind: volume
   dataset_name: ionization

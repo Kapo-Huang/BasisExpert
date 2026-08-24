@@ -1,6 +1,6 @@
 experiment: apmgsrn_ionization_PD
 exp_id: apmgsrn-ionization-PD
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 MODEL:
   model_name: apmgsrn
   n_dims: 3

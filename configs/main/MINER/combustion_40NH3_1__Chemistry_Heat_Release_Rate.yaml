@@ -1,6 +1,6 @@
 experiment: miner_combustion_40NH3_1_Chemistry_Heat_Release_Rate
 exp_id: miner-combustion_40NH3_1-Chemistry_Heat_Release_Rate
-experiment_root: ${REPO_ROOT}/runs/miner
+experiment_root: ${RUNS_ROOT}/miner
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

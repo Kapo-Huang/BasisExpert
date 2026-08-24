@@ -1,6 +1,6 @@
 experiment: exploration_v5_fv_srn_formal_size163_lr1e2_step100_GT
 exp_id: explore-v5-fv-srn-formal-size163-lr1e2-step100-GT
-experiment_root: ${REPO_ROOT}/runs/exploration_v5
+experiment_root: ${RUNS_ROOT}/exploration_v5
 data:
   kind: volume
   dataset_name: ionization

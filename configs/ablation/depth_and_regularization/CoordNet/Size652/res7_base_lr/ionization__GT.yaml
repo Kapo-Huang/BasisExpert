@@ -1,6 +1,6 @@
 experiment: exploration_v4_coordnet_size652_res7_base_lr_GT
 exp_id: explore-v4-coordnet-size652-res7_base_lr-GT
-experiment_root: ${REPO_ROOT}/runs/exploration_v4
+experiment_root: ${RUNS_ROOT}/exploration_v4
 data:
   kind: volume
   dataset_name: ionization

@@ -1,6 +1,6 @@
 experiment: miner_ionization_size082_H_plus
 exp_id: miner-ionization-size082-H_plus
-experiment_root: ${REPO_ROOT}/runs/miner
+experiment_root: ${RUNS_ROOT}/miner
 data:
   kind: volume
   dataset_name: ionization

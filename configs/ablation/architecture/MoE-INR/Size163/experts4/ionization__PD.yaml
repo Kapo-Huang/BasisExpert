@@ -52,7 +52,7 @@ log:
     cuda_sync: false
 experiment: exploration_moe_inr_experts4-PD
 exp_id: explore-moe_inr-size163-experts4-PD
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 exploration_probe:
   enabled: true
   total_epoch_equivalents: 50

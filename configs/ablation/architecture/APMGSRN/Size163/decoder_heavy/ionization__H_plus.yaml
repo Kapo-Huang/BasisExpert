@@ -1,6 +1,6 @@
 experiment: exploration_apmgsrn_decoder_heavy-H_plus
 exp_id: explore-apmgsrn-size163-decoder_heavy-H_plus
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 MODEL:
   model_name: apmgsrn
   n_dims: 3

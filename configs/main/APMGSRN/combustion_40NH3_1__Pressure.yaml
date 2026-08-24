@@ -1,6 +1,6 @@
 experiment: apmgsrn_combustion_40NH3_1_Pressure
 exp_id: apmgsrn-combustion_40NH3_1-Pressure
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 MODEL:
   model_name: apmgsrn
   n_dims: 3

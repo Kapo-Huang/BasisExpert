@@ -1,6 +1,6 @@
 experiment: combustion_40NH3_1_instant_vnr_Pressure
 exp_id: instant-vnr-combustion_40NH3_1-Pressure
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

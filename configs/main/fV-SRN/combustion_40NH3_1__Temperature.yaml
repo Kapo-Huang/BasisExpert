@@ -1,6 +1,6 @@
 experiment: fv_srn_combustion_40NH3_1_Temperature
 exp_id: fv-srn-combustion_40NH3_1-Temperature
-experiment_root: ${REPO_ROOT}/runs/fv_srn
+experiment_root: ${RUNS_ROOT}/fv_srn
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

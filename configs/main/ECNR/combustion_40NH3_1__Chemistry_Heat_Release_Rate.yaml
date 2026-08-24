@@ -1,6 +1,6 @@
 experiment: ecnr_combustion_40NH3_1_Chemistry_Heat_Release_Rate
 exp_id: ecnr-combustion_40NH3_1-Chemistry_Heat_Release_Rate
-experiment_root: ${REPO_ROOT}/runs/ecnr
+experiment_root: ${RUNS_ROOT}/ecnr
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

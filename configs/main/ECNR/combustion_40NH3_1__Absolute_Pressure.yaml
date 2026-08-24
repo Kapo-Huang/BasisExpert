@@ -1,6 +1,6 @@
 experiment: ecnr_combustion_40NH3_1_Absolute_Pressure
 exp_id: ecnr-combustion_40NH3_1-Absolute_Pressure
-experiment_root: ${REPO_ROOT}/runs/ecnr
+experiment_root: ${RUNS_ROOT}/ecnr
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

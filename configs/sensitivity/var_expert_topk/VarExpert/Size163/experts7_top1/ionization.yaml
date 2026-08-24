@@ -65,7 +65,7 @@ log:
     cuda_sync: false
 experiment: sensitivity_varexpert_topk_size163_experts7_top1
 exp_id: sensitivity-varexpert-topk-size163-experts7_top1
-experiment_root: ${REPO_ROOT}/runs/sensitivity/var_expert_topk
+experiment_root: ${RUNS_ROOT}/sensitivity/var_expert_topk
 exploration_probe:
   enabled: true
   total_epoch_equivalents: 50

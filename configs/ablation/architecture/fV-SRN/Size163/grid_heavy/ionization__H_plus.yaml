@@ -1,6 +1,6 @@
 experiment: exploration_fv_srn_grid_heavy-H_plus
 exp_id: explore-fv_srn-size163-grid_heavy-H_plus
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 data:
   kind: volume
   dataset_name: ionization

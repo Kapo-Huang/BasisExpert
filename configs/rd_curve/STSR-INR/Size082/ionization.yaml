@@ -1,6 +1,6 @@
 experiment: ionization_stsr_inr_size082
 exp_id: stsr-inr-ionization-size082
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: ionization

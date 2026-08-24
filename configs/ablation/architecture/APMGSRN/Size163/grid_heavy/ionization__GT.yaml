@@ -1,6 +1,6 @@
 experiment: exploration_apmgsrn_grid_heavy-GT
 exp_id: explore-apmgsrn-size163-grid_heavy-GT
-experiment_root: ${REPO_ROOT}/runs/exploration
+experiment_root: ${RUNS_ROOT}/exploration
 MODEL:
   model_name: apmgsrn
   n_dims: 3

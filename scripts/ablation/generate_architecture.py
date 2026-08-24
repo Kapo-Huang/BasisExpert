@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.main.generate_configs import (
     DATASETS,
-    REPO_ROOT_TOKEN,
+    RUNS_ROOT_TOKEN,
     apmg_payload,
     common_training,
     dump,
@@ -28,7 +28,7 @@ from scripts.main.generate_configs import (
 
 EXPLORATION_CONFIGS = ROOT / "configs/ablation/architecture"
 SIZE_NAME = "Size163"
-EXPERIMENT_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration"
+EXPERIMENT_ROOT = f"{RUNS_ROOT_TOKEN}/exploration"
 PROBE = {
     "enabled": True,
     "total_epoch_equivalents": 50,

@@ -1,6 +1,6 @@
 experiment: combustion_40NH3_1_var_expert_variable_scaling_v08
 exp_id: var-expert-combustion-40NH3-1-variable-scaling-v08
-experiment_root: ${REPO_ROOT}/runs/variable_scaling
+experiment_root: ${RUNS_ROOT}/variable_scaling
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

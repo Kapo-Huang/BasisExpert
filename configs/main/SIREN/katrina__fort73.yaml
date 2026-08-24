@@ -1,6 +1,6 @@
 experiment: katrina_siren_fort73
 exp_id: siren-katrina-fort73
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: node
   dataset_name: katrina

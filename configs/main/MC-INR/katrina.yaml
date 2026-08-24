@@ -1,6 +1,6 @@
 experiment: katrina_mc_inr
 exp_id: mc-inr-katrina
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: node
   dataset_name: katrina

@@ -1,6 +1,6 @@
 experiment: fv_srn_ionization-size326_H_plus
 exp_id: fv-srn-ionization-size326-H_plus
-experiment_root: ${REPO_ROOT}/runs/fv_srn
+experiment_root: ${RUNS_ROOT}/fv_srn
 data:
   kind: volume
   dataset_name: ionization

@@ -1,6 +1,6 @@
 experiment: redsea_siren_U
 exp_id: siren-redsea-U
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: node
   dataset_name: redsea

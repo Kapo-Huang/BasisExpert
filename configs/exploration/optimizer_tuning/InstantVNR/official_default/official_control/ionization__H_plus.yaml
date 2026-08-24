@@ -1,6 +1,6 @@
 experiment: exploration_v5_instantvnr_official_default_official_control_H_plus
 exp_id: explore-v5-instantvnr-official-default-official-control-H_plus
-experiment_root: ${REPO_ROOT}/runs/exploration_v5
+experiment_root: ${RUNS_ROOT}/exploration_v5
 data:
   kind: volume
   dataset_name: ionization

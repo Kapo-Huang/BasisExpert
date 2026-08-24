@@ -11,6 +11,7 @@ import yaml
 
 REPO_ROOT_PLACEHOLDER = "${REPO_ROOT}"
 DATASETS_ROOT_PLACEHOLDER = "${DATASETS_ROOT}"
+RUNS_ROOT_PLACEHOLDER = "${RUNS_ROOT}"
 DATASET_ROOT_PLACEHOLDERS = {
     "${REDSEA_ROOT}": ("RedSea", Path("data/Mesh/RedSea")),
     "${KATRINA_ROOT}": ("Katrina", Path("data/Mesh/Katrina")),
@@ -69,6 +70,21 @@ def find_repo_root(start: str | Path | None = None) -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _runs_root(*, base_dir: str | Path | None) -> Path:
+    configured_root = os.environ.get("RUNS_ROOT")
+    if configured_root:
+        return Path(configured_root).expanduser()
+
+    server_env = os.environ.get("SERVER_ENV", "original").strip().lower()
+    if server_env == "autodl":
+        return Path("/root/autodl-tmp/runs")
+    if server_env == "original":
+        return find_repo_root(base_dir) / "runs"
+    raise ValueError(
+        f"Unsupported SERVER_ENV={server_env!r}; expected 'original' or 'autodl'"
+    )
+
+
 def ensure_parent(path: str | Path) -> Path:
     resolved = Path(path)
     resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -106,6 +122,13 @@ def resolve_path(path_value: str | None, *, base_dir: str | Path | None = None) 
     if path_value is None:
         return None
     text = str(path_value)
+    if (
+        text == RUNS_ROOT_PLACEHOLDER
+        or text.startswith(f"{RUNS_ROOT_PLACEHOLDER}/")
+        or text.startswith(f"{RUNS_ROOT_PLACEHOLDER}\\")
+    ):
+        suffix = text[len(RUNS_ROOT_PLACEHOLDER) :].lstrip("/\\")
+        return str((_runs_root(base_dir=base_dir) / suffix).resolve())
     if (
         text == REPO_ROOT_PLACEHOLDER
         or text.startswith(f"{REPO_ROOT_PLACEHOLDER}/")

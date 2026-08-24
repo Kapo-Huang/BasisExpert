@@ -1,6 +1,6 @@
 experiment: combustion_40NH3_1_moe-inr_Chemistry_Heat_Release_Rate
 exp_id: moe-inr-combustion_40NH3_1-Chemistry_Heat_Release_Rate
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

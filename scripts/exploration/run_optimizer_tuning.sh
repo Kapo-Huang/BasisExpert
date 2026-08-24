@@ -6,7 +6,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/../lib/server_env.sh"
 server_env_init "$@" || exit $?
 CONFIG_ROOT="${REPO_ROOT}/configs/exploration/optimizer_tuning"
-RUN_ROOT="${REPO_ROOT}/runs/exploration_v5"
+RUN_ROOT="${RUNS_ROOT}/exploration_v5"
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/exploration_v5/${RUN_TOKEN}}"
 if command -v cygpath >/dev/null 2>&1; then LOG_ROOT="$(cygpath -u "${LOG_ROOT}")"; fi

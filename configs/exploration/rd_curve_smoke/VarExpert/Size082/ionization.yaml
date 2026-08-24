@@ -1,6 +1,6 @@
 experiment: exploration_v3_ionization_var_expert_size082
 exp_id: explore-v3-var-expert-ionization-size082
-experiment_root: ${REPO_ROOT}/runs/exploration_v3
+experiment_root: ${RUNS_ROOT}/exploration_v3
 data:
   kind: volume
   dataset_name: ionization

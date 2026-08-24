@@ -11,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.main.generate_configs import REPO_ROOT_TOKEN, dump
+from scripts.main.generate_configs import RUNS_ROOT_TOKEN, dump
 
 FORMAL_ROOT = ROOT / "configs" / "rd_curve" / "CoordNet"
 CONFIG_ROOT = ROOT / "configs/sensitivity/coordnet_learning_rate"
-RUN_ROOT = f"{REPO_ROOT_TOKEN}/runs/exploration_CoordNet"
+RUN_ROOT = f"{RUNS_ROOT_TOKEN}/exploration_CoordNet"
 
 SIZES = ("Size082", "Size163", "Size326", "Size652")
 TARGETS = ("GT", "H_plus", "He")

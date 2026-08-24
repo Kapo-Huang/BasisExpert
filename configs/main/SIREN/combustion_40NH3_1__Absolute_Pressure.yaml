@@ -1,6 +1,6 @@
 experiment: combustion_40NH3_1_siren_Absolute_Pressure
 exp_id: siren-combustion_40NH3_1-Absolute_Pressure
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: combustion_40NH3_1

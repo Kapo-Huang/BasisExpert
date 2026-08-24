@@ -1,6 +1,6 @@
 experiment: ionization_moe-inr_size652_GT
 exp_id: moe-inr-ionization-size652-GT
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: ionization

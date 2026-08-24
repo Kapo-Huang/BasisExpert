@@ -1,6 +1,6 @@
 experiment: ionization_var_expert_size082
 exp_id: var-expert-ionization-size082
-experiment_root: ${REPO_ROOT}/runs
+experiment_root: ${RUNS_ROOT}
 data:
   kind: volume
   dataset_name: ionization
