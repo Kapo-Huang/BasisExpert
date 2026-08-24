@@ -1,0 +1,23 @@
+# Size041 selection for the five baseline SIZE families; VarExpert is excluded.
+
+configs/rd_curve/CoordNet/Size041/ionization__GT.yaml
+configs/rd_curve/CoordNet/Size041/ionization__H2.yaml
+configs/rd_curve/CoordNet/Size041/ionization__H_plus.yaml
+configs/rd_curve/CoordNet/Size041/ionization__He.yaml
+configs/rd_curve/CoordNet/Size041/ionization__PD.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__GT.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__H2.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__H_plus.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__He.yaml
+configs/rd_curve/MoE-INR/Size041/ionization__PD.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__GT.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__H2.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__H_plus.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__He.yaml
+configs/rd_curve/fV-SRN/Size041/ionization__PD.yaml
+configs/rd_curve/MINER/Size041/ionization__GT.yaml
+configs/rd_curve/MINER/Size041/ionization__H2.yaml
+configs/rd_curve/MINER/Size041/ionization__H_plus.yaml
+configs/rd_curve/MINER/Size041/ionization__He.yaml
+configs/rd_curve/MINER/Size041/ionization__PD.yaml
+configs/rd_curve/STSR-INR/Size041/ionization.yaml
