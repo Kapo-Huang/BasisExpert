@@ -21,6 +21,7 @@ from scripts.main.generate_configs import (
 
 
 CONFIG_ROOT = ROOT / "configs/sensitivity/var_expert_num"
+CONFIG_LIST = ROOT / "scripts/sensitivity/var_expert_num.list"
 RUN_ROOT = f"{RUNS_ROOT_TOKEN}/sensitivity/var_expert_num"
 SIZE = "Size163"
 EXPERT_PROFILES = {
@@ -107,6 +108,7 @@ def generate() -> int:
 
     exp_ids: set[str] = set()
     generated: set[tuple[int, str, int, int | None]] = set()
+    config_paths: list[str] = []
     for experts, values in EXPERT_PROFILES.items():
         model_name = str(values["name"])
         base_dim = int(values["base_dim"])
@@ -122,10 +124,19 @@ def generate() -> int:
             raise ValueError(f"Duplicate VarExpert expert-count exp_id: {exp_id}")
         exp_ids.add(exp_id)
         generated.add((int(experts), model_name, base_dim, top_k))
-        dump(
-            CONFIG_ROOT / "VarExpert" / SIZE / _profile(experts, top_k) / "ionization.yaml",
-            payload,
+        config_path = (
+            CONFIG_ROOT / "VarExpert" / SIZE / _profile(experts, top_k) / "ionization.yaml"
         )
+        dump(config_path, payload)
+        config_paths.append(config_path.relative_to(ROOT).as_posix())
+
+    CONFIG_LIST.write_text(
+        "# VarExpert expert-count sensitivity: 1 shared-encoder control and 2-8 experts.\n"
+        + "\n".join(config_paths)
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
     return len(generated)
 

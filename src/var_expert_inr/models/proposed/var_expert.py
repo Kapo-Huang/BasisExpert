@@ -107,6 +107,9 @@ class VarExpert(nn.Module):
         mask = torch.zeros_like(probs)
         return mask.scatter_(1, indices, 1.0)
 
+    def _routing_view_embedding(self, view_ids: torch.Tensor) -> torch.Tensor:
+        return self.view_embedding(view_ids)
+
     def forward(
         self,
         coords: torch.Tensor,
@@ -134,7 +137,7 @@ class VarExpert(nn.Module):
 
         for view_idx, name in view_items:
             view_ids = torch.full((coords.shape[0],), view_idx, device=coords.device, dtype=torch.long)
-            view_embed = self.view_embedding(view_ids)
+            view_embed = self._routing_view_embedding(view_ids)
             probs, _ = self.gating(x_pe, view_embed)
             mask = self._topk_mask(probs)
             masked_probs = probs * mask
@@ -166,7 +169,7 @@ class VarExpert(nn.Module):
         logits_list: List[torch.Tensor] = []
         for view_idx in range(self.num_views):
             view_ids = torch.full((coords.shape[0],), view_idx, device=coords.device, dtype=torch.long)
-            view_embed = self.view_embedding(view_ids)
+            view_embed = self._routing_view_embedding(view_ids)
             _, logits = self.gating(x_pe, view_embed)
             logits_list.append(logits)
         return torch.stack(logits_list, dim=0).mean(dim=0)
@@ -175,7 +178,7 @@ class VarExpert(nn.Module):
         return list(self.gating.parameters()) + list(self.view_embedding.parameters())
 
 
-def build_var_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) -> VarExpert:
+def _var_expert_kwargs_from_config(cfg: Dict, view_specs: Dict[str, int]) -> Dict:
     base_dim = cfg.get("base_dim")
     head_hidden_raw = cfg.get("head_hidden_dim")
     decoder_feature_raw = cfg.get("decoder_feature_dim")
@@ -196,29 +199,33 @@ def build_var_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) -> VarEx
         int(decoder_feature_raw) if decoder_feature_raw is not None else expert_feature_dim
     )
     head_hidden_dim = int(head_hidden_raw) if head_hidden_raw is not None else decoder_feature_dim
-    return VarExpert(
-        in_features=int(cfg.get("in_features", 4)),
-        view_specs=view_specs,
-        num_experts=int(cfg.get("num_experts", 7)),
-        expert_feature_dim=expert_feature_dim,
-        top_k=int(cfg.get("top_k", 3)),
-        view_embed_dim=view_embed_dim,
-        expert_num_frequencies=int(cfg.get("expert_num_frequencies", 6)),
-        expert_hidden_dim=expert_hidden_dim,
-        expert_num_layers=int(cfg.get("expert_num_layers", 3)),
-        gate_hidden_dim=gate_hidden_dim,
-        gate_num_layers=int(cfg.get("gate_num_layers", 3)),
-        decoder_feature_dim=decoder_feature_dim,
-        decoder_hidden_dim=decoder_hidden_dim,
-        decoder_num_layers=int(cfg.get("decoder_num_layers", 3)),
-        head_hidden_dim=head_hidden_dim,
-        head_num_layers=int(cfg.get("head_num_layers", 2)),
-        expert_first_omega_0=float(cfg.get("expert_first_omega_0", 30.0)),
-        expert_hidden_omega_0=float(cfg.get("expert_hidden_omega_0", 30.0)),
-        gate_first_omega_0=float(cfg.get("gate_first_omega_0", 30.0)),
-        gate_hidden_omega_0=float(cfg.get("gate_hidden_omega_0", 30.0)),
-        decoder_first_omega_0=float(cfg.get("decoder_first_omega_0", 30.0)),
-        decoder_hidden_omega_0=float(cfg.get("decoder_hidden_omega_0", 30.0)),
-        head_first_omega_0=float(cfg.get("head_first_omega_0", 30.0)),
-        head_hidden_omega_0=float(cfg.get("head_hidden_omega_0", 30.0)),
-    )
+    return {
+        "view_specs": view_specs,
+        "in_features": int(cfg.get("in_features", 4)),
+        "num_experts": int(cfg.get("num_experts", 7)),
+        "expert_feature_dim": expert_feature_dim,
+        "top_k": int(cfg.get("top_k", 3)),
+        "view_embed_dim": view_embed_dim,
+        "expert_num_frequencies": int(cfg.get("expert_num_frequencies", 6)),
+        "expert_hidden_dim": expert_hidden_dim,
+        "expert_num_layers": int(cfg.get("expert_num_layers", 3)),
+        "gate_hidden_dim": gate_hidden_dim,
+        "gate_num_layers": int(cfg.get("gate_num_layers", 3)),
+        "decoder_feature_dim": decoder_feature_dim,
+        "decoder_hidden_dim": decoder_hidden_dim,
+        "decoder_num_layers": int(cfg.get("decoder_num_layers", 3)),
+        "head_hidden_dim": head_hidden_dim,
+        "head_num_layers": int(cfg.get("head_num_layers", 2)),
+        "expert_first_omega_0": float(cfg.get("expert_first_omega_0", 30.0)),
+        "expert_hidden_omega_0": float(cfg.get("expert_hidden_omega_0", 30.0)),
+        "gate_first_omega_0": float(cfg.get("gate_first_omega_0", 30.0)),
+        "gate_hidden_omega_0": float(cfg.get("gate_hidden_omega_0", 30.0)),
+        "decoder_first_omega_0": float(cfg.get("decoder_first_omega_0", 30.0)),
+        "decoder_hidden_omega_0": float(cfg.get("decoder_hidden_omega_0", 30.0)),
+        "head_first_omega_0": float(cfg.get("head_first_omega_0", 30.0)),
+        "head_hidden_omega_0": float(cfg.get("head_hidden_omega_0", 30.0)),
+    }
+
+
+def build_var_expert_from_config(cfg: Dict, view_specs: Dict[str, int]) -> VarExpert:
+    return VarExpert(**_var_expert_kwargs_from_config(cfg, view_specs))

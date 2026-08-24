@@ -744,7 +744,7 @@ def _train_model_impl(
     memory_tracker: TrainingMemoryTracker | None = None,
 ):
     backbone = getattr(model, "backbone", model)
-    is_var_expert = type(backbone).__name__ == "VarExpert"
+    is_var_expert = bool(getattr(backbone, "supports_expert_routing_aux", False))
     is_instant_ngp = isinstance(backbone, InstantNGP)
     is_mvnet = isinstance(backbone, MVNet4D)
     if is_mvnet:

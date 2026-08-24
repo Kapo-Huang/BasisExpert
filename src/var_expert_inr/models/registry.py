@@ -6,6 +6,7 @@ from ..config.schema import ModelConfig
 from ..data.base import DatasetMeta
 from .proposed.shared_enc_inr import build_shared_enc_inr_from_config
 from .proposed.var_expert import build_var_expert_from_config
+from .proposed.variable_agnostic_moe import build_var_expert_no_embedding_from_config
 from .common import ModelAdapter, require_single_target, view_specs_from_meta
 from .baselines.coordnet import build_coordnet_from_config
 from .baselines.instant_ngp import (
@@ -159,6 +160,10 @@ def _build_stsr_inr(cfg: dict, meta: DatasetMeta):
 
 def _build_var_expert(cfg: dict, meta: DatasetMeta):
     return build_var_expert_from_config(cfg, view_specs_from_meta(meta))
+
+
+def _build_var_expert_no_embedding(cfg: dict, meta: DatasetMeta):
+    return build_var_expert_no_embedding_from_config(cfg, view_specs_from_meta(meta))
 
 
 def _build_shared_enc_inr(cfg: dict, meta: DatasetMeta):
@@ -614,6 +619,7 @@ MODEL_BUILDERS: dict[str, ModelBuilder] = {
     "mvnet": _build_mvnet,
     "stsr_inr": _build_stsr_inr,
     "var_expert": _build_var_expert,
+    "var_expert_no_embedding": _build_var_expert_no_embedding,
     "shared_enc_inr": _build_shared_enc_inr,
 }
 
@@ -626,6 +632,7 @@ MODEL_CONFIG_MATERIALIZERS: dict[str, ModelConfigMaterializer] = {
     "mvnet": _materialize_mvnet,
     "stsr_inr": _materialize_stsr_inr,
     "var_expert": _materialize_var_expert,
+    "var_expert_no_embedding": _materialize_var_expert,
     "shared_enc_inr": _materialize_shared_enc_inr,
 }
 
@@ -640,7 +647,7 @@ def materialize_model_config(model_cfg: ModelConfig, meta: DatasetMeta) -> dict[
 
 def effective_model_config(model_cfg: ModelConfig, meta: DatasetMeta) -> dict[str, Any]:
     model_name = str(model_cfg.name)
-    if model_name == "var_expert":
+    if model_name in {"var_expert", "var_expert_no_embedding"}:
         payload = _compact_var_expert_config(dict(model_cfg.params), meta)
     else:
         payload = MODEL_CONFIG_MATERIALIZERS[model_name](dict(model_cfg.params), meta)

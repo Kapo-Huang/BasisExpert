@@ -1,1 +1,1 @@
-"""Hyperparameter sensitivity-study generators and reports."""
+"""VarExpert expert-count and Top-K sensitivity-study automation."""

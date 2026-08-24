@@ -21,6 +21,7 @@ from scripts.main.generate_configs import (
 
 
 CONFIG_ROOT = ROOT / "configs/sensitivity/var_expert_topk"
+CONFIG_LIST = ROOT / "scripts/sensitivity/var_expert_topk.list"
 RUN_ROOT = f"{RUNS_ROOT_TOKEN}/sensitivity/var_expert_topk"
 SIZE = "Size163"
 NUM_EXPERTS = 7
@@ -78,6 +79,7 @@ def generate() -> int:
 
     exp_ids: set[str] = set()
     generated: set[tuple[int, int, int]] = set()
+    config_paths: list[str] = []
     for top_k in TOP_K_VALUES:
         payload = build_payload(top_k=top_k)
         exp_id = str(payload["exp_id"])
@@ -85,10 +87,17 @@ def generate() -> int:
             raise ValueError(f"Duplicate VarExpert top-k exp_id: {exp_id}")
         exp_ids.add(exp_id)
         generated.add((NUM_EXPERTS, BASE_DIM, int(top_k)))
-        dump(
-            CONFIG_ROOT / "VarExpert" / SIZE / _profile(top_k) / "ionization.yaml",
-            payload,
-        )
+        config_path = CONFIG_ROOT / "VarExpert" / SIZE / _profile(top_k) / "ionization.yaml"
+        dump(config_path, payload)
+        config_paths.append(config_path.relative_to(ROOT).as_posix())
+
+    CONFIG_LIST.write_text(
+        "# VarExpert Top-K sensitivity: seven experts with Top-K 1-7.\n"
+        + "\n".join(config_paths)
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
     return len(generated)
 

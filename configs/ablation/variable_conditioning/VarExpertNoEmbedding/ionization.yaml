@@ -1,6 +1,6 @@
-experiment: exploration_CoordNet_size326_lr1e-5_GT
-exp_id: explore-coordnet-size326-lr1e-5-GT
-experiment_root: ${RUNS_ROOT}/exploration_CoordNet
+experiment: ionization_var_expert_no_embedding
+exp_id: var-expert-no-embedding-ionization
+experiment_root: ${RUNS_ROOT}/ablation/variable_conditioning
 data:
   kind: volume
   dataset_name: ionization
@@ -16,23 +16,23 @@ data:
     H2: ${IONIZATION_ROOT}/target_H2.npy
     He: ${IONIZATION_ROOT}/target_He.npy
     PD: ${IONIZATION_ROOT}/target_PD.npy
-  target: GT
 model:
-  name: coordnet
+  name: var_expert_no_embedding
   in_features: 4
-  init_features: 31
-  num_res: 10
+  num_experts: 6
+  base_dim: 24
+  top_k: 3
 training:
-  epochs: 50
+  epochs: 600
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
-  lr: 1.0e-05
+  lr: 5.0e-05
   val_split: 0.0
-  log_every: 1
-  log_psnr_every: 5
-  psnr_sample_ratio: 0.01
-  save_every: 50
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 0
   early_stop_patience: 0
   loss_type: mse
   seed: 42
@@ -42,6 +42,20 @@ training:
     enabled: true
     step_size: 40
     gamma: 0.92
+  multiview_ema_loss:
+    enabled: true
+    beta: 0.95
+    eps: 1.0e-08
+    w_min: 0.2
+    w_max: 5.0
+    warmup_steps: 45000
+    alpha: 5.0
+  pretrain:
+    enabled: true
+    epochs: 5
+    lr: 5.0e-05
+    cluster_seed: 42
+    assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_6.npy
 evaluation:
   batch_size: 16000
   save_predictions: false
@@ -52,11 +66,3 @@ log:
     step_window: false
     step_window_every_steps: 100
     cuda_sync: false
-exploration_probe:
-  enabled: true
-  total_epoch_equivalents: 50
-  every_epoch_equivalents: 5
-  sample_ratio: 0.01
-  max_samples: 100000
-  seed: 42
-  retain_best_checkpoint: true

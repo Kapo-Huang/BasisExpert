@@ -1,0 +1,8 @@
+# VarExpert Top-K sensitivity: seven experts with Top-K 1-7.
+configs/sensitivity/var_expert_topk/VarExpert/Size163/experts7_top1/ionization.yaml
+configs/sensitivity/var_expert_topk/VarExpert/Size163/experts7_top2/ionization.yaml
+configs/sensitivity/var_expert_topk/VarExpert/Size163/experts7_top3/ionization.yaml
+configs/sensitivity/var_expert_topk/VarExpert/Size163/experts7_top4/ionization.yaml
+configs/sensitivity/var_expert_topk/VarExpert/Size163/experts7_top5/ionization.yaml
+configs/sensitivity/var_expert_topk/VarExpert/Size163/experts7_top6/ionization.yaml
+configs/sensitivity/var_expert_topk/VarExpert/Size163/experts7_top7/ionization.yaml

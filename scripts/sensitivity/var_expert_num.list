@@ -1,0 +1,9 @@
+# VarExpert expert-count sensitivity: 1 shared-encoder control and 2-8 experts.
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts1_shared_enc/ionization.yaml
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts2_top2/ionization.yaml
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts3_top3/ionization.yaml
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts4_top3/ionization.yaml
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts5_top3/ionization.yaml
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts6_top3/ionization.yaml
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts7_top3/ionization.yaml
+configs/sensitivity/var_expert_num/VarExpert/Size163/experts8_top3/ionization.yaml
