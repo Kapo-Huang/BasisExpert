@@ -20,7 +20,7 @@ model:
   base_dim: 23
   top_k: 7
 training:
-  epochs: 50
+  epochs: 100
   batch_size: 16000
   pred_batch_size: 16000
   num_workers: 0
@@ -29,7 +29,7 @@ training:
   log_every: 1
   log_psnr_every: 5
   psnr_sample_ratio: 0.01
-  save_every: 50
+  save_every: 100
   early_stop_patience: 0
   loss_type: mse
   seed: 42
@@ -68,7 +68,7 @@ exp_id: sensitivity-varexpert-topk-size163-experts7_top7
 experiment_root: ${RUNS_ROOT}/sensitivity/var_expert_topk
 exploration_probe:
   enabled: true
-  total_epoch_equivalents: 50
+  total_epoch_equivalents: 100
   every_epoch_equivalents: 5
   sample_ratio: 0.01
   max_samples: 100000

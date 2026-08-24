@@ -29,7 +29,7 @@ BASE_DIM = 23
 TOP_K_VALUES = tuple(range(1, NUM_EXPERTS + 1))
 PROBE = {
     "enabled": True,
-    "total_epoch_equivalents": 50,
+    "total_epoch_equivalents": 100,
     "every_epoch_equivalents": 5,
     "sample_ratio": 0.01,
     "max_samples": 100_000,
@@ -62,11 +62,11 @@ def build_payload(*, top_k: int) -> dict:
     }
     payload["training"].update(
         {
-            "epochs": 50,
+            "epochs": 100,
             "log_every": 1,
             "log_psnr_every": 5,
             "psnr_sample_ratio": 0.01,
-            "save_every": 50,
+            "save_every": 100,
         }
     )
     return payload
