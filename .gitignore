@@ -19,6 +19,7 @@ ENV/
 
 # Training and experiment outputs
 /Result/
+/Result.*/
 /EvalResult/
 /runs/
 /runs_summary/
