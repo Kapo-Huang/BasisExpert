@@ -19,6 +19,8 @@ MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-0}"
 GROUP_DELIM=$'\034'
 source "${SCRIPT_DIR}/../lib/batch_runner.sh"
 
+RD_SIZE_TIERS=(Size041 Size082 Size163 Size326 Size652)
+
 declare -a GROUP_LABELS=()
 declare -a GROUP_CONFIGS=()
 declare -a SELECTED_CONFIGS=()
@@ -58,7 +60,7 @@ append_serial_main_family() {
 append_serial_size_family() {
     local family="$1"
     local size config
-    for size in Size082 Size163 Size326 Size652; do
+    for size in "${RD_SIZE_TIERS[@]}"; do
         while IFS= read -r config; do
             add_group "size:${family}:${size}:${config##*/}" "${config}"
         done < <(collect_files "${REPO_ROOT}/configs/rd_curve/${family}/${size}" '*.yaml')
@@ -86,18 +88,20 @@ append_attribute_main_groups() {
 append_attribute_size_groups() {
     local family="$1"
     local mode="${2:-all}"
-    local size config
+    local dataset size config
     local -a configs=()
-    for size in Size082 Size163 Size326 Size652; do
-        configs=()
-        while IFS= read -r config; do
-            case "${mode}" in
-                manager) [[ "${config}" == *"__managerpretrain.yaml" ]] || continue ;;
-                main) [[ "${config}" != *"__managerpretrain.yaml" ]] || continue ;;
-            esac
-            configs+=("${config}")
-        done < <(collect_files "${REPO_ROOT}/configs/rd_curve/${family}/${size}" 'ionization__*.yaml')
-        add_group "size:${family}:${size}:ionization:${mode}" "${configs[@]}"
+    for size in "${RD_SIZE_TIERS[@]}"; do
+        for dataset in ionization combustion_40NH3_1; do
+            configs=()
+            while IFS= read -r config; do
+                case "${mode}" in
+                    manager) [[ "${config}" == *"__managerpretrain.yaml" ]] || continue ;;
+                    main) [[ "${config}" != *"__managerpretrain.yaml" ]] || continue ;;
+                esac
+                configs+=("${config}")
+            done < <(collect_files "${REPO_ROOT}/configs/rd_curve/${family}/${size}" "${dataset}__*.yaml")
+            add_group "size:${family}:${size}:${dataset}:${mode}" "${configs[@]}"
+        done
     done
 }
 
@@ -117,14 +121,16 @@ append_volume_main_group() {
 
 append_volume_size_groups() {
     local family="$1"
-    local size config
+    local dataset size config
     local -a configs=()
-    for size in Size082 Size163 Size326 Size652; do
-        configs=()
-        while IFS= read -r config; do
-            configs+=("${config}")
-        done < <(collect_files "${REPO_ROOT}/configs/rd_curve/${family}/${size}" 'ionization__*.yaml')
-        add_group "size:${family}:${size}:ionization" "${configs[@]}"
+    for size in "${RD_SIZE_TIERS[@]}"; do
+        for dataset in ionization combustion_40NH3_1; do
+            configs=()
+            while IFS= read -r config; do
+                configs+=("${config}")
+            done < <(collect_files "${REPO_ROOT}/configs/rd_curve/${family}/${size}" "${dataset}__*.yaml")
+            add_group "size:${family}:${size}:${dataset}" "${configs[@]}"
+        done
     done
 }
 

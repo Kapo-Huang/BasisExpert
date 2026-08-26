@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import yaml
 
-from ..config.io import load_experiment_config
+from ..config.io import load_evaluation_experiment_config
 from ..data.base import DatasetMeta, FieldBatch, FieldDataset, normalize_index_coordinates
 from ..models import build_model
 from ..training.engine import _predict_batch
@@ -35,9 +35,10 @@ from .rendering import (
 from .reporting import (
     cache_key,
     environment_manifest,
-    evaluation_token,
+    evaluation_output_dir,
     find_cached_evaluation,
     path_fingerprint,
+    render_cache_matches_profile,
     write_json,
     write_metrics_csv,
 )
@@ -407,7 +408,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     needs_gt = metrics_require_ground_truth(metrics)
     needs_render = bool(request.render or metrics_require_rendering(metrics))
     config_path = resolve_run_config(request.run_dir)
-    config = _with_portable_data_paths(load_experiment_config(config_path))
+    config = _with_portable_data_paths(load_evaluation_experiment_config(config_path))
     available_targets = tuple(
         [config.data.target] if config.data.target else
         list(config.data.targets.keys()) if config.data.targets else ["target"]
@@ -508,16 +509,27 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         } if ground_truth_available and (needs_gt or needs_render) else None,
     }
     evaluation_cache_key = cache_key(key_payload)
+    output_dir = evaluation_output_dir(request.run_dir, repo_root=_repo_root())
+    reuse_render_files = bool(
+        needs_render
+        and not request.overwrite
+        and render_cache_matches_profile(
+            output_dir,
+            profile_fingerprint(profile) if profile is not None else None,
+        )
+    )
     cache_allowed = not {"decode_time", "memory"}.intersection(metrics)
     if cache_allowed and not request.overwrite:
-        cached = find_cached_evaluation(request.run_dir, evaluation_cache_key)
+        cached = find_cached_evaluation(output_dir, evaluation_cache_key)
         if cached is not None:
             return cached
-    device = torch.device(request.device or config.training.device)
+    # Evaluation runs independently from the device used during training.
+    # A caller may select a device explicitly; otherwise use the current CUDA
+    # device instead of inheriting a potentially stale archived training device.
+    device = torch.device(request.device or "cuda")
     if device.type == "cuda" and not torch.cuda.is_available():
         device = torch.device("cpu")
-    output_dir = request.run_dir / "evaluations" / evaluation_token()
-    output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     load_seconds = reconstruction_seconds = 0.0
     memory_samples: list[dict[str, Any]] = []
@@ -581,29 +593,39 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                     gt_path = render_dir / f"gt_t{timestep:04d}.png"
                     pred_render = _reshape_render_frame(dataset, pred)
                     gt_render = None if gt is None else _reshape_render_frame(dataset, gt)
-                    if selected_renderer == "volume":
-                        pred_info = volume_renderer.render(pred_render, pred_path, target=target)
-                        if gt_render is not None:
-                            gt_info = volume_renderer.render(gt_render, gt_path, target=target)
-                    elif selected_renderer == "image2d":
-                        pred_info = render_image_frame(
-                            pred_render, pred_path, profile=profile, gt_values=gt_render, target=target,
-                        )
-                        if gt_render is not None:
-                            gt_info = render_image_frame(
-                                gt_render, gt_path, profile=profile, gt_values=gt_render, target=target,
-                            )
-                    else:
-                        frame_coords = np.asarray(dataset._coords_np[frame_indexers[timestep]])
-                        pred_info = render_node_frame(
-                            pred_render, pred_path, profile=profile, time_index=timestep,
-                            gt_values=gt_render, coordinates=frame_coords, target=target,
-                        )
-                        if gt_render is not None:
-                            gt_info = render_node_frame(
-                                gt_render, gt_path, profile=profile, time_index=timestep,
-                                gt_values=gt_render, coordinates=frame_coords, target=target,
-                            )
+                    pred_info = {"reused": True} if reuse_render_files and pred_path.is_file() else None
+                    gt_info = (
+                        {"reused": True}
+                        if gt_render is not None and reuse_render_files and gt_path.is_file()
+                        else None
+                    )
+                    if pred_info is None or (gt_render is not None and gt_info is None):
+                        if selected_renderer == "volume":
+                            if pred_info is None:
+                                pred_info = volume_renderer.render(pred_render, pred_path, target=target)
+                            if gt_render is not None and gt_info is None:
+                                gt_info = volume_renderer.render(gt_render, gt_path, target=target)
+                        elif selected_renderer == "image2d":
+                            if pred_info is None:
+                                pred_info = render_image_frame(
+                                    pred_render, pred_path, profile=profile, gt_values=gt_render, target=target,
+                                )
+                            if gt_render is not None and gt_info is None:
+                                gt_info = render_image_frame(
+                                    gt_render, gt_path, profile=profile, gt_values=gt_render, target=target,
+                                )
+                        else:
+                            frame_coords = np.asarray(dataset._coords_np[frame_indexers[timestep]])
+                            if pred_info is None:
+                                pred_info = render_node_frame(
+                                    pred_render, pred_path, profile=profile, time_index=timestep,
+                                    gt_values=gt_render, coordinates=frame_coords, target=target,
+                                )
+                            if gt_render is not None and gt_info is None:
+                                gt_info = render_node_frame(
+                                    gt_render, gt_path, profile=profile, time_index=timestep,
+                                    gt_values=gt_render, coordinates=frame_coords, target=target,
+                                )
                     row["pred_render_path"] = str(pred_path.resolve())
                     row["render_info"] = pred_info
                     if gt_render is not None:
@@ -662,6 +684,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         },
         "metrics": list(metrics), "timesteps": list(timesteps), "targets": list(targets),
         "source_kind": kind, "source_path": str(source_path), "device": str(device),
+        "source_fingerprint": path_fingerprint(source_path),
         "render_requested": bool(needs_render),
         "render_profile": None if profile is None else {
             "path": profile.get("_path"),

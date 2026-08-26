@@ -14,7 +14,9 @@ import torch.nn.functional as F
 from numpy.lib.format import open_memmap
 
 from ...evaluation.metrics import PSNRAccumulator, mae, mse, psnr, save_metrics
+from ...evaluation.selection import parse_timestep_selection
 from ...utils.io import sha256_payload
+from ...utils.checkpoint import read_checkpoint_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.model_stats import collect_model_statistics
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
@@ -151,9 +153,23 @@ def _load_inference_model(
     dirs: dict[str, Path],
 ):
     checkpoint = checkpoint or dirs["checkpoints"] / f"{cfg['exp_id']}.pth"
-    model, payload = load_inference_checkpoint(checkpoint, device=device)
-    if payload["target_name"] != cfg["data"]["target"] or payload["volume_shape"] != cfg["data"]["volume_shape"]:
-        raise ValueError("fV-SRN checkpoint does not match target or volume shape")
+    payload = read_checkpoint_payload(checkpoint)
+    checkpoint_format = payload.get("format")
+    if checkpoint_format == "fv_srn_inference_v1":
+        model, payload = load_inference_checkpoint(checkpoint, device=device)
+        if payload["target_name"] != cfg["data"]["target"] or payload["volume_shape"] != cfg["data"]["volume_shape"]:
+            raise ValueError("fV-SRN checkpoint does not match target or volume shape")
+    elif checkpoint_format == "inference_checkpoint_v1":
+        target_names = [str(value) for value in payload.get("target_names_order", [])]
+        if target_names and target_names != [str(cfg["data"]["target"])]:
+            raise ValueError(
+                "fV-SRN checkpoint target does not match config: "
+                f"checkpoint={target_names} config={[str(cfg['data']['target'])]}"
+            )
+        model = TemporalFVSRN(cfg["model"]).to(device)
+        model.load_state_dict(payload["model_state"], strict=True)
+    else:
+        raise ValueError(f"Unsupported fV-SRN inference checkpoint: {checkpoint_format!r}")
     return model, Path(checkpoint), payload
 
 
@@ -164,18 +180,20 @@ def _predict(
     device: torch.device,
     batch_size: int,
     output_path: Path,
+    time_indices: tuple[int, ...] | None = None,
 ) -> Path:
+    selected = time_indices or tuple(range(volume.shape["T"]))
     prediction = open_memmap(
         output_path,
         mode="w+",
         dtype=np.float32,
-        shape=(volume.shape["T"], volume.shape["Z"], volume.shape["Y"], volume.shape["X"]),
+        shape=(len(selected), volume.shape["Z"], volume.shape["Y"], volume.shape["X"]),
     )
     spatial_count = int(np.prod(volume.spatial_shape, dtype=np.int64))
     model.eval()
     with torch.no_grad():
-        for t in range(volume.shape["T"]):
-            flat = prediction[t].reshape(-1)
+        for output_index, t in enumerate(selected):
+            flat = prediction[output_index].reshape(-1)
             for start in range(0, spatial_count, batch_size):
                 stop = min(start + batch_size, spatial_count)
                 coords = torch.from_numpy(volume.full_coords(start, stop)).to(device)
@@ -342,6 +360,7 @@ def run_predict(
     *,
     target: str | None = None,
     checkpoint: str | Path | None = None,
+    time_indices: str | tuple[int, ...] | list[int] | None = None,
 ) -> dict:
     cfg = load_config(config_path, target_override=target)
     dirs = _run_for_path(cfg, checkpoint)
@@ -350,11 +369,17 @@ def run_predict(
     model, model_path, _ = _load_inference_model(
         cfg, device=device, checkpoint=checkpoint, dirs=dirs
     )
+    selected = parse_timestep_selection(time_indices, volume.shape["T"])
     prediction_path = _predict(
         model, volume, device=device, batch_size=int(cfg["evaluation"]["batch_size"]),
         output_path=dirs["predictions"] / f"{cfg['exp_id']}.npy",
+        time_indices=selected,
     )
-    return {"prediction_path": str(prediction_path), "model_path": str(model_path)}
+    return {
+        "prediction_path": str(prediction_path),
+        "model_path": str(model_path),
+        "decoded_timesteps": list(selected),
+    }
 
 
 def run_evaluate(

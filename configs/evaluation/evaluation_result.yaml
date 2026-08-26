@@ -1,0 +1,23 @@
+# Evaluate every archived Result run that has both configs/config.yaml and a
+# checkpoint under checkpoints/. Runs are discovered at launch, so new Result
+# entries are included automatically without editing a static list.
+run_root: Result
+summary_root: EvalResult/batch_logs/evaluation_result
+continue_on_error: true
+item_timeout_seconds: 3600
+
+evaluation:
+  metrics:
+    - psnr
+    - ssim
+    - lpips
+  timesteps: "0"
+  targets_by_dataset: null
+  render: true
+  # Reuse matching metrics/renders already stored under EvalResult. Only the
+  # missing metrics or render outputs are requested from each worker.
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

@@ -1,0 +1,60 @@
+experiment: miner_combustion_40NH3_1_size041_Mole_Fraction_of_NH3
+exp_id: miner-combustion_40NH3_1-size041-Mole_Fraction_of_NH3
+experiment_root: ${RUNS_ROOT}/miner
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${COMBUSTION_ROOT}/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${COMBUSTION_ROOT}/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_OH.npy
+    Pressure: ${COMBUSTION_ROOT}/target_Pressure.npy
+    Temperature: ${COMBUSTION_ROOT}/target_Temperature.npy
+    Velocity_Magnitude: ${COMBUSTION_ROOT}/target_Velocity_Magnitude.npy
+  target: Mole_Fraction_of_NH3
+model:
+  name: miner
+  scales: 4
+  block_size: 40
+  hidden_features: 2
+  hidden_layers: 2
+  omega_0: 30.0
+  coordinate_type: local
+  propagation: coarse_to_fine
+  carry_start_scale: 2
+  coarse_feature_multiplier: 4
+training:
+  epochs_per_scale: 500
+  lr: 0.0005
+  beta_1: 0.9
+  beta_2: 0.999
+  block_mse_threshold: 0.0001
+  scale_convergence_delta: 5.0e-07
+  global_mse_threshold: 0.0001
+  lr_decay: 0.999
+  max_active_blocks_per_step: 16384
+  time_indices: all
+  seed: 42
+  device: cuda
+  log_every: 25
+  save_intermediate_checkpoints: false
+evaluation:
+  save_predictions: false
+  run_after_training: false
+  default_model: checkpoint
+log:
+  effective_config: true
+  startup_timing: true
+  epoch_summary: true

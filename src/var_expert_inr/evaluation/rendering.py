@@ -405,15 +405,34 @@ def _load_mesh(profile: dict[str, Any], *, time_index: int):
             [np.full((cells.shape[0],), cells.shape[1], dtype=np.int64), cells]
         ).reshape(-1)
         types = np.full((cells.shape[0],), cell_types[requested_type], dtype=np.uint8)
-        return pv.UnstructuredGrid(connectivity, types, points), vertices_path
+        mesh = pv.UnstructuredGrid(connectivity, types, points)
+        return _apply_mesh_render_transforms(mesh, profile), vertices_path
     path = Path(str(raw).format(time_index=int(time_index), timestep=int(time_index), t=int(time_index))).expanduser().resolve()
     if not path.is_file():
         source_hint = profile.get("mesh_source_hint")
         copy_hint = f" Copy it from: {source_hint}" if source_hint else ""
         raise FileNotFoundError(f"Node mesh does not exist: {path}.{copy_hint}")
     if path.name.lower() == "fort.14":
-        return _read_fort14(path), path
-    return pv.read(str(path)), path
+        mesh = _read_fort14(path)
+    else:
+        mesh = pv.read(str(path))
+    return _apply_mesh_render_transforms(mesh, profile), path
+
+
+def _apply_mesh_render_transforms(mesh: Any, profile: dict[str, Any]) -> Any:
+    """Apply display-only mesh transforms requested by an evaluation profile."""
+    if not bool(profile.get("planarize_z", False)):
+        return mesh
+
+    points = np.asarray(mesh.points)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("planarize_z requires a mesh with Nx3 point coordinates")
+
+    rendered_mesh = mesh.copy(deep=True)
+    rendered_points = np.array(rendered_mesh.points, dtype=np.float64, copy=True)
+    rendered_points[:, 2] = 0.0
+    rendered_mesh.points = rendered_points
+    return rendered_mesh
 
 
 def preflight_rendering(

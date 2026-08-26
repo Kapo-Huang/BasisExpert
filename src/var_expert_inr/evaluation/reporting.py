@@ -6,7 +6,6 @@ import json
 import math
 import platform
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +13,20 @@ import numpy as np
 import torch
 
 
-def evaluation_token() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+def evaluation_output_dir(run_dir: Path, *, repo_root: Path) -> Path:
+    """Map a Result run directory to its stable EvalResult counterpart."""
+    resolved_run = run_dir.expanduser().resolve()
+    result_root = (repo_root / "Result").resolve()
+    evaluation_root = repo_root / "EvalResult"
+    try:
+        return evaluation_root / resolved_run.relative_to(result_root)
+    except ValueError:
+        # Keep non-Result runs separate while preserving their project-relative
+        # hierarchy whenever they are located inside this repository.
+        try:
+            return evaluation_root / "_external" / resolved_run.relative_to(repo_root.resolve())
+        except ValueError:
+            return evaluation_root / "_external" / resolved_run.name
 
 
 def path_fingerprint(path: str | Path) -> dict[str, Any]:
@@ -41,34 +52,46 @@ def cache_key(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def find_cached_evaluation(run_dir: Path, key: str) -> dict[str, Any] | None:
-    root = run_dir / "evaluations"
-    if not root.is_dir():
+def find_cached_evaluation(output_dir: Path, key: str) -> dict[str, Any] | None:
+    if not output_dir.is_dir():
         return None
-    for candidate in sorted(root.iterdir(), reverse=True):
-        manifest_path = candidate / "manifest.json"
-        metrics_path = candidate / "metrics.json"
-        csv_path = candidate / "metrics.csv"
-        log_path = candidate / "logs" / "evaluate.log"
-        if not (manifest_path.is_file() and metrics_path.is_file() and csv_path.is_file()):
-            continue
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest.get("cache_key") != key:
-                continue
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            continue
-        return {
-            "output_dir": candidate,
-            "manifest_path": manifest_path,
-            "metrics_path": metrics_path,
-            "csv_path": csv_path,
-            "log_path": log_path,
-            "metrics": metrics,
-            "cache_hit": True,
-        }
-    return None
+    manifest_path = output_dir / "manifest.json"
+    metrics_path = output_dir / "metrics.json"
+    csv_path = output_dir / "metrics.csv"
+    log_path = output_dir / "logs" / "evaluate.log"
+    if not (manifest_path.is_file() and metrics_path.is_file() and csv_path.is_file()):
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("cache_key") != key:
+            return None
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return {
+        "output_dir": output_dir,
+        "manifest_path": manifest_path,
+        "metrics_path": metrics_path,
+        "csv_path": csv_path,
+        "log_path": log_path,
+        "metrics": metrics,
+        "cache_hit": True,
+    }
+
+
+def render_cache_matches_profile(output_dir: Path, fingerprint: str | None) -> bool:
+    """Return whether existing render files were produced with this profile."""
+    if fingerprint is None:
+        return False
+    manifest_path = output_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    stored = (manifest.get("render_profile") or {}).get("fingerprint")
+    return bool(manifest.get("render_requested")) and stored == fingerprint
 
 
 def environment_manifest() -> dict[str, Any]:

@@ -26,6 +26,7 @@ SIZES = {
     "Size326": 3.26,
     "Size652": 6.52,
 }
+COMBUSTION_RD_SIZES = ("Size041", "Size082", "Size163", "Size326")
 IONIZATION_VARIABLE_COUNT = 5
 SINGLE_TARGET_SIZES = {
     name: size_mib / IONIZATION_VARIABLE_COUNT for name, size_mib in SIZES.items()
@@ -265,6 +266,14 @@ def write_run_lists() -> None:
     rd_curve_paths = sorted(RD_CURVE_CONFIGS.rglob("*.yaml"), key=_formal_sort_key)
     main = [f"configs/main/{path.relative_to(MAIN_CONFIGS).as_posix()}" for path in main_paths]
     rd_curve = [f"configs/rd_curve/{path.relative_to(RD_CURVE_CONFIGS).as_posix()}" for path in rd_curve_paths]
+    combustion_rd_curve_by_size = {
+        size: [
+            path for path in rd_curve
+            if f"/{size}/" in path
+            and Path(path).name.startswith(COMBUSTION_DATASET["name"])
+        ]
+        for size in COMBUSTION_RD_SIZES
+    }
     relative = [*main, *rd_curve]
     headers = {
         "all_configs.list": [
@@ -289,13 +298,23 @@ def write_run_lists() -> None:
         "configs.list": main,
         "rd_curve_configs.list": rd_curve,
     }
+    destinations = {
+        "all_configs.list": ROOT / "scripts" / "main" / "all_configs.list",
+        "configs.list": ROOT / "scripts" / "main" / "configs.list",
+        "rd_curve_configs.list": ROOT / "scripts" / "rd_curve" / "configs.list",
+    }
+    for size, selection in combustion_rd_curve_by_size.items():
+        key = f"combustion_{size.lower()}_configs.list"
+        headers[key] = [
+            f"# Combustion RD-curve selection: {size}.",
+            f"# Use with: bash scripts/rd_curve/run_combustion_{size.lower()}.sh",
+            "# Comment out or delete entries to select a smaller Combustion subset.",
+        ]
+        selections[key] = selection
+        destinations[key] = ROOT / "scripts" / "rd_curve" / f"combustion_{size.lower()}.list"
     for filename, selection in selections.items():
         content = "\n".join([*headers[filename], "", *selection, ""])
-        destination = (
-            ROOT / "scripts" / "rd_curve" / "configs.list"
-            if filename == "rd_curve_configs.list"
-            else ROOT / "scripts" / "main" / filename
-        )
+        destination = destinations[filename]
         destination.write_text(content, encoding="utf-8", newline="\n")
 
 
@@ -747,6 +766,22 @@ def generate_stsr_inr() -> int:
         }
         dump(RD_CURVE_CONFIGS / "STSR-INR" / size / "ionization.yaml", sized_payload)
         count += 1
+        if size in COMBUSTION_RD_SIZES:
+            combustion_sized_payload = {
+                "experiment": f"{combustion_name}_stsr_inr_{size.lower()}",
+                "exp_id": f"stsr-inr-{combustion_name}-{size.lower()}",
+                "experiment_root": run_path(),
+                "data": combustion_data(four_coordinates=True),
+                "model": deepcopy(model),
+                "training": deepcopy(training),
+                "evaluation": evaluation(),
+                "log": log_config(),
+            }
+            dump(
+                RD_CURVE_CONFIGS / "STSR-INR" / size / f"{combustion_name}.yaml",
+                combustion_sized_payload,
+            )
+            count += 1
     return count
 
 
@@ -867,6 +902,33 @@ def generate_unified_single() -> int:
                 }
                 dump(RD_CURVE_CONFIGS / family / size / f"ionization__{target}.yaml", payload)
                 count += 1
+        for size in COMBUSTION_RD_SIZES:
+            for target in COMBUSTION_DATASET["targets"]:
+                training = common_training()
+                if family == "CoordNet":
+                    training["lr"] = 1.0e-5
+                model = deepcopy(UNIFIED_SIZE_MODELS[family][size])
+                model["in_features"] = len(COMBUSTION_DATASET["coordinate_axes"])
+                payload = {
+                    "experiment": (
+                        f"{COMBUSTION_DATASET['name']}_{model_slug}_{size.lower()}_{target}"
+                    ),
+                    "exp_id": (
+                        f"{model_slug}-{COMBUSTION_DATASET['name']}-{size.lower()}-{target}"
+                    ),
+                    "experiment_root": run_path(),
+                    "data": combustion_data(target),
+                    "model": model,
+                    "training": training,
+                    "evaluation": evaluation(),
+                    "log": log_config(),
+                }
+                dump(
+                    RD_CURVE_CONFIGS / family / size
+                    / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+                    payload,
+                )
+                count += 1
     return count
 
 
@@ -965,6 +1027,37 @@ def generate_var_expert() -> int:
         }
         dump(RD_CURVE_CONFIGS / "VarExpert" / size / "ionization.yaml", payload)
         count += 1
+        if size in COMBUSTION_RD_SIZES:
+            combustion_training = var_training(combustion_name, True, experts)
+            combustion_training["multiview_ema_loss"].update(
+                {
+                    "beta": 0.99,
+                    "w_min": 0.5,
+                    "w_max": 2.0,
+                    "warmup_steps": 75000,
+                    "alpha": 1.0,
+                }
+            )
+            combustion_training.update({"log_psnr_every": 25, "save_every": 0})
+            combustion_sized_payload = {
+                "experiment": f"{combustion_name}_var_expert_{size.lower()}",
+                "exp_id": f"var-expert-{combustion_name}-{size.lower()}",
+                "experiment_root": run_path(),
+                "data": combustion_data(),
+                "model": {
+                    "name": "var_expert",
+                    "in_features": len(COMBUSTION_DATASET["coordinate_axes"]),
+                    **model_profile,
+                },
+                "training": combustion_training,
+                "evaluation": evaluation(),
+                "log": log_config(),
+            }
+            dump(
+                RD_CURVE_CONFIGS / "VarExpert" / size / f"{combustion_name}.yaml",
+                combustion_sized_payload,
+            )
+            count += 1
     return count
 
 
@@ -1469,6 +1562,35 @@ def generate_miner() -> int:
                 )
             dump(RD_CURVE_CONFIGS / "MINER" / size / f"ionization__{target}.yaml", payload)
             count += 1
+        if size not in COMBUSTION_RD_SIZES:
+            continue
+        for target in COMBUSTION_SCALAR_TARGETS:
+            payload = miner_payload(target, COMBUSTION_DATASET["name"])
+            payload["experiment"] = (
+                f"miner_{COMBUSTION_DATASET['name']}_{size.lower()}_{target}"
+            )
+            payload["exp_id"] = (
+                f"miner-{COMBUSTION_DATASET['name']}-{size.lower()}-{target}"
+            )
+            sized_model = miner_payload(target)["model"]
+            if size != "Size163":
+                sized_model.update(
+                    {
+                        "scales": 4,
+                        "block_size": 40,
+                        "hidden_features": hidden_features,
+                        "hidden_layers": 2,
+                        "carry_start_scale": 2,
+                        "coarse_feature_multiplier": 4,
+                    }
+                )
+            payload["model"] = sized_model
+            dump(
+                RD_CURVE_CONFIGS / "MINER" / size
+                / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+                payload,
+            )
+            count += 1
     return count
 
 
@@ -1537,6 +1659,21 @@ def generate_volume_only() -> int:
             for target in DATASETS["ionization"]["targets"]:
                 payload = builder(target, True, size)
                 dump(RD_CURVE_CONFIGS / family / size / f"ionization__{target}.yaml", payload)
+                count += 1
+            if size not in COMBUSTION_RD_SIZES:
+                continue
+            for target in COMBUSTION_SCALAR_TARGETS:
+                payload = builder(
+                    target,
+                    True,
+                    size,
+                    COMBUSTION_DATASET["name"],
+                )
+                dump(
+                    RD_CURVE_CONFIGS / family / size
+                    / f"{COMBUSTION_DATASET['name']}__{target}.yaml",
+                    payload,
+                )
                 count += 1
     return count
 

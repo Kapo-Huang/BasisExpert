@@ -1,0 +1,17 @@
+# Minimal reconstruction-evaluation coverage for the available formal methods.
+# Each active line is a repository-relative Result run directory containing both
+# configs/config.yaml and a final reconstruction checkpoint.
+# Neural Expert is intentionally omitted: runs/neural_expert currently contains
+# only incomplete RedSea intermediate weights, not a final inference checkpoint.
+
+Result/Main/Ours/Ionization/Joint
+Result/Main/CoordNet/Katrina/speed
+Result/Main/SIREN/RedSea/SALT
+Result/Main/MoE-INR/Katrina/speed
+Result/Main/fV-SRN/Ionization/H_plus
+Result/Main/APMGSRN/Ionization/H_plus
+Result/Main/InstantVNR/Ionization/H_plus
+Result/Main/MINER/Combustion/Temperature
+Result/Main/ECNR/Combustion/Temperature
+Result/Main/STSR-INR/Combustion/Joint
+Result/Main/MVNet/RedSea/Joint

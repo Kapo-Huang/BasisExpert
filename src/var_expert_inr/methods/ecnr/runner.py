@@ -13,6 +13,7 @@ import torch
 from numpy.lib.format import open_memmap
 
 from ...evaluation.metrics import PSNRAccumulator, mae, mse, psnr, save_metrics
+from ...evaluation.selection import parse_timestep_selection
 from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.runtime import apply_runtime_thread_limits, set_random_seed
@@ -515,6 +516,51 @@ def _deserialize_blocks(payload: dict[str, Any]) -> ScaleBlocks:
     )
 
 
+def _select_scale_blocks(
+    blocks: ScaleBlocks,
+    scale_time_indices: np.ndarray,
+    selected_time_indices: np.ndarray,
+) -> ScaleBlocks:
+    """Return the block metadata needed to reconstruct selected scale frames."""
+
+    scale_times = np.asarray(scale_time_indices, dtype=np.int64)
+    selected_times = np.asarray(selected_time_indices, dtype=np.int64)
+    positions_by_time = {int(value): index for index, value in enumerate(scale_times.tolist())}
+    missing = [int(value) for value in selected_times if int(value) not in positions_by_time]
+    if missing:
+        raise IndexError(f"ECNR scale does not contain requested time indices: {missing}")
+    selected_positions = [positions_by_time[int(value)] for value in selected_times]
+    output_position = {
+        int(source_position): output_index
+        for output_index, source_position in enumerate(selected_positions)
+    }
+    block_rows = np.flatnonzero(
+        np.isin(blocks.effective_positions[:, 0], np.asarray(selected_positions, dtype=np.int64))
+    )
+    effective_positions = np.asarray(blocks.effective_positions[block_rows], dtype=np.int64).copy()
+    for row in range(effective_positions.shape[0]):
+        effective_positions[row, 0] = output_position[int(effective_positions[row, 0])]
+
+    def selected(values: np.ndarray | None) -> np.ndarray | None:
+        return None if values is None else np.asarray(values)[block_rows]
+
+    return ScaleBlocks(
+        original_shape_tzyx=(len(selected_positions), *blocks.original_shape_tzyx[1:]),
+        padded_shape_zyx=blocks.padded_shape_zyx,
+        padding_zyx=blocks.padding_zyx,
+        block_shape_xyz=blocks.block_shape_xyz,
+        spatial_grid_zyx=blocks.spatial_grid_zyx,
+        effective_mask=np.asarray(blocks.effective_mask[selected_positions], dtype=bool),
+        effective_positions=effective_positions,
+        block_min=np.asarray(blocks.block_min[block_rows], dtype=np.float32),
+        block_max=np.asarray(blocks.block_max[block_rows], dtype=np.float32),
+        normalized_blocks=np.empty((0, 0), dtype=np.float32),
+        block_to_mlp=selected(blocks.block_to_mlp),
+        block_to_slot=selected(blocks.block_to_slot),
+        cluster_sizes=blocks.cluster_sizes,
+    )
+
+
 def _serialize_scale(
     *,
     level: int,
@@ -585,8 +631,15 @@ def _decode_scale_payload(
     device: torch.device,
     batch_size: int,
     output_path: str | Path | None = None,
+    time_indices: np.ndarray | None = None,
 ) -> np.ndarray:
     blocks = _deserialize_blocks(payload["blocks"])
+    if time_indices is not None:
+        blocks = _select_scale_blocks(
+            blocks,
+            np.asarray(payload["time_indices"], dtype=np.int64),
+            np.asarray(time_indices, dtype=np.int64),
+        )
     if payload["empty"]:
         if output_path is None:
             return np.zeros(blocks.original_shape_tzyx, dtype=np.float32)
@@ -688,24 +741,59 @@ def decode_checkpoint_payload(
     batch_size: int,
     work_dir: str | Path | None = None,
     output_path: str | Path | None = None,
+    time_indices: tuple[int, ...] | list[int] | np.ndarray | None = None,
 ) -> np.ndarray:
     if payload.get("format") != INFERENCE_FORMAT:
         raise ValueError("Invalid ECNR inference checkpoint payload")
     work = None if work_dir is None else Path(work_dir)
     if work is not None:
         work.mkdir(parents=True, exist_ok=True)
+    scales = sorted(payload["scales"], key=lambda item: int(item["level"]))
+    finest_times = np.asarray(scales[0]["time_indices"], dtype=np.int64)
+    if time_indices is None:
+        requested_times = finest_times
+    else:
+        requested_times = np.asarray(time_indices, dtype=np.int64)
+        available = set(int(value) for value in finest_times.tolist())
+        missing = [int(value) for value in requested_times if int(value) not in available]
+        if missing:
+            raise IndexError(f"ECNR checkpoint does not contain time indices: {missing}")
+
+    required_by_level: dict[int, np.ndarray] = {
+        int(scales[0]["level"]): requested_times
+    }
+    for fine_payload, coarse_payload in zip(scales, scales[1:]):
+        fine_required = required_by_level[int(fine_payload["level"])]
+        coarse_times = np.asarray(coarse_payload["time_indices"], dtype=np.int64)
+        support: set[int] = set()
+        for time_value in fine_required.tolist():
+            right = int(np.searchsorted(coarse_times, int(time_value), side="left"))
+            if right == 0:
+                support.add(int(coarse_times[0]))
+            elif right >= len(coarse_times):
+                support.add(int(coarse_times[-1]))
+            elif int(coarse_times[right]) == int(time_value):
+                support.add(int(coarse_times[right]))
+            else:
+                support.add(int(coarse_times[right - 1]))
+                support.add(int(coarse_times[right]))
+        required_by_level[int(coarse_payload["level"])] = np.asarray(
+            sorted(support), dtype=np.int64
+        )
+
     composite = None
     previous_times = None
-    for scale_payload in sorted(payload["scales"], key=lambda item: int(item["level"]), reverse=True):
+    for scale_payload in reversed(scales):
         level = int(scale_payload["level"])
+        current_times = required_by_level[level]
         residual_path = None if work is None else work / f"decode_residual_scale_{level}.npy"
         residual = _decode_scale_payload(
             scale_payload,
             device=device,
             batch_size=batch_size,
             output_path=residual_path,
+            time_indices=current_times,
         )
-        current_times = np.asarray(scale_payload["time_indices"], dtype=np.int64)
         if composite is None:
             composite = residual
         else:
@@ -1046,6 +1134,7 @@ def run_predict(
     *,
     target: str | None = None,
     checkpoint: str | Path | None = None,
+    time_indices: str | tuple[int, ...] | list[int] | None = None,
 ) -> dict[str, Any]:
     cfg = load_config(config_path, target_override=target)
     dirs = _run_for_path(cfg, checkpoint)
@@ -1055,6 +1144,10 @@ def run_predict(
         checkpoint=checkpoint,
         dirs=dirs,
     )
+    selected = parse_timestep_selection(
+        time_indices,
+        int(cfg["data"]["volume_shape"]["T"]),
+    )
     output_path = dirs["predictions"] / f"{cfg['exp_id']}.npy"
     decode_checkpoint_payload(
         payload,
@@ -1062,8 +1155,13 @@ def run_predict(
         batch_size=int(cfg["evaluation"]["batch_size"]),
         work_dir=dirs["cache"] / "decode",
         output_path=output_path,
+        time_indices=selected,
     )
-    return {"prediction_path": str(output_path), "model_path": str(source)}
+    return {
+        "prediction_path": str(output_path),
+        "model_path": str(source),
+        "decoded_timesteps": list(selected),
+    }
 
 
 def _evaluate(volume: np.ndarray, prediction: np.ndarray, model_path: Path) -> dict[str, Any]:

@@ -66,6 +66,12 @@ RECOVERY_KEYS = {
     "scaler_state", "training_state", "rng_state",
 }
 TOP_LEVEL_RECOVERY_KEYS = {"epoch", "global_step", "optimizer_step"}
+NATIVE_INFERENCE_FORMATS = {
+    "inference_checkpoint_v1",
+    "fv_srn_inference_v1",
+    "ecnr_inference_v1",
+    "neural_expert_inference_v1",
+}
 
 
 @dataclass(frozen=True)
@@ -112,6 +118,8 @@ class Selection:
     candidates: list[Candidate]
     missing_reason: str = ""
     checkpoint_audit: dict[str, Any] | None = None
+    substitution_kind: str = ""
+    substitution_source: str = ""
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -545,6 +553,40 @@ def select_runs(specs: list[Spec], index: dict[str, list[Candidate]]) -> list[Se
     return selections
 
 
+def apply_size163_main_substitutions(selections: list[Selection]) -> None:
+    """Fill unavailable 1.63 MiB RD entries from the matching Main result.
+
+    This is an explicitly approved presentation substitution, not a newly
+    trained RD point.  Only an identical method/dataset/target Main result is
+    eligible, so an unavailable Main experiment remains unavailable here.
+    """
+    main_sources: dict[tuple[str, str, str], Selection] = {}
+    for item in selections:
+        if item.spec.category != "Main" or item.selected is None:
+            continue
+        target = item.spec.item_parts[-1]
+        main_sources[(item.spec.method, item.spec.dataset, target)] = item
+
+    for item in selections:
+        spec = item.spec
+        if item.selected is not None:
+            continue
+        if not (
+            spec.category == "RD Curve"
+            and spec.dataset == "Ionization"
+            and len(spec.item_parts) == 2
+            and spec.item_parts[0] == RD_LABEL["Size163"]
+        ):
+            continue
+        source = main_sources.get((spec.method, spec.dataset, spec.item_parts[-1]))
+        if source is None or source.selected is None:
+            continue
+        item.selected = source.selected
+        item.missing_reason = ""
+        item.substitution_kind = "Main substitution"
+        item.substitution_source = source.spec.label
+
+
 def recovery_paths(payload: Any, path: tuple[str, ...] = ()) -> list[str]:
     hits: list[str] = []
     if isinstance(payload, dict):
@@ -624,7 +666,9 @@ def audit_and_write_checkpoint(source: Path, destination: Path) -> dict[str, Any
     source_format = str(payload.get("format", "legacy"))
     purified = False
     result_payload = payload
-    if "model_state" in payload and (source_hits or payload.get("format") != "inference_checkpoint_v1"):
+    if source_format in NATIVE_INFERENCE_FORMATS and source_hits:
+        raise ValueError(f"Inference checkpoint contains recovery keys: {source_hits[:10]}")
+    if "model_state" in payload and source_format not in NATIVE_INFERENCE_FORMATS:
         result_payload = {
             "format": "inference_checkpoint_v1",
             "model_state": payload["model_state"],
@@ -651,6 +695,10 @@ def audit_and_write_checkpoint(source: Path, destination: Path) -> dict[str, Any
         raise ValueError(f"Invalid fV-SRN reconstruction checkpoint: {destination}")
     if result_format == "ecnr_inference_v1" and "payload" not in verified:
         raise ValueError(f"Invalid ECNR reconstruction checkpoint: {destination}")
+    if result_format == "neural_expert_inference_v1" and not {
+        "model_state", "x_mean", "x_std", "y_mean", "y_std",
+    }.issubset(verified):
+        raise ValueError(f"Invalid NeuralExpert reconstruction checkpoint: {destination}")
     parameter_payload = verified.get("model_state", verified)
     return {
         "source_format": source_format,
@@ -678,6 +726,24 @@ def copy_run_without_checkpoints(source: Path, destination: Path) -> None:
             source_file = root_path / filename
             target_file = target_root / filename
             shutil.copy2(source_file, target_file)
+
+
+def write_substitution_note(destination: Path, item: Selection, repo: Path) -> None:
+    selected = item.selected
+    if not item.substitution_kind or selected is None:
+        return
+    note = "\n".join([
+        "# Main substitution for RD Curve Size163",
+        "",
+        "This directory is a user-approved substitute, not an actual 1.63 MiB RD training run.",
+        "",
+        f"- RD Curve target: `{item.spec.label}`",
+        f"- Main source: `{item.substitution_source}`",
+        f"- Original run: `{rel(selected.run_dir, repo)}`",
+        "- The directory and final checkpoint filename follow the RD Curve target; copied config, logs, and artifacts originate from Main.",
+        "",
+    ])
+    (destination / "SUBSTITUTED_FROM_MAIN.md").write_text(note, encoding="utf-8")
 
 
 def markdown_table(headers: list[str], rows: Iterable[Iterable[Any]]) -> str:
@@ -714,7 +780,21 @@ def known_configuration_anomalies() -> list[tuple[str, str, str]]:
     ]
 
 
-def write_reports(repo: Path, result_root: Path, selections: list[Selection]) -> None:
+def summary_status(item: Selection) -> str:
+    if item.selected is None:
+        return "Missing"
+    if item.substitution_kind:
+        return "Main substitution"
+    return "Copied"
+
+
+def write_reports(
+    repo: Path,
+    result_root: Path,
+    selections: list[Selection],
+    *,
+    manifest_root: Path | None = None,
+) -> None:
     copied = [item for item in selections if item.selected is not None]
     missing = [item for item in selections if item.selected is None]
     groups = group_rows(selections)
@@ -746,7 +826,7 @@ def write_reports(repo: Path, result_root: Path, selections: list[Selection]) ->
                         item.spec.method,
                         item.spec.dataset,
                         "/".join(item.spec.item_parts),
-                        "已复制" if item.selected is not None else "缺失",
+                        summary_status(item),
                         "-" if item.selected is None or item.selected.psnr is None else f"{item.selected.psnr:.4f}",
                     )
                     for item in category_items
@@ -763,6 +843,12 @@ def write_reports(repo: Path, result_root: Path, selections: list[Selection]) ->
         selected = item.selected
         if selected is not None:
             audit = item.checkpoint_audit or {}
+            if item.substitution_kind:
+                anomaly_rows.append((
+                    item.spec.label,
+                    "Main result substitution",
+                    f"Uses {item.substitution_source}; this is not a trained 1.63 MiB RD point.",
+                ))
             if selected.config_mismatches:
                 anomaly_rows.append((
                     item.spec.label,
@@ -856,6 +942,27 @@ def write_reports(repo: Path, result_root: Path, selections: list[Selection]) ->
     ]
     (result_root / "MISSING_EXPERIMENTS.md").write_text("\n".join(missing_lines), encoding="utf-8")
 
+    substitutions = [item for item in selections if item.substitution_kind]
+    substitution_lines = [
+        "# Approved Main substitutions for RD Curve Size163",
+        "",
+        "These entries use a completed Main result for the identical method, dataset, and target because the corresponding Size163 run is unavailable. They are not actual 1.63 MiB RD training points.",
+        "",
+        markdown_table(
+            ["RD Curve target", "Main source", "PSNR(dB)"],
+            [
+                (
+                    item.spec.label,
+                    item.substitution_source,
+                    "-" if item.selected is None or item.selected.psnr is None else f"{item.selected.psnr:.4f}",
+                )
+                for item in substitutions
+            ],
+        ) if substitutions else "No substitutions were applied.",
+        "",
+    ]
+    (result_root / "SUBSTITUTIONS.md").write_text("\n".join(substitution_lines), encoding="utf-8")
+
     readme = """# Result
 
 目录层级为 `分类/方法/数据集/实验项`，实验目录直接包含原 Timestamp 目录中的内容。
@@ -867,14 +974,17 @@ def write_reports(repo: Path, result_root: Path, selections: list[Selection]) ->
 
 `checkpoints/` 中只保留最终重建 checkpoint；旧格式中的 optimizer、scheduler、epoch 等训练恢复状态已在副本中移除，源 `runs` 不变。
 """
-    (result_root / "README.md").write_text(readme, encoding="utf-8")
+    (result_root / "README.md").write_text(
+        readme + "\n\n`SUBSTITUTIONS.md` documents approved Main-result substitutions used for unavailable RD Curve Size163 entries.",
+        encoding="utf-8",
+    )
 
     fields = [
         "category", "method", "dataset", "item", "exp_id", "status",
         "source_run", "source_timestamp", "source_checkpoint", "result_path",
         "completion_reason", "psnr_db", "parameter_count", "source_checkpoint_bytes",
         "result_checkpoint_bytes", "source_format", "result_format", "purified",
-        "missing_reason",
+        "missing_reason", "source_kind", "substitution_source",
     ]
     with (result_root / "MANIFEST.tsv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
@@ -882,19 +992,20 @@ def write_reports(repo: Path, result_root: Path, selections: list[Selection]) ->
         for item in selections:
             selected = item.selected
             audit = item.checkpoint_audit or {}
-            result_path = result_root.joinpath(*item.spec.destination_parts)
-            result_checkpoint = result_path / "checkpoints" / f"{item.spec.exp_id}.pth"
+            staged_result_path = result_root.joinpath(*item.spec.destination_parts)
+            final_result_path = (manifest_root or result_root).joinpath(*item.spec.destination_parts)
+            result_checkpoint = staged_result_path / "checkpoints" / f"{item.spec.exp_id}.pth"
             writer.writerow({
                 "category": item.spec.category,
                 "method": item.spec.method,
                 "dataset": item.spec.dataset,
                 "item": "/".join(item.spec.item_parts),
                 "exp_id": item.spec.exp_id,
-                "status": "copied" if selected else "missing",
+                "status": "substituted" if item.substitution_kind else ("copied" if selected else "missing"),
                 "source_run": rel(selected.run_dir, repo) if selected else "",
                 "source_timestamp": selected.timestamp if selected else "",
                 "source_checkpoint": rel(selected.checkpoint_path, repo) if selected and selected.checkpoint_path else "",
-                "result_path": rel(result_path, repo) if selected else "",
+                "result_path": rel(final_result_path, repo) if selected else "",
                 "completion_reason": selected.completion_reason if selected else "",
                 "psnr_db": "" if not selected or selected.psnr is None else f"{selected.psnr:.10g}",
                 "parameter_count": "" if not selected else selected.parameter_count or audit.get("parameter_count") or "",
@@ -904,6 +1015,8 @@ def write_reports(repo: Path, result_root: Path, selections: list[Selection]) ->
                 "result_format": audit.get("result_format", ""),
                 "purified": str(bool(audit.get("purified"))).lower() if selected else "",
                 "missing_reason": item.missing_reason,
+                "source_kind": item.substitution_kind or ("run" if selected else ""),
+                "substitution_source": item.substitution_source,
             })
 
 
@@ -925,12 +1038,12 @@ def validate_result(result_root: Path, selections: list[Selection]) -> None:
             hits = recovery_paths(payload)
             if hits:
                 raise RuntimeError(f"Recovery state leaked into {checkpoint}: {hits[:10]}")
-    for required in ("README.md", "EXPERIMENT_SUMMARY.md", "ANOMALIES.md", "MISSING_EXPERIMENTS.md", "MANIFEST.tsv"):
+    for required in ("README.md", "EXPERIMENT_SUMMARY.md", "ANOMALIES.md", "MISSING_EXPERIMENTS.md", "SUBSTITUTIONS.md", "MANIFEST.tsv"):
         if not (result_root / required).is_file():
             raise RuntimeError(f"Missing report: {required}")
 
 
-def build(repo: Path, output: Path, dry_run: bool) -> int:
+def build(repo: Path, output: Path, dry_run: bool, manifest_root: Path | None = None) -> int:
     specs = build_specs(repo)
     destinations = [spec.destination_parts for spec in specs]
     duplicates = sorted({parts for parts in destinations if destinations.count(parts) > 1})
@@ -938,6 +1051,7 @@ def build(repo: Path, output: Path, dry_run: bool) -> int:
         raise ValueError(f"Duplicate Result destinations: {duplicates[:10]}")
     index = index_candidates(repo / "runs", {spec.exp_id for spec in specs})
     selections = select_runs(specs, index)
+    apply_size163_main_substitutions(selections)
     copied = sum(item.selected is not None for item in selections)
     print(f"target_items={len(selections)} selectable={copied} missing={len(selections) - copied}")
     for row in group_rows(selections):
@@ -969,7 +1083,8 @@ def build(repo: Path, output: Path, dry_run: bool) -> int:
             audit = audit_and_write_checkpoint(source_checkpoint, result_checkpoint)
             item.checkpoint_audit = audit
             completed_audits[source_checkpoint.resolve()] = audit
-        write_reports(repo, staging, selections)
+            write_substitution_note(destination, item, repo)
+        write_reports(repo, staging, selections, manifest_root=manifest_root or output)
         validate_result(staging, selections)
         staging.rename(output)
     except Exception:
@@ -983,6 +1098,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--manifest-root",
+        type=Path,
+        default=None,
+        help="Final Result root recorded in MANIFEST.tsv; defaults to --output.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -991,7 +1112,8 @@ def main() -> int:
     args = parse_args()
     repo = args.repo.resolve()
     output = (args.output or repo / "Result").resolve()
-    return build(repo, output, args.dry_run)
+    manifest_root = args.manifest_root.resolve() if args.manifest_root else None
+    return build(repo, output, args.dry_run, manifest_root=manifest_root)
 
 
 if __name__ == "__main__":

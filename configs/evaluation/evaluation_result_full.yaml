@@ -1,0 +1,20 @@
+# Evaluate every archived Result run over every timestep. Existing render
+# images are reused when they were generated with the same render profile.
+run_root: Result
+summary_root: EvalResult/batch_logs/evaluation_result_full
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - psnr
+    - ssim
+    - lpips
+  timesteps: all
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

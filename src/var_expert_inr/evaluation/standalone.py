@@ -27,9 +27,10 @@ from .rendering import (
 from .reporting import (
     cache_key,
     environment_manifest,
-    evaluation_token,
+    evaluation_output_dir,
     find_cached_evaluation,
     path_fingerprint,
+    render_cache_matches_profile,
     write_json,
     write_metrics_csv,
 )
@@ -302,19 +303,36 @@ def _decode_neural_expert_frames(
     return decoded
 
 
-def _invoke_predict(subsystem: str, config_path: Path, source_kind: str, source_path: Path, target: str | None):
+def _invoke_predict(
+    subsystem: str,
+    config_path: Path,
+    source_kind: str,
+    source_path: Path,
+    target: str | None,
+    timesteps: tuple[int, ...],
+):
     if subsystem == "mc_inr":
         from ..methods.mc_inr.runner import run_predict
         return run_predict(config_path, checkpoint_path=source_path if source_kind == "checkpoint" else None)
     if subsystem == "fv_srn":
         from ..methods.fv_srn.runner import run_predict
-        return run_predict(config_path, target=target, checkpoint=source_path)
+        return run_predict(
+            config_path,
+            target=target,
+            checkpoint=source_path,
+            time_indices=timesteps,
+        )
     if subsystem == "rmdsrn":
         from ..methods.rmdsrn.runner import run_predict
         return run_predict(config_path, target=target, checkpoint=source_path)
     if subsystem == "ecnr":
         from ..methods.ecnr.runner import run_predict
-        return run_predict(config_path, target=target, checkpoint=source_path)
+        return run_predict(
+            config_path,
+            target=target,
+            checkpoint=source_path,
+            time_indices=timesteps,
+        )
     raise RuntimeError(
         f"{subsystem} has no standalone decode API; evaluate it from an exported prediction array"
     )
@@ -329,12 +347,40 @@ def _prediction_paths(result: dict[str, Any], source_path: Path, targets: tuple[
     return {targets[0]: Path(path)}
 
 
+def _array_frame(
+    array: np.ndarray,
+    *,
+    timestep: int,
+    indexer: slice,
+    shape_tzyx: tuple[int, int, int, int] | None,
+    decoded_positions: dict[int, int] | None = None,
+) -> np.ndarray:
+    if shape_tzyx is None:
+        return np.asarray(array[indexer])
+    if decoded_positions is not None:
+        values = np.asarray(array[decoded_positions[int(timestep)]])
+    elif array.ndim >= 4:
+        values = np.asarray(array[int(timestep)])
+    else:
+        values = np.asarray(array[indexer])
+    spatial_shape = tuple(int(value) for value in shape_tzyx[1:])
+    spatial_size = int(np.prod(spatial_shape, dtype=np.int64))
+    if values.size % spatial_size != 0:
+        raise ValueError(
+            f"Volume frame has {values.size} values, which cannot be reshaped to {spatial_shape}"
+        )
+    components = int(values.size // spatial_size)
+    output_shape = spatial_shape if components == 1 else (*spatial_shape, components)
+    return values.reshape(output_shape)
+
+
 @contextmanager
 def _portable_standalone_config(
     raw: dict[str, Any],
     *,
     gt_paths: dict[str, Path],
     coords_path: Path | None,
+    device: str,
 ):
     payload = deepcopy(raw)
     key = "DATA" if "DATA" in payload else "data"
@@ -354,6 +400,10 @@ def _portable_standalone_config(
         if data.get("source_path") is not None:
             data["source_path"] = str(coords_path)
     payload[key] = data
+    training_key = "TRAINING" if "TRAINING" in payload else "training"
+    training = dict(payload.get(training_key) or {})
+    training["device"] = device
+    payload[training_key] = training
     with tempfile.TemporaryDirectory(prefix="var_expert_eval_") as temp_dir:
         path = Path(temp_dir) / "config.yaml"
         path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -461,16 +511,28 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         } if ground_truth_available and (needs_gt or needs_render) else None,
     }
     evaluation_cache_key = cache_key(key_payload)
+    output_dir = evaluation_output_dir(request.run_dir, repo_root=repo_root)
+    reuse_render_files = bool(
+        needs_render
+        and not request.overwrite
+        and render_cache_matches_profile(
+            output_dir,
+            profile_fingerprint(profile) if profile is not None else None,
+        )
+    )
     cache_allowed = not {"decode_time", "memory"}.intersection(request.metrics)
     if cache_allowed and not request.overwrite:
-        cached = find_cached_evaluation(request.run_dir, evaluation_cache_key)
+        cached = find_cached_evaluation(output_dir, evaluation_cache_key)
         if cached is not None:
             return cached
-    device_text = request.device or str((raw.get("training") or raw.get("TRAINING") or {}).get("device", "cuda"))
+    # The evaluation device is deliberately independent of the archived
+    # training configuration, which can reference a GPU unavailable today.
+    device_text = request.device or "cuda"
     device = torch.device(device_text if not device_text.startswith("cuda") or torch.cuda.is_available() else "cpu")
     measurement = DecodeMeasurement(device=device)
     load_seconds = reconstruction_seconds = 0.0
     decoded_frames: dict[tuple[str, int], np.ndarray] | None = None
+    decoded_positions: dict[int, int] | None = None
     if source_kind == "prediction":
         prediction_result: dict[str, Any] = {}
         prediction_paths = _prediction_paths(prediction_result, source_path, tuple(targets))
@@ -504,20 +566,36 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
             # Standalone runners combine loading and reconstruction; record the
             # observable total under reconstruction and retain zero load split.
             with _portable_standalone_config(
-                raw, gt_paths=gt_paths_all, coords_path=coords_path
+                raw, gt_paths=gt_paths_all, coords_path=coords_path, device=str(device)
             ) as decode_config_path:
                 prediction_result = _invoke_predict(
-                    subsystem, decode_config_path, source_kind, source_path, data.get("target")
+                    subsystem,
+                    decode_config_path,
+                    source_kind,
+                    source_path,
+                    data.get("target"),
+                    timesteps,
                 )
             reconstruction_seconds = float(time.perf_counter() - started)
         prediction_paths = _prediction_paths(prediction_result, source_path, tuple(targets))
+        if prediction_result.get("decoded_timesteps") is not None:
+            decoded_positions = {
+                int(timestep): position
+                for position, timestep in enumerate(prediction_result["decoded_timesteps"])
+            }
     if source_kind == "prediction" and ({"decode_time", "memory"}.intersection(request.metrics)):
         with measurement:
             started = time.perf_counter()
             arrays = {name: np.load(path, mmap_mode="r", allow_pickle=False) for name, path in prediction_paths.items()}
             for array in arrays.values():
                 for timestep in timesteps:
-                    _ = np.asarray(array[timestep] if is_volume and array.ndim >= 4 else array[indexers[timestep]])
+                    _ = _array_frame(
+                        array,
+                        timestep=timestep,
+                        indexer=indexers[timestep],
+                        shape_tzyx=shape_tzyx,
+                        decoded_positions=decoded_positions,
+                    )
             reconstruction_seconds = float(time.perf_counter() - started)
     elif decoded_frames is None:
         arrays = {name: np.load(path, mmap_mode="r", allow_pickle=False) for name, path in prediction_paths.items()}
@@ -527,8 +605,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         name: np.load(gt_paths_all[name], mmap_mode="r", allow_pickle=False)
         for name in targets if ground_truth_available and (needs_gt or needs_render)
     }
-    output_dir = request.run_dir / "evaluations" / evaluation_token()
-    output_dir.mkdir(parents=True, exist_ok=False)
+    output_dir.mkdir(parents=True, exist_ok=True)
     rows, accumulators = [], {name: QualityAccumulator() for name in targets}
     context = VolumeRenderSession(profile) if needs_render and selected_renderer == "volume" else nullcontext()
     with context as volume_renderer:
@@ -537,10 +614,21 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
                 if decoded_frames is not None:
                     pred = np.asarray(decoded_frames[(name, timestep)])
                 else:
-                    pred = np.asarray(arrays[name][timestep] if is_volume and arrays[name].ndim >= 4 else arrays[name][indexers[timestep]])
+                    pred = _array_frame(
+                        arrays[name],
+                        timestep=timestep,
+                        indexer=indexers[timestep],
+                        shape_tzyx=shape_tzyx,
+                        decoded_positions=decoded_positions,
+                    )
                 gt = None
                 if ground_truth_available:
-                    gt = np.asarray(gt_arrays[name][timestep] if is_volume and gt_arrays[name].ndim >= 4 else gt_arrays[name][indexers[timestep]])
+                    gt = _array_frame(
+                        gt_arrays[name],
+                        timestep=timestep,
+                        indexer=indexers[timestep],
+                        shape_tzyx=shape_tzyx,
+                    )
                     if pred.size == gt.size:
                         pred = pred.reshape(gt.shape)
                 row: dict[str, Any] = {"row_type": "per_timestep", "target": name, "timestep": timestep, "status": "ok"}
@@ -550,29 +638,39 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
                 if needs_render:
                     render_dir = output_dir / "renders" / name
                     pred_path, gt_path = render_dir / f"pred_t{timestep:04d}.png", render_dir / f"gt_t{timestep:04d}.png"
-                    if selected_renderer == "volume":
-                        pred_info = volume_renderer.render(pred, pred_path, target=name)
-                        if gt is not None:
-                            gt_info = volume_renderer.render(gt, gt_path, target=name)
-                    elif selected_renderer == "image2d":
-                        pred_info = render_image_frame(
-                            pred, pred_path, profile=profile, gt_values=gt, target=name,
-                        )
-                        if gt is not None:
-                            gt_info = render_image_frame(
-                                gt, gt_path, profile=profile, gt_values=gt, target=name,
-                            )
-                    else:
-                        frame_coords = np.asarray(coords[indexers[timestep]])
-                        pred_info = render_node_frame(
-                            pred, pred_path, profile=profile, time_index=timestep,
-                            gt_values=gt, coordinates=frame_coords, target=name,
-                        )
-                        if gt is not None:
-                            gt_info = render_node_frame(
-                                gt, gt_path, profile=profile, time_index=timestep,
-                                gt_values=gt, coordinates=frame_coords, target=name,
-                            )
+                    pred_info = {"reused": True} if reuse_render_files and pred_path.is_file() else None
+                    gt_info = (
+                        {"reused": True}
+                        if gt is not None and reuse_render_files and gt_path.is_file()
+                        else None
+                    )
+                    if pred_info is None or (gt is not None and gt_info is None):
+                        if selected_renderer == "volume":
+                            if pred_info is None:
+                                pred_info = volume_renderer.render(pred, pred_path, target=name)
+                            if gt is not None and gt_info is None:
+                                gt_info = volume_renderer.render(gt, gt_path, target=name)
+                        elif selected_renderer == "image2d":
+                            if pred_info is None:
+                                pred_info = render_image_frame(
+                                    pred, pred_path, profile=profile, gt_values=gt, target=name,
+                                )
+                            if gt is not None and gt_info is None:
+                                gt_info = render_image_frame(
+                                    gt, gt_path, profile=profile, gt_values=gt, target=name,
+                                )
+                        else:
+                            frame_coords = np.asarray(coords[indexers[timestep]])
+                            if pred_info is None:
+                                pred_info = render_node_frame(
+                                    pred, pred_path, profile=profile, time_index=timestep,
+                                    gt_values=gt, coordinates=frame_coords, target=name,
+                                )
+                            if gt is not None and gt_info is None:
+                                gt_info = render_node_frame(
+                                    gt, gt_path, profile=profile, time_index=timestep,
+                                    gt_values=gt, coordinates=frame_coords, target=name,
+                                )
                     row["pred_render_path"] = str(pred_path.resolve())
                     row["render_info"] = pred_info
                     if gt is not None:
@@ -605,7 +703,13 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         selected_values = sum(
             int(np.asarray(decoded_frames[(name, timestep)]).size)
             if decoded_frames is not None else
-            int(np.asarray(arrays[name][timestep] if is_volume and arrays[name].ndim >= 4 else arrays[name][indexers[timestep]]).size)
+            int(_array_frame(
+                arrays[name],
+                timestep=timestep,
+                indexer=indexers[timestep],
+                shape_tzyx=shape_tzyx,
+                decoded_positions=decoded_positions,
+            ).size)
             for name in targets for timestep in timesteps
         )
         total_decode = load_seconds + reconstruction_seconds
@@ -614,7 +718,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
             "reconstruction_seconds": reconstruction_seconds,
             "total_decode_seconds": total_decode,
             "values_per_second": float(selected_values / reconstruction_seconds) if reconstruction_seconds > 0 else None,
-            "decode_selection_mode": "selected" if subsystem in {"apmgsrn", "miner", "neural_expert"} or source_kind == "prediction" else "full_required",
+            "decode_selection_mode": "selected" if subsystem in {"apmgsrn", "miner", "neural_expert", "fv_srn", "ecnr"} or source_kind == "prediction" else "full_required",
         })
     if "memory" in request.metrics:
         performance.update(measurement.as_dict())
@@ -628,6 +732,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
             for name in targets if name in gt_paths_all and gt_paths_all[name].is_file()
         },
         "targets": list(targets), "source_kind": source_kind, "source_path": str(source_path), "device": str(device),
+        "source_fingerprint": path_fingerprint(source_path),
         "render_requested": bool(needs_render),
         "render_profile": None if profile is None else {
             "path": profile.get("_path"),

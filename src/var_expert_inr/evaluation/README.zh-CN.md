@@ -97,7 +97,7 @@ Copy-Item E:/Research/Project/Scientific Compression/INR/Datasets/RedSea_SciVisC
 每次新评估写入：
 
 ```text
-<run>/evaluations/<timestamp>/
+EvalResult/Main/<model>/<dataset>/<target>/
 ├── manifest.json
 ├── metrics.json
 ├── metrics.csv

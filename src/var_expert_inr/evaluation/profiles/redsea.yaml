@@ -12,5 +12,4 @@ background: white
 window_size: [1800, 1400]
 camera_position: xy
 zoom: 1.0
-clim: [-1.0, 1.0]
 show_scalar_bar: false

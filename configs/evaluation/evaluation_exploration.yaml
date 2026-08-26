@@ -1,0 +1,19 @@
+list_path: scripts/evaluation/evaluation_exploration.list
+summary_root: EvalResult/batch_logs/evaluation_exploration
+continue_on_error: true
+item_timeout_seconds: 3600
+
+evaluation:
+  metrics:
+    - psnr
+  timesteps: "0"
+  render: false
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto
+  targets_by_dataset:
+    ionization: H_plus
+    combustion_40nh3_1: Temperature
+    katrina: speed
+    redsea: SALT

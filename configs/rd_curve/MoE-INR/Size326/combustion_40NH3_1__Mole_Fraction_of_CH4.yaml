@@ -1,0 +1,69 @@
+experiment: combustion_40NH3_1_moe-inr_size326_Mole_Fraction_of_CH4
+exp_id: moe-inr-combustion_40NH3_1-size326-Mole_Fraction_of_CH4
+experiment_root: ${RUNS_ROOT}
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${COMBUSTION_ROOT}/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${COMBUSTION_ROOT}/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_OH.npy
+    Pressure: ${COMBUSTION_ROOT}/target_Pressure.npy
+    Temperature: ${COMBUSTION_ROOT}/target_Temperature.npy
+    Velocity: ${COMBUSTION_ROOT}/target_Velocity.npy
+    Velocity_Magnitude: ${COMBUSTION_ROOT}/target_Velocity_Magnitude.npy
+  coordinate_axes:
+  - x
+  - y
+  - t
+  target: Mole_Fraction_of_CH4
+model:
+  name: moe_inr
+  in_features: 3
+  num_experts: 7
+  base_dim: 66
+  encoder_feature_dim: 528
+  policy_hidden_dim: 66
+  policy_num_layers: 3
+training:
+  epochs: 600
+  batch_size: 16000
+  pred_batch_size: 16000
+  num_workers: 0
+  lr: 5.0e-05
+  val_split: 0.0
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 0
+  early_stop_patience: 0
+  loss_type: mse
+  seed: 42
+  sampler: budgeted_random
+  batches_per_epoch_budget: 1500
+  scheduler:
+    enabled: true
+    step_size: 40
+    gamma: 0.92
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+log:
+  timing:
+    enabled: true
+    epoch_breakdown: true
+    step_window: false
+    step_window_every_steps: 100
+    cuda_sync: false

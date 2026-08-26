@@ -2,10 +2,11 @@ kind: node
 renderer: mesh
 mesh_path: data/Mesh/Katrina/fort.14
 association: point
+planarize_z: true
 cmap: yellow_biased_viridis
 background: white
 window_size: [1800, 1400]
-zoom: 1.8
+camera_position: xy
 clim: [-1.0, 1.0]
 target_clims:
   v: [0.0, 1.7320508075688772]

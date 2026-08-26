@@ -111,7 +111,7 @@ derived from ground truth.
 Each new evaluation writes:
 
 ```text
-<run>/evaluations/<timestamp>/
+EvalResult/Main/<model>/<dataset>/<target>/
 ├── manifest.json
 ├── metrics.json
 ├── metrics.csv

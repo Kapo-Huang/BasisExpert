@@ -1,0 +1,80 @@
+experiment: fv_srn_combustion_40NH3_1-size326_Mole_Fraction_of_NH3
+exp_id: fv-srn-combustion_40NH3_1-size326-Mole_Fraction_of_NH3
+experiment_root: ${RUNS_ROOT}/fv_srn
+data:
+  kind: volume
+  dataset_name: combustion_40NH3_1
+  split: train
+  volume_shape:
+    X: 128
+    Y: 128
+    Z: 1
+    T: 2001
+  targets:
+    Absolute_Pressure: ${COMBUSTION_ROOT}/target_Absolute_Pressure.npy
+    Chemistry_Heat_Release_Rate: ${COMBUSTION_ROOT}/target_Chemistry_Heat_Release_Rate.npy
+    Mole_Fraction_of_CH4: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CH4.npy
+    Mole_Fraction_of_CO: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO.npy
+    Mole_Fraction_of_CO2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_CO2.npy
+    Mole_Fraction_of_H2O: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_H2O.npy
+    Mole_Fraction_of_NH2: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH2.npy
+    Mole_Fraction_of_NH3: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_NH3.npy
+    Mole_Fraction_of_OH: ${COMBUSTION_ROOT}/target_Mole_Fraction_of_OH.npy
+    Pressure: ${COMBUSTION_ROOT}/target_Pressure.npy
+    Temperature: ${COMBUSTION_ROOT}/target_Temperature.npy
+    Velocity_Magnitude: ${COMBUSTION_ROOT}/target_Velocity_Magnitude.npy
+  target: Mole_Fraction_of_NH3
+model:
+  name: fv_srn
+  grid_resolution: 8
+  grid_channels: 55
+  grid_init_std: 0.01
+  keyframe_indices:
+  - 0
+  - 182
+  - 364
+  - 545
+  - 727
+  - 909
+  - 1091
+  - 1273
+  - 1455
+  - 1636
+  - 1818
+  - 2000
+  fourier_features: 14
+  fourier_mode: nerf
+  hidden_features: 32
+  hidden_layers: 3
+  activation: snake_alt
+  activation_frequency: 1.0
+  time_encoding: none
+training:
+  epochs: 600
+  samples_per_timestep: 12000
+  validation_fraction: 0.0
+  batch_size: 16000
+  prediction_batch_size: 16000
+  lr: 5.0e-05
+  beta_1: 0.9
+  beta_2: 0.999
+  eps: 1.0e-08
+  weight_decay: 0.0
+  lr_scheduler: step
+  lr_step: 40
+  lr_gamma: 0.92
+  l1_weight: 1.0
+  l2_weight: 0.0
+  importance_floor: 0.01
+  rebuild_every: 51
+  rebuild_grid_size: 32
+  rebuild_samples_per_cell: 2
+  save_every: 0
+  log_every: 1
+  seed: 42
+  device: cuda
+evaluation:
+  batch_size: 16000
+  save_predictions: false
+  run_after_training: false
+  default_model: checkpoint

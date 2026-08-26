@@ -1,4 +1,8 @@
-from .io import load_experiment_config, save_experiment_config
+from .io import (
+    load_evaluation_experiment_config,
+    load_experiment_config,
+    save_experiment_config,
+)
 from .schema import (
     DataConfig,
     EvaluationConfig,
@@ -18,5 +22,6 @@ __all__ = [
     "TrainingConfig",
     "VolumeShape",
     "load_experiment_config",
+    "load_evaluation_experiment_config",
     "save_experiment_config",
 ]

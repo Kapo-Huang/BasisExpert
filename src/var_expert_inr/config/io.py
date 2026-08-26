@@ -93,14 +93,26 @@ def _resolve_target_placeholder(value: Any, *, target: str | None, field_name: s
     return text.replace(TARGET_PLACEHOLDER, target)
 
 
-def load_experiment_config(path: str | Path) -> ExperimentConfig:
+def _load_experiment_config(
+    path: str | Path,
+    *,
+    evaluation_only: bool,
+) -> ExperimentConfig:
     config_path = Path(path).resolve()
     payload = load_yaml(config_path)
     _reject_unknown_keys(payload, TOP_LEVEL_CONFIG_KEYS, label="config")
 
     data_section = _ensure_mapping(payload.get("data"), label="data")
     model_payload = _ensure_mapping(payload.get("model"), label="model")
-    training_payload = _ensure_mapping(payload.get("training"), label="training")
+    archived_training_payload = _ensure_mapping(payload.get("training"), label="training")
+    # Evaluation only needs the device from the training section.  Saved runs
+    # may contain historical loss/scheduler fields that should remain strict
+    # for training, but must not prevent reconstruction of an archived model.
+    training_payload = (
+        {"device": archived_training_payload.get("device", "cuda")}
+        if evaluation_only
+        else archived_training_payload
+    )
     evaluation_payload = _ensure_mapping(payload.get("evaluation"), label="evaluation")
     log_payload = _ensure_mapping(payload.get("log"), label="log")
     exploration_probe_payload = _ensure_mapping(payload.get("exploration_probe"), label="exploration_probe")
@@ -223,6 +235,18 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
         exploration_probe=ExplorationProbeConfig(**exploration_probe_payload),
         source_config_path=str(config_path),
     )
+
+
+def load_experiment_config(path: str | Path) -> ExperimentConfig:
+    """Load and strictly validate a configuration for training or prediction."""
+
+    return _load_experiment_config(path, evaluation_only=False)
+
+
+def load_evaluation_experiment_config(path: str | Path) -> ExperimentConfig:
+    """Load the model/data runtime subset needed to evaluate an archived run."""
+
+    return _load_experiment_config(path, evaluation_only=True)
 
 
 def save_experiment_config(config: ExperimentConfig, path: str | Path) -> Path:
