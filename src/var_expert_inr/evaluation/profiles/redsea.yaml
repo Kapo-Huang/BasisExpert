@@ -1,0 +1,16 @@
+kind: node
+renderer: mesh
+mesh_path: data/Mesh/RedSea/render/surface_0000.vtp
+mesh_source_hint: E:/Research/Project/Scientific Compression/INR/Datasets/RedSea_SciVisContest2020/0001/0001/paraview/surface_vtp/surface_0000.vtp
+association: point
+coordinate_slice:
+  axis: z
+  index: 0
+mesh_mask_array: wet_mask_surface
+cmap: viridis
+background: white
+window_size: [1800, 1400]
+camera_position: xy
+zoom: 1.0
+clim: [-1.0, 1.0]
+show_scalar_bar: false

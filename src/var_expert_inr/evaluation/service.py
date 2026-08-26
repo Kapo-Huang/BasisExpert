@@ -28,7 +28,9 @@ from .rendering import (
     load_render_profile,
     preflight_rendering,
     profile_fingerprint,
+    render_image_frame,
     render_node_frame,
+    renderer_name,
 )
 from .reporting import (
     cache_key,
@@ -70,20 +72,36 @@ class _InferenceOnlyDataset(FieldDataset):
 
     def __init__(self, config, targets: tuple[str, ...]) -> None:
         self._target_names = tuple(targets)
-        configured_out = int(config.model.params.get("out_features", 1))
-        target_dims = {name: configured_out if len(targets) == 1 else 1 for name in targets}
         self.volume_shape = config.data.volume_shape
         if self.volume_shape is not None:
             n_samples = int(self.volume_shape.N)
-            input_dim = 4
+            self._coordinate_axes = tuple(config.data.coordinate_axes or ("x", "y", "z", "t"))
+            input_dim = len(self._coordinate_axes)
             self._coords_np = None
         else:
+            self._coordinate_axes = None
             coords_path = Path(config.data.coords_path).expanduser().resolve()
             if not coords_path.is_file():
                 raise FileNotFoundError(f"Coordinate file is required for GT-free node evaluation: {coords_path}")
             self._coords_np = np.load(coords_path, mmap_mode="r", allow_pickle=False)
             n_samples = int(self._coords_np.shape[0])
             input_dim = int(self._coords_np.shape[1])
+        configured_out = int(config.model.params.get("out_features", 1))
+        configured_paths = dict(config.data.targets or {})
+        if config.data.target_path:
+            configured_paths[str(config.data.target or targets[0])] = config.data.target_path
+        target_dims: dict[str, int] = {}
+        for name in targets:
+            path_value = configured_paths.get(name)
+            if path_value and Path(path_value).is_file():
+                array = np.load(path_value, mmap_mode="r", allow_pickle=False)
+                if int(array.size) % n_samples != 0:
+                    raise ValueError(
+                        f"Target {name!r} contains {array.size} values for {n_samples} samples"
+                    )
+                target_dims[name] = int(array.size) // n_samples
+            else:
+                target_dims[name] = configured_out if len(targets) == 1 else 1
         self.meta = DatasetMeta(
             kind=config.data.kind, n_samples=n_samples, input_dim=input_dim,
             target_names=self._target_names, target_dims=target_dims,
@@ -101,14 +119,14 @@ class _InferenceOnlyDataset(FieldDataset):
             z = remaining % int(self.volume_shape.Z)
             remaining //= int(self.volume_shape.Z)
             t = remaining
+            normalized = {
+                "x": normalize_index_coordinates(x, self.volume_shape.X),
+                "y": normalize_index_coordinates(y, self.volume_shape.Y),
+                "z": normalize_index_coordinates(z, self.volume_shape.Z),
+                "t": normalize_index_coordinates(t, self.volume_shape.T),
+            }
             coords = np.stack(
-                [
-                    normalize_index_coordinates(x, self.volume_shape.X),
-                    normalize_index_coordinates(y, self.volume_shape.Y),
-                    normalize_index_coordinates(z, self.volume_shape.Z),
-                    normalize_index_coordinates(t, self.volume_shape.T),
-                ],
-                axis=1,
+                [normalized[axis] for axis in self._coordinate_axes], axis=1
             ).astype(np.float32)
         else:
             coords = np.asarray(self._coords_np[rows], dtype=np.float32)
@@ -302,8 +320,11 @@ def _load_prediction_arrays(
 
 def _load_standard_model(config, dataset, device: torch.device, source: Path):
     payload = read_checkpoint_payload(source)
-    if payload.get("format") != "inference_checkpoint_v1":
-        raise ValueError(f"Unsupported inference checkpoint: {payload.get('format')!r}")
+    checkpoint_format = payload.get("format")
+    if checkpoint_format not in {None, "inference_checkpoint_v1"}:
+        raise ValueError(f"Unsupported inference checkpoint: {checkpoint_format!r}")
+    if "model_state" not in payload:
+        raise ValueError(f"Checkpoint does not contain model_state: {source}")
     if payload.get("target_names_order"):
         target_names = tuple(payload["target_names_order"])
         target_dims = payload.get("target_dims_order")
@@ -431,6 +452,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     }
     frame_indexers = _frame_indexers(dataset)
     profile = None
+    selected_renderer = None
     if needs_render:
         profile = load_render_profile(
             config.data.dataset_name, request.render_profile or config.evaluation.render_profile,
@@ -438,6 +460,20 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         )
         if str(profile.get("kind", config.data.kind)).lower() != config.data.kind:
             raise ValueError("Render profile kind does not match dataset kind")
+        selected_renderer = renderer_name(profile, dataset_kind=config.data.kind)
+        frame_coordinates = None
+        if config.data.kind == "node":
+            frame_coordinates = {
+                timestep: np.asarray(dataset._coords_np[frame_indexers[timestep]])
+                for timestep in timesteps
+            }
+        spatial_shape = None
+        if config.data.volume_shape is not None:
+            spatial_shape = (
+                int(config.data.volume_shape.Z),
+                int(config.data.volume_shape.Y),
+                int(config.data.volume_shape.X),
+            )
         preflight_rendering(
             profile,
             dataset_kind=config.data.kind,
@@ -449,6 +485,8 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
             },
             prediction_only=not ground_truth_available,
             metrics=metrics,
+            frame_coordinates=frame_coordinates,
+            spatial_shape=spatial_shape,
         )
     kind, source_path = _resolve_standard_source(request, config)
     if kind == "checkpoint" and not source_path.is_file():
@@ -499,7 +537,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     selected_values = 0
     target_accumulators = {name: QualityAccumulator() for name in targets}
-    volume_context = VolumeRenderSession(profile) if needs_render and config.data.kind == "volume" else nullcontext()
+    volume_context = VolumeRenderSession(profile) if needs_render and selected_renderer == "volume" else nullcontext()
     with volume_context as volume_renderer:
         for timestep in timesteps:
             frame_measurement = DecodeMeasurement(device=device)
@@ -543,17 +581,28 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                     gt_path = render_dir / f"gt_t{timestep:04d}.png"
                     pred_render = _reshape_render_frame(dataset, pred)
                     gt_render = None if gt is None else _reshape_render_frame(dataset, gt)
-                    if config.data.kind == "volume":
+                    if selected_renderer == "volume":
                         pred_info = volume_renderer.render(pred_render, pred_path, target=target)
                         if gt_render is not None:
                             gt_info = volume_renderer.render(gt_render, gt_path, target=target)
+                    elif selected_renderer == "image2d":
+                        pred_info = render_image_frame(
+                            pred_render, pred_path, profile=profile, gt_values=gt_render, target=target,
+                        )
+                        if gt_render is not None:
+                            gt_info = render_image_frame(
+                                gt_render, gt_path, profile=profile, gt_values=gt_render, target=target,
+                            )
                     else:
+                        frame_coords = np.asarray(dataset._coords_np[frame_indexers[timestep]])
                         pred_info = render_node_frame(
-                            pred_render, pred_path, profile=profile, time_index=timestep, gt_values=gt_render, target=target,
+                            pred_render, pred_path, profile=profile, time_index=timestep,
+                            gt_values=gt_render, coordinates=frame_coords, target=target,
                         )
                         if gt_render is not None:
                             gt_info = render_node_frame(
-                                gt_render, gt_path, profile=profile, time_index=timestep, gt_values=gt_render, target=target,
+                                gt_render, gt_path, profile=profile, time_index=timestep,
+                                gt_values=gt_render, coordinates=frame_coords, target=target,
                             )
                     row["pred_render_path"] = str(pred_path.resolve())
                     row["render_info"] = pred_info
@@ -617,6 +666,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         "render_profile": None if profile is None else {
             "path": profile.get("_path"),
             "fingerprint": profile_fingerprint(profile),
+            "renderer": selected_renderer,
         },
         "environment": environment_manifest(),
         "cache_key": evaluation_cache_key,

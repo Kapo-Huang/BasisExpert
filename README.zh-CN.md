@@ -136,7 +136,7 @@ profile 的 `RUNS_ROOT` 默认为仓库中的 `runs/`，AutoDL 默认为
 - `data/`、`runs/`、`runs_summary/` 和 `batch_logs/` 是本地产物，不纳入版本控制。
 - 质量指标需要可读且形状兼容的 ground truth；性能指标可以在没有 ground truth 的
   情况下评估 checkpoint 解码。
-- 体渲染需要 VolumeVis。节点渲染需要受支持的网格，或显式的顶点与单元数据；不提供
-  点云回退方案。
+- Ionization 体渲染需要 VolumeVis；Combustion 使用内置二维渲染器。节点渲染需要受支持
+  的网格，RedSea 表层 VTP 是 `data/Mesh/RedSea/render/` 下的本地产物。
 - 实验矩阵变化时，生成配置数量也会变化。请查询正在使用的 `.list` 文件，不要依赖
   复制到说明文字中的固定数字。

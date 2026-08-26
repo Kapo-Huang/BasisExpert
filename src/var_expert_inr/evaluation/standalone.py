@@ -20,7 +20,9 @@ from .rendering import (
     load_render_profile,
     preflight_rendering,
     profile_fingerprint,
+    render_image_frame,
     render_node_frame,
+    renderer_name,
 )
 from .reporting import (
     cache_key,
@@ -416,15 +418,24 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         except (OSError, ValueError):
             ground_truth_available = False
     profile = load_render_profile(data.get("dataset_name"), request.render_profile, repo_root=repo_root) if needs_render else None
+    selected_renderer = None
     if profile is not None:
+        dataset_kind = "volume" if is_volume else "node"
+        if str(profile.get("kind", dataset_kind)).lower() != dataset_kind:
+            raise ValueError("Render profile kind does not match dataset kind")
+        selected_renderer = renderer_name(profile, dataset_kind=dataset_kind)
         preflight_rendering(
             profile,
-            dataset_kind="volume" if is_volume else "node",
+            dataset_kind=dataset_kind,
             targets=tuple(targets),
             timesteps=timesteps,
             frame_sizes={timestep: int(indexers[timestep].stop - indexers[timestep].start) for timestep in timesteps},
             prediction_only=not ground_truth_available,
             metrics=tuple(request.metrics),
+            frame_coordinates=None if is_volume else {
+                timestep: np.asarray(coords[indexers[timestep]]) for timestep in timesteps
+            },
+            spatial_shape=None if shape_tzyx is None else tuple(int(item) for item in shape_tzyx[1:]),
         )
     source_kind, source_path = _find_source(
         request.run_dir, subsystem, request.source, request.checkpoint,
@@ -519,7 +530,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
     output_dir = request.run_dir / "evaluations" / evaluation_token()
     output_dir.mkdir(parents=True, exist_ok=False)
     rows, accumulators = [], {name: QualityAccumulator() for name in targets}
-    context = VolumeRenderSession(profile) if needs_render and is_volume else nullcontext()
+    context = VolumeRenderSession(profile) if needs_render and selected_renderer == "volume" else nullcontext()
     with context as volume_renderer:
         for name in targets if (needs_gt or needs_render) else ():
             for timestep in timesteps:
@@ -539,14 +550,29 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
                 if needs_render:
                     render_dir = output_dir / "renders" / name
                     pred_path, gt_path = render_dir / f"pred_t{timestep:04d}.png", render_dir / f"gt_t{timestep:04d}.png"
-                    if is_volume:
+                    if selected_renderer == "volume":
                         pred_info = volume_renderer.render(pred, pred_path, target=name)
                         if gt is not None:
                             gt_info = volume_renderer.render(gt, gt_path, target=name)
-                    else:
-                        pred_info = render_node_frame(pred, pred_path, profile=profile, time_index=timestep, gt_values=gt, target=name)
+                    elif selected_renderer == "image2d":
+                        pred_info = render_image_frame(
+                            pred, pred_path, profile=profile, gt_values=gt, target=name,
+                        )
                         if gt is not None:
-                            gt_info = render_node_frame(gt, gt_path, profile=profile, time_index=timestep, gt_values=gt, target=name)
+                            gt_info = render_image_frame(
+                                gt, gt_path, profile=profile, gt_values=gt, target=name,
+                            )
+                    else:
+                        frame_coords = np.asarray(coords[indexers[timestep]])
+                        pred_info = render_node_frame(
+                            pred, pred_path, profile=profile, time_index=timestep,
+                            gt_values=gt, coordinates=frame_coords, target=name,
+                        )
+                        if gt is not None:
+                            gt_info = render_node_frame(
+                                gt, gt_path, profile=profile, time_index=timestep,
+                                gt_values=gt, coordinates=frame_coords, target=name,
+                            )
                     row["pred_render_path"] = str(pred_path.resolve())
                     row["render_info"] = pred_info
                     if gt is not None:
@@ -606,6 +632,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
         "render_profile": None if profile is None else {
             "path": profile.get("_path"),
             "fingerprint": profile_fingerprint(profile),
+            "renderer": selected_renderer,
         },
         "environment": environment_manifest(),
         "cache_key": evaluation_cache_key,

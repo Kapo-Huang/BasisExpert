@@ -75,8 +75,9 @@ and under the local `data/` tree.
 
 ## Rendering profiles
 
-Packaged profiles currently cover Ionization volume rendering and Katrina node
-rendering. Use `--eval-config <profile.yaml>` for another dataset or view.
+Built-in profiles cover Ionization, Combustion, RedSea, and Katrina. The
+profile `renderer` is `volume`, `image2d`, or `mesh`; use
+`--eval-config <profile.yaml>` to override a built-in view.
 
 A volume profile declares `kind: volume`, layout, renderer options, and optional
 target-to-preset mappings. Volume rendering requires the sibling VolumeVis
@@ -85,6 +86,21 @@ and color settings, and one of:
 
 - `mesh_path` or `mesh_path_template` for VTK/VTU or ADCIRC `fort.14`; or
 - both vertices and cells NumPy paths, optionally as timestep templates.
+
+Combustion uses the `image2d` renderer and the default `viridis` color map.
+The built-in RedSea mesh view selects the surface coordinate layer and maps
+its values through the VTP `wet_mask_surface` array. Prepare its local,
+git-ignored mesh once before rendering:
+
+```powershell
+New-Item -ItemType Directory -Force data/Mesh/RedSea/render
+Copy-Item E:/Research/Project/Scientific Compression/INR/Datasets/RedSea_SciVisContest2020/0001/0001/paraview/surface_vtp/surface_0000.vtp `
+  data/Mesh/RedSea/render/surface_0000.vtp
+```
+
+For another checkout, copy the same SciVis export to the destination path
+shown above. The evaluator reports that expected path before decoding when the
+asset is absent. Legacy runs named `bathymetry` use the RedSea profile.
 
 There is no point-cloud fallback. Prediction-only rendering must provide a
 fixed `clim` or target-specific `target_clims`; otherwise color limits are

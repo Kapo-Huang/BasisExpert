@@ -18,6 +18,7 @@ env/
 ENV/
 
 # Training and experiment outputs
+/Result/
 /runs/
 /runs_summary/
 /log/

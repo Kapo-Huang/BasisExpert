@@ -66,8 +66,8 @@ python -m pip install -e "../Vis[lpips]"  # 仅体渲染需要
 
 ## 渲染 Profile
 
-内置 profile 当前覆盖 Ionization 体渲染和 Katrina 节点渲染。其他数据集或视角使用
-`--eval-config <profile.yaml>`。
+内置 profile 覆盖 Ionization、Combustion、RedSea 和 Katrina。profile 的 `renderer`
+可为 `volume`、`image2d` 或 `mesh`；可用 `--eval-config <profile.yaml>` 覆盖内置视角。
 
 体 profile 声明 `kind: volume`、布局、渲染器选项，以及可选的目标到 preset 映射。
 体渲染需要相邻的 VolumeVis 包。节点 profile 声明 `kind: node`、点/单元关联、相机和
@@ -75,6 +75,19 @@ python -m pip install -e "../Vis[lpips]"  # 仅体渲染需要
 
 - 用于 VTK/VTU 或 ADCIRC `fort.14` 的 `mesh_path` 或 `mesh_path_template`；或
 - 顶点与单元两个 NumPy 路径，也可以使用时间步模板。
+
+Combustion 使用 `image2d` 和默认 `viridis` 色图。RedSea 内置视角选择表层坐标，并通过
+VTP 的 `wet_mask_surface` 把预测值映射回表层网格。首次渲染前，把本地、Git 忽略的
+mesh 准备到固定位置：
+
+```powershell
+New-Item -ItemType Directory -Force data/Mesh/RedSea/render
+Copy-Item E:/Research/Project/Scientific Compression/INR/Datasets/RedSea_SciVisContest2020/0001/0001/paraview/surface_vtp/surface_0000.vtp `
+  data/Mesh/RedSea/render/surface_0000.vtp
+```
+
+其他机器将同一 SciVis 导出文件复制到上述目标即可。文件不存在时，评估器会在解码前
+报告预期路径。历史 `dataset_name: bathymetry` 运行会自动使用 RedSea profile。
 
 不提供点云回退。仅预测渲染必须设置固定 `clim` 或目标专属 `target_clims`；否则颜色
 范围从 ground truth 推导。

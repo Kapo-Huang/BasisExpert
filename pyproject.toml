@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 evaluation = [
   "Pillow>=9",
+  "matplotlib>=3.6",
   "scikit-image>=0.20",
   "lpips>=0.1.4",
   "pyvista>=0.43",

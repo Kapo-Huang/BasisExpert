@@ -11,6 +11,9 @@ import yaml
 
 
 TARGET_PRESET_ALIASES = {"h_plus": "H+", "h+": "H+"}
+DATASET_PROFILE_ALIASES = {"bathymetry": "redsea"}
+COORDINATE_AXES = {"x": 0, "y": 1, "z": 2}
+_LPIPS_MODELS: dict[tuple[str, str], Any] = {}
 
 
 @lru_cache(maxsize=1)
@@ -35,6 +38,7 @@ def load_render_profile(
         path = Path(profile).expanduser().resolve()
     else:
         name = str(dataset_name or "").strip().lower()
+        name = DATASET_PROFILE_ALIASES.get(name, name)
         path = Path(__file__).resolve().parent / "profiles" / f"{name}.yaml"
     if not path.is_file():
         raise FileNotFoundError(
@@ -54,6 +58,16 @@ def load_render_profile(
                 payload[key] = str((repo_root / candidate).resolve())
     payload["_path"] = str(path)
     return payload
+
+
+def renderer_name(profile: dict[str, Any], *, dataset_kind: str) -> str:
+    default = "volume" if str(dataset_kind).lower() == "volume" else "mesh"
+    renderer = str(profile.get("renderer", default)).strip().lower()
+    aliases = {"image": "image2d", "node": "mesh"}
+    renderer = aliases.get(renderer, renderer)
+    if renderer not in {"volume", "image2d", "mesh"}:
+        raise ValueError("render profile renderer must be volume, image2d, or mesh")
+    return renderer
 
 
 def visual_scalar(values: np.ndarray) -> np.ndarray:
@@ -144,12 +158,186 @@ def compare_rendered_images(
     *,
     device: str = "auto",
 ) -> dict[str, float | None]:
-    from volume_vis import compare_images
-
     requested = tuple(name for name in metrics if name in {"ssim", "lpips"})
     if not requested:
         return {}
-    return compare_images(gt_path, pred_path, metrics=requested, device=device).as_dict()
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("Rendered-image metrics require Pillow; install .[evaluation]") from exc
+
+    def load_rgb(path: Path) -> np.ndarray:
+        with Image.open(path) as image:
+            return np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+
+    gt = load_rgb(gt_path)
+    pred = load_rgb(pred_path)
+    if pred.shape != gt.shape:
+        resampling = getattr(Image, "Resampling", Image)
+        resized = Image.fromarray(np.clip(pred * 255.0, 0, 255).astype(np.uint8)).resize(
+            (gt.shape[1], gt.shape[0]), resampling.BILINEAR
+        )
+        pred = np.asarray(resized, dtype=np.float32) / 255.0
+
+    result: dict[str, float | None] = {}
+    if "ssim" in requested:
+        from skimage.metrics import structural_similarity
+
+        result["ssim"] = float(
+            structural_similarity(gt, pred, data_range=1.0, channel_axis=2)
+        )
+    if "lpips" in requested:
+        import lpips
+        import torch
+
+        resolved_device = device
+        if device == "auto":
+            resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+        key = ("alex", resolved_device)
+        model = _LPIPS_MODELS.get(key)
+        if model is None:
+            model = lpips.LPIPS(net="alex", verbose=False).to(resolved_device)
+            _LPIPS_MODELS[key] = model
+        gt_tensor = torch.from_numpy(gt.transpose(2, 0, 1)).float().unsqueeze(0).to(resolved_device) * 2 - 1
+        pred_tensor = torch.from_numpy(pred.transpose(2, 0, 1)).float().unsqueeze(0).to(resolved_device) * 2 - 1
+        with torch.no_grad():
+            result["lpips"] = float(model(gt_tensor, pred_tensor).item())
+    return result
+
+
+def _coordinate_slice_mask(coordinates: np.ndarray, profile: dict[str, Any]) -> np.ndarray:
+    coords = np.asarray(coordinates)
+    if coords.ndim != 2:
+        raise ValueError(f"render coordinates must have shape (N, D), got {coords.shape}")
+    selection = profile.get("coordinate_slice")
+    if selection is None:
+        return np.ones((coords.shape[0],), dtype=bool)
+    if not isinstance(selection, dict):
+        raise ValueError("coordinate_slice must be a mapping with axis and index")
+    raw_axis = selection.get("axis")
+    if isinstance(raw_axis, str):
+        axis_name = raw_axis.strip().lower()
+        if axis_name not in COORDINATE_AXES:
+            raise ValueError("coordinate_slice.axis must be x, y, z, or an integer")
+        axis = COORDINATE_AXES[axis_name]
+    else:
+        axis = int(raw_axis)
+    if axis < 0 or axis >= coords.shape[1] - 1:
+        raise ValueError(
+            f"coordinate_slice axis {axis} is outside the spatial coordinate columns {coords.shape[1] - 1}"
+        )
+    levels = np.unique(coords[:, axis])
+    index = int(selection.get("index", 0))
+    if index < 0:
+        index += int(levels.size)
+    if index < 0 or index >= int(levels.size):
+        raise ValueError(
+            f"coordinate_slice index {selection.get('index', 0)} is outside {levels.size} available levels"
+        )
+    return coords[:, axis] == levels[index]
+
+
+def _mesh_scalar_values(
+    mesh,
+    values: np.ndarray,
+    *,
+    profile: dict[str, Any],
+    coordinates: np.ndarray | None,
+    association: str,
+) -> tuple[np.ndarray, int, int | None]:
+    scalar = np.asarray(visual_scalar(values)).reshape(-1)
+    if coordinates is not None and int(np.asarray(coordinates).shape[0]) != int(scalar.size):
+        raise ValueError(
+            f"Coordinate/value size mismatch: coordinates={np.asarray(coordinates).shape[0]}, values={scalar.size}"
+        )
+    if profile.get("coordinate_slice") is not None and coordinates is not None:
+        selection = _coordinate_slice_mask(coordinates, profile)
+        scalar = scalar[selection]
+    elif profile.get("coordinate_slice") is not None:
+        raise ValueError("coordinate_slice rendering requires frame coordinates")
+
+    observed = int(mesh.n_points if association == "point" else mesh.n_cells)
+    mask_name = profile.get("mesh_mask_array")
+    if not mask_name:
+        if observed != int(scalar.size):
+            raise ValueError(
+                f"{association.title()} mesh size mismatch: mesh={observed}, values={scalar.size}"
+            )
+        return scalar, int(scalar.size), None
+
+    data = mesh.point_data if association == "point" else mesh.cell_data
+    if str(mask_name) not in data:
+        raise KeyError(
+            f"Mesh {association} data does not contain mask array {mask_name!r}; "
+            f"available={list(data.keys())}"
+        )
+    mask = np.asarray(data[str(mask_name)]).reshape(-1).astype(bool)
+    if int(mask.size) != observed:
+        raise ValueError(
+            f"Mesh mask size mismatch: mask={mask.size}, mesh_{association}s={observed}"
+        )
+    selected = int(np.count_nonzero(mask))
+    if selected != int(scalar.size):
+        raise ValueError(
+            f"Mesh mask/value size mismatch: mask={selected}, values={scalar.size}"
+        )
+    expanded = np.full((observed,), np.nan, dtype=np.result_type(scalar.dtype, np.float32))
+    expanded[mask] = scalar
+    return expanded, int(scalar.size), selected
+
+
+def render_image_frame(
+    values: np.ndarray,
+    output: Path,
+    *,
+    profile: dict[str, Any],
+    gt_values: np.ndarray | None,
+    target: str | None = None,
+) -> dict[str, Any]:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError("2D rendering requires matplotlib; install .[evaluation]") from exc
+
+    scalar = np.squeeze(np.asarray(visual_scalar(values)))
+    if scalar.ndim != 2:
+        raise ValueError(f"image2d renderer requires a 2D scalar frame, got {scalar.shape}")
+    gt_scalar = None if gt_values is None else np.squeeze(np.asarray(visual_scalar(gt_values)))
+    clim = resolve_clim(profile, gt_scalar, target=target)
+    size = tuple(int(item) for item in profile.get("window_size", [1024, 1024]))
+    if len(size) != 2 or min(size) <= 0:
+        raise ValueError("image2d window_size must contain two positive integers")
+    dpi = int(profile.get("dpi", 100))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig, axis = plt.subplots(figsize=(size[0] / dpi, size[1] / dpi), dpi=dpi)
+    try:
+        image = axis.imshow(
+            scalar,
+            origin=str(profile.get("origin", "lower")),
+            interpolation=str(profile.get("interpolation", "nearest")),
+            aspect=str(profile.get("aspect", "equal")),
+            cmap=str(profile.get("cmap", "viridis")),
+            vmin=clim[0],
+            vmax=clim[1],
+        )
+        if bool(profile.get("show_scalar_bar", False)):
+            fig.colorbar(image, ax=axis, fraction=0.046, pad=0.04)
+        if not bool(profile.get("show_axes", False)):
+            axis.set_axis_off()
+        fig.tight_layout(pad=0)
+        fig.savefig(output, format="png", dpi=dpi)
+    finally:
+        plt.close(fig)
+    return {
+        "path": str(output.resolve()),
+        "renderer": "image2d",
+        "shape": list(scalar.shape),
+        "cmap": str(profile.get("cmap", "viridis")),
+        "clim": list(clim),
+    }
 
 
 def _read_fort14(path: Path):
@@ -220,7 +408,9 @@ def _load_mesh(profile: dict[str, Any], *, time_index: int):
         return pv.UnstructuredGrid(connectivity, types, points), vertices_path
     path = Path(str(raw).format(time_index=int(time_index), timestep=int(time_index), t=int(time_index))).expanduser().resolve()
     if not path.is_file():
-        raise FileNotFoundError(f"Node mesh does not exist: {path}")
+        source_hint = profile.get("mesh_source_hint")
+        copy_hint = f" Copy it from: {source_hint}" if source_hint else ""
+        raise FileNotFoundError(f"Node mesh does not exist: {path}.{copy_hint}")
     if path.name.lower() == "fort.14":
         return _read_fort14(path), path
     return pv.read(str(path)), path
@@ -235,6 +425,8 @@ def preflight_rendering(
     frame_sizes: dict[int, int] | None,
     prediction_only: bool,
     metrics: tuple[str, ...],
+    frame_coordinates: dict[int, np.ndarray] | None = None,
+    spatial_shape: tuple[int, int, int] | None = None,
 ) -> None:
     """Validate renderer inputs and optional dependencies before model decoding."""
     if "ssim" in metrics:
@@ -247,7 +439,10 @@ def preflight_rendering(
             import lpips  # noqa: F401
         except ImportError as exc:
             raise RuntimeError("LPIPS evaluation requires lpips; install .[evaluation]") from exc
-    if str(dataset_kind).lower() == "volume":
+    renderer = renderer_name(profile, dataset_kind=dataset_kind)
+    if renderer == "volume":
+        if str(dataset_kind).lower() != "volume":
+            raise ValueError("volume renderer requires a volume dataset")
         try:
             from volume_vis import VolumeRenderer, load_preset  # noqa: F401
         except ImportError as exc:
@@ -257,6 +452,25 @@ def preflight_rendering(
         namespace = str(profile.get("preset_namespace", "ionization"))
         for target in targets:
             load_preset(_preset_name(target, profile), namespace=namespace)
+        return
+
+    if renderer == "image2d":
+        if str(dataset_kind).lower() != "volume":
+            raise ValueError("image2d renderer requires a volume dataset")
+        if spatial_shape is None or sum(int(item) > 1 for item in spatial_shape) != 2:
+            raise ValueError(
+                f"image2d renderer requires exactly two non-singleton spatial axes, got {spatial_shape}"
+            )
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError("2D rendering requires matplotlib; install .[evaluation]") from exc
+        for target in targets:
+            if prediction_only:
+                resolve_clim(profile, None, target=target)
         return
 
     association = str(profile.get("association", "point")).lower()
@@ -270,12 +484,18 @@ def preflight_rendering(
         if frame_sizes is None:
             continue
         expected = int(frame_sizes[timestep])
-        observed = int(mesh.n_points if association == "point" else mesh.n_cells)
-        if observed != expected:
-            raise ValueError(
-                f"Node mesh size mismatch at timestep {timestep}: "
-                f"association={association}, mesh={observed}, values={expected}"
+        coordinates = None if frame_coordinates is None else frame_coordinates.get(timestep)
+        dummy = np.zeros((expected, 1), dtype=np.float32)
+        try:
+            _mesh_scalar_values(
+                mesh,
+                dummy,
+                profile=profile,
+                coordinates=coordinates,
+                association=association,
             )
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"Node render preflight failed at timestep {timestep}: {exc}") from exc
 
 
 def render_node_frame(
@@ -285,24 +505,35 @@ def render_node_frame(
     profile: dict[str, Any],
     time_index: int,
     gt_values: np.ndarray | None,
+    coordinates: np.ndarray | None = None,
     target: str | None = None,
 ) -> dict[str, Any]:
     import pyvista as pv
 
     mesh, mesh_path = _load_mesh(profile, time_index=time_index)
     association = str(profile.get("association", "point")).lower()
-    scalar = np.asarray(visual_scalar(values)).reshape(-1)
+    scalar, selected_value_count, mask_value_count = _mesh_scalar_values(
+        mesh,
+        values,
+        profile=profile,
+        coordinates=coordinates,
+        association=association,
+    )
     if association == "point":
-        if int(mesh.n_points) != int(scalar.size):
-            raise ValueError(f"Point mesh size mismatch: mesh={mesh.n_points}, values={scalar.size}")
         mesh.point_data["evaluation_scalar"] = scalar
     elif association == "cell":
-        if int(mesh.n_cells) != int(scalar.size):
-            raise ValueError(f"Cell mesh size mismatch: mesh={mesh.n_cells}, values={scalar.size}")
         mesh.cell_data["evaluation_scalar"] = scalar
     else:
         raise ValueError("node render association must be 'point' or 'cell'")
-    gt_scalar = None if gt_values is None else visual_scalar(gt_values)
+    gt_scalar = None
+    if gt_values is not None:
+        gt_scalar, _, _ = _mesh_scalar_values(
+            mesh,
+            gt_values,
+            profile=profile,
+            coordinates=coordinates,
+            association=association,
+        )
     clim = resolve_clim(profile, gt_scalar, target=target)
     output.parent.mkdir(parents=True, exist_ok=True)
     size = tuple(int(item) for item in profile.get("window_size", [1800, 1400]))
@@ -330,7 +561,15 @@ def render_node_frame(
         plotter.screenshot(filename=str(output), return_img=False)
     finally:
         plotter.close()
-    return {"path": str(output.resolve()), "mesh_path": str(mesh_path), "association": association, "clim": list(clim)}
+    return {
+        "path": str(output.resolve()),
+        "renderer": "mesh",
+        "mesh_path": str(mesh_path),
+        "association": association,
+        "clim": list(clim),
+        "selected_value_count": selected_value_count,
+        "mesh_mask_value_count": mask_value_count,
+    }
 
 
 def profile_fingerprint(profile: dict[str, Any]) -> str:

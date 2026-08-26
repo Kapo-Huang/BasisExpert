@@ -151,7 +151,8 @@ Run-based evaluation writes self-contained reports below
   are excluded from version control.
 - Quality metrics require readable, shape-compatible ground truth. Performance
   metrics can evaluate checkpoint decoding without ground truth.
-- Volume rendering requires VolumeVis. Node rendering requires a supported mesh
-  or explicit vertices and cells; there is no point-cloud fallback.
+- Ionization volume rendering requires VolumeVis. Combustion uses the built-in
+  2D renderer. Node rendering requires a supported mesh; the RedSea surface VTP
+  is a local artifact under `data/Mesh/RedSea/render/`.
 - Generated configuration counts change as the matrix evolves. Consult the
   active `.list` files instead of relying on a number copied into prose.

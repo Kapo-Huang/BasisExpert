@@ -1,0 +1,13 @@
+kind: volume
+renderer: image2d
+cmap: viridis
+clim: [-1.0, 1.0]
+target_clims:
+  Velocity: [0.0, 1.7320508075688772]
+origin: lower
+interpolation: nearest
+aspect: equal
+background: white
+window_size: [1024, 1024]
+show_axes: false
+show_scalar_bar: false

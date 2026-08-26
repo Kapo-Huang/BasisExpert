@@ -6,6 +6,15 @@ from typing import Any
 import numpy as np
 
 
+DATASET_PATH_ALIASES = {"bathymetry": "redsea"}
+DATASET_LOCAL_FOLDERS = {
+    "redsea": "RedSea",
+    "katrina": "Katrina",
+    "ionization": "Ionization",
+    "combustion_40nh3_1": "Combustion",
+}
+
+
 def portable_data_path(
     path: str | Path,
     *,
@@ -16,10 +25,12 @@ def portable_data_path(
     if original.is_file() or repo_root is None:
         return original
     dataset_name = str(dataset_name or "").strip()
+    canonical_name = DATASET_PATH_ALIASES.get(dataset_name.lower(), dataset_name)
+    display_name = DATASET_LOCAL_FOLDERS.get(canonical_name.lower(), canonical_name.capitalize())
     candidates = [
-        repo_root.parent.parent / "Datasets" / dataset_name / original.name,
-        repo_root / "data" / "Volume" / dataset_name.capitalize() / original.name,
-        repo_root / "data" / "Mesh" / dataset_name.capitalize() / original.name,
+        repo_root.parent.parent / "Datasets" / canonical_name / original.name,
+        repo_root / "data" / "Volume" / display_name / original.name,
+        repo_root / "data" / "Mesh" / display_name / original.name,
     ]
     existing = [candidate for candidate in candidates if candidate.is_file()]
     return existing[0] if existing else original
