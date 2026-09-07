@@ -283,6 +283,20 @@ def build_specs(repo: Path) -> list[Spec]:
             config_path.relative_to(repo), group_variant="TopK",
         ))
 
+    specs.append(make_spec(
+        repo, "Sensitivity", "Ours", "Ionization", ("Seed", "Seed42"),
+        main_ion.relative_to(repo), group_variant="Seed",
+    ))
+    for config_path in sorted((sensitivity_root / "var_expert_seed").rglob("ionization.yaml")):
+        match = re.search(r"seed(\d+)", config_path.as_posix())
+        if not match:
+            continue
+        value = f"Seed{int(match.group(1))}"
+        specs.append(make_spec(
+            repo, "Sensitivity", "Ours", "Ionization", ("Seed", value),
+            config_path.relative_to(repo), group_variant="Seed",
+        ))
+
     for count in (1, 2, 4, 8):
         config_path = repo / "configs" / "variable_scaling" / "VarExpert" / f"V{count:02d}" / "combustion_40NH3_1.yaml"
         specs.append(make_spec(
