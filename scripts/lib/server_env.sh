@@ -64,7 +64,20 @@ server_env_init() {
 
     SERVER_ENV="${selected}"
     CONDA_ENV="${CONDA_ENV:-compression}"
-    PYTHON_BIN="${PYTHON_BIN:-python}"
+    if [[ -z "${PYTHON_BIN:-}" ]]; then
+        if [[ "${SERVER_ENV}" == "autodl" ]]; then
+            if command -v python >/dev/null 2>&1; then
+                PYTHON_BIN="python"
+            elif command -v python3 >/dev/null 2>&1; then
+                PYTHON_BIN="python3"
+            else
+                printf '%s\n' 'AutoDL environment has neither python nor python3 on PATH.' >&2
+                return 127
+            fi
+        else
+            PYTHON_BIN="python"
+        fi
+    fi
     if [[ -z "${RUNS_ROOT:-}" ]]; then
         if [[ "${SERVER_ENV}" == "autodl" ]]; then
             RUNS_ROOT="/root/autodl-tmp/runs"

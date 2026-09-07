@@ -1,3 +1,6 @@
+experiment: sensitivity_varexpert_seed_size163_seed45
+exp_id: sensitivity-varexpert-seed-size163-seed45
+experiment_root: ${RUNS_ROOT}/sensitivity/var_expert_seed
 data:
   kind: volume
   dataset_name: ionization
@@ -16,8 +19,8 @@ data:
 model:
   name: var_expert
   in_features: 4
-  num_experts: 3
-  base_dim: 29
+  num_experts: 6
+  base_dim: 24
   top_k: 3
 training:
   epochs: 100
@@ -26,13 +29,13 @@ training:
   num_workers: 0
   lr: 5.0e-05
   val_split: 0.0
-  log_every: 1
-  log_psnr_every: 5
-  psnr_sample_ratio: 0.01
-  save_every: 100
+  log_every: 10
+  log_psnr_every: 100
+  psnr_sample_ratio: 0.1
+  save_every: 0
   early_stop_patience: 0
   loss_type: mse
-  seed: 42
+  seed: 45
   sampler: budgeted_random
   batches_per_epoch_budget: 1500
   scheduler:
@@ -52,7 +55,7 @@ training:
     epochs: 5
     lr: 5.0e-05
     cluster_seed: 42
-    assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_3.npy
+    assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_6.npy
 evaluation:
   batch_size: 16000
   save_predictions: false
@@ -63,13 +66,3 @@ log:
     step_window: false
     step_window_every_steps: 100
     cuda_sync: false
-experiment: sensitivity_varexpert_expert_num_size163_experts3_top3
-exp_id: sensitivity-varexpert-expert-num-size163-experts3_top3
-experiment_root: ${RUNS_ROOT}/sensitivity/var_expert_num
-exploration_probe:
-  enabled: true
-  total_epoch_equivalents: 100
-  every_epoch_equivalents: 5
-  sample_ratio: 0.01
-  max_samples: 100000
-  seed: 42
