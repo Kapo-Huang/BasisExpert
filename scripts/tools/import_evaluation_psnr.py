@@ -59,6 +59,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Evaluation root, in priority order for equal timestep counts. Repeat as needed.",
     )
+    parser.add_argument(
+        "--ignore-unmatched",
+        action="store_true",
+        help=(
+            "Ignore evaluation directories that no longer have a corresponding "
+            "entry in Result/MANIFEST.tsv."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -427,8 +435,13 @@ def main() -> int:
     selected_all = choose_candidates(scan_evaluations(repo, roots), root_priority)
     selected = {relative: item for relative, item in selected_all.items() if relative in row_by_relative}
     unmatched = sorted(set(selected_all).difference(row_by_relative))
-    if unmatched:
+    if unmatched and not args.ignore_unmatched:
         raise ValueError(f"Evaluation results not found in Result manifest: {unmatched[:10]}")
+    if unmatched:
+        print(
+            f"ignored_unmatched={len(unmatched)} "
+            f"examples={unmatched[:10]}"
+        )
 
     fills = 0
     replacements = 0

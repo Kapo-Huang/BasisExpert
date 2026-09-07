@@ -33,7 +33,7 @@
 | **fV-SRN** | 17 + 20 = 37 | 不支持 | 跳过 | 跳过 | 5/5（单；另有 20 RD） | 12/13（标量完整） | 兼容范围内完整 |
 | **APMGSRN** | 17 + 0 = 17 | 不支持 | 跳过 | 跳过 | 5/5（单） | 12/13（标量完整） | 兼容范围内完整 |
 | **InstantVNR** | 17 + 0 = 17 | volume-only | 跳过 | 跳过 | 5/5（单） | 12/13（标量完整） | 当前正式范围内完整 |
-| **MINER** | 17 + 20 = 37 | 不支持 | 跳过 | 跳过 | 5/5（单；另有 20 RD） | 12/13（标量完整） | 兼容范围内完整 |
+| **MINER** | 17 + 0 = 17 | 不支持 | 跳过 | 跳过 | 5/5（单） | 12/13（标量完整） | 兼容范围内完整；不纳入 RD Curve |
 | **ECNR** | 17 + 0 = 17 | 不支持 | 跳过 | 跳过 | 5/5（单） | 12/13（标量完整） | 兼容范围内完整 |
 | **STSR-INR** | 4 + 4 = 8 | 支持 | 4/4（联） | 5/5，7 通道（联） | 5/5（main；另有 4 RD） | 13/13，15 通道（联） | 完整 |
 | **MVNet** | 4 + 0 = 4 | 支持 | 4/4（联，输出 4） | 5/5（联，输出 7） | 5/5（联，输出 5） | 13/13（联，输出 15） | 完整 |
@@ -144,10 +144,9 @@ MINER 每个 active block 的参数量为 `2h² + (d+4)h + 1`，其中 `h` 为�
 | **CoordNet** | 0.791（−3.5%） | 1.542（−5.4%） | 3.343（+2.5%） | 6.414（−1.6%） | 四档基本匹配 |
 | **MoE-INR** | 0.799（−2.6%） | 1.553（−4.7%） | 3.296（+1.1%） | 6.488（−0.5%） | 四档基本匹配 |
 | **fV-SRN** | 0.819（−0.1%） | **60.035（+3583.1%）** | 3.270（+0.3%） | 6.509（−0.2%） | Size163 的 `32³ × 16 × 12` feature grids 明显误配；其他三档匹配 |
-| **MINER** | 0.711–45.267 | **254.841–10,736.561** | 2.520–130.617 | 5.426–257.166 | 精确值动态；Size163 标称值甚至低于静态下界，确定不匹配 |
 | **STSR-INR** | 0.838（+2.2%） | **5.995（+267.8%）** | 3.331（+2.2%） | 6.516（−0.1%） | Size163 明显误配且档位非单调；其他三档匹配 |
 
-SIREN、NeuralExpert、APMGSRN、InstantVNR、ECNR 和 MVNet 当前没有正式 RD 配置，因而不出现在上表。现有 RD 矩阵不能视为全部模型都已 size-matched：至少应重新校准 fV-SRN Size163、STSR-INR Size163 和 MINER Size163；MINER 其他档位也需要以完成训练后的 active-block 参数汇总才能最终验收。
+SIREN、NeuralExpert、APMGSRN、InstantVNR、MINER、ECNR 和 MVNet 不纳入正式 RD Curve，因而不出现在上表。现有 RD 矩阵不能视为全部档位都已 size-matched：仍需重新校准 fV-SRN Size163 和 STSR-INR Size163。
 
 ### 5.4 大小结论
 
@@ -162,7 +161,7 @@ SIREN、NeuralExpert、APMGSRN、InstantVNR、ECNR 和 MVNet 当前没有正式 
 
 正式配置矩阵现在满足以下条件：支持非结构网格的模型覆盖 RedSea 与 Katrina；规则体模型覆盖 Ionization 与 Combustion 的兼容属性；NeuralExpert、STSR-INR、MVNet 正确处理三通道向量；可静态调节的 main 模型已按数据集对齐 VarExpert 参数预算；CoordNet 正式学习率统一为 `1e-5`；fV-SRN、InstantVNR 和 APMGSRN 主优化器采用 VarExpert 策略，其中 APMGSRN 按 iteration 进度映射 epoch scheduler；STSR-INR 四数据集训练预算一致。
 
-除 APMGSRN、MINER、ECNR 的结构性/动态例外外，main 已满足“每个数据集的多变量总参数量与 VarExpert 对齐”，可进入短程稳定性 exploration。当前 RD 矩阵仍不能用于严格的等大小比较：fV-SRN、STSR-INR 和 MINER 的 Size163 需要另行校准。论文表格应显式报告 APMGSRN/MINER 的时间子模型汇总，以及 fV-SRN/ECNR 的最终 compact artifact 大小。
+除 APMGSRN、MINER、ECNR 的结构性/动态例外外，main 已满足“每个数据集的多变量总参数量与 VarExpert 对齐”，可进入短程稳定性 exploration。MINER 不纳入正式 RD Curve；当前 RD 矩阵仍需另行校准 fV-SRN 和 STSR-INR 的 Size163。论文表格应显式报告 APMGSRN/MINER 的时间子模型汇总，以及 fV-SRN/ECNR 的最终 compact artifact 大小。
 
 ## 7. 主要审计依据
 

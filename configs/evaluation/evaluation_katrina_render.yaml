@@ -1,0 +1,22 @@
+# Render every archived Katrina reconstruction and its GroundTruth for all
+# timesteps. An empty metric list makes this render-only; when the complete
+# metric job has already run, the shared namespace lets incremental mode skip.
+manifest_path: Result/MANIFEST.tsv
+manifest_selection:
+  datasets:
+    - Katrina
+result_root: EvalResult
+evaluation_id: katrina_recompute
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics: []
+  timesteps: all
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

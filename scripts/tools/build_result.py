@@ -228,7 +228,6 @@ def build_specs(repo: Path) -> list[Spec]:
         "CoordNet": "CoordNet",
         "MoE-INR": "MoE-INR",
         "fV-SRN": "fV-SRN",
-        "MINER": "MINER",
         "STSR-INR": "STSR-INR",
     }
     rd_datasets = {
@@ -308,6 +307,23 @@ def build_specs(repo: Path) -> list[Spec]:
         repo, "Scaling", "Ours", "Combustion", ("V13",),
         main_combustion.relative_to(repo), group_variant="VariableScaling",
     ))
+    return specs
+
+
+def build_miner_main_substitution_specs(repo: Path) -> list[Spec]:
+    """Return non-output MINER RD sources approved for missing Main entries."""
+    specs: list[Spec] = []
+    root = repo / "configs" / "rd_curve" / "MINER" / "Size041"
+    for config_path in sorted(root.glob("ionization*.yaml")):
+        specs.append(make_spec(
+            repo,
+            "RD Curve",
+            "MINER",
+            "Ionization",
+            (RD_LABEL["Size041"], target_label(config_path)),
+            config_path.relative_to(repo),
+            group_variant=RD_LABEL["Size041"],
+        ))
     return specs
 
 
@@ -914,7 +930,6 @@ def group_rows(selections: list[Selection]) -> list[tuple[Any, ...]]:
 def known_configuration_anomalies() -> list[tuple[str, str, str]]:
     return [
         ("RD Curve / fV-SRN / Ionization / 1.63", "模型大小异常", "正式配置的训练态五变量总量约 60.035 MiB，远高于 1.63 MiB 标称档（约 +3583%）。"),
-        ("RD Curve / MINER / Ionization / 1.63", "结构性大小异常", "静态下界约 254.841 MiB，1.63 MiB 档无法成立；最终大小还依赖 active blocks。"),
         ("RD Curve / STSR-INR / Ionization / 1.63", "参数/大小异常", "正式配置约 5.995 MiB（约 +267.8%），且大于 3.26 MiB 档，破坏 RD 档位单调性。"),
     ]
 
@@ -1190,18 +1205,23 @@ def validate_result(result_root: Path, selections: list[Selection]) -> None:
 
 def build(repo: Path, output: Path, dry_run: bool, manifest_root: Path | None = None) -> int:
     specs = build_specs(repo)
+    miner_main_substitution_specs = build_miner_main_substitution_specs(repo)
     destinations = [spec.destination_parts for spec in specs]
     duplicates = sorted({parts for parts in destinations if destinations.count(parts) > 1})
     if duplicates:
         raise ValueError(f"Duplicate Result destinations: {duplicates[:10]}")
     wanted_ids = {
         exp_id
-        for spec in specs
+        for spec in (*specs, *miner_main_substitution_specs)
         for exp_id in (spec.exp_id, *spec.source_exp_ids)
     }
     index = index_candidates(repo / "runs", wanted_ids)
     selections = select_runs(specs, index)
-    apply_miner_main_rd041_substitutions(selections)
+    miner_main_substitution_sources = select_runs(miner_main_substitution_specs, index)
+    apply_miner_main_rd041_substitutions([
+        *selections,
+        *miner_main_substitution_sources,
+    ])
     apply_size163_main_substitutions(selections)
     copied = sum(item.selected is not None for item in selections)
     print(f"target_items={len(selections)} selectable={copied} missing={len(selections) - copied}")
