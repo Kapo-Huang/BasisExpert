@@ -1,5 +1,6 @@
 list_path: scripts/evaluation/evaluation_exploration.list
-summary_root: EvalResult/batch_logs/evaluation_exploration
+result_root: EvalResult
+evaluation_id: exploration
 continue_on_error: true
 item_timeout_seconds: 3600
 

@@ -353,13 +353,25 @@ def parse_args() -> argparse.Namespace:
     eval_source.add_argument("--checkpoint", default=None, help="Optional explicit checkpoint path")
     eval_source.add_argument("--prediction", default=None, help="Optional prediction file or directory")
     eval_parser.add_argument("--source", choices=("auto", "checkpoint", "prediction"), default=None)
-    eval_parser.add_argument("--metrics", default=None, help="Comma-separated: psnr,ssim,lpips,decode_time,memory")
-    eval_parser.add_argument("--timesteps", default=None, help="all, N, start:end[:step], or comma combinations")
+    eval_parser.add_argument(
+        "--metrics",
+        default=None,
+        help="Comma-separated: psnr,ssim,lpips,error,pearson_error,mi_error,decode_time,memory",
+    )
+    eval_parser.add_argument(
+        "--timesteps",
+        default=None,
+        help="all, uniform:N, N, start:end[:step], or comma combinations",
+    )
     eval_parser.add_argument("--targets", default=None, help="all or comma-separated target names")
     eval_parser.add_argument("--render", action="store_true", help="Render selected prediction frames")
     eval_parser.add_argument("--eval-config", default=None, help="Optional render-profile YAML")
     eval_parser.add_argument("--overwrite", action="store_true", help="Bypass compatible cached evaluations")
     eval_parser.add_argument("--device", default=None, help="Optional evaluation device override")
+    eval_parser.add_argument("--error-vmin", type=float, default=None, help="Fixed error-render minimum in percent")
+    eval_parser.add_argument("--error-vmax", type=float, default=None, help="Fixed error-render maximum in percent")
+    eval_parser.add_argument("--result-root", default="EvalResult", help="Schema-v2 result root")
+    eval_parser.add_argument("--evaluation-id", default="default", help="Evaluation namespace")
     return parser.parse_args()
 
 
@@ -404,6 +416,10 @@ def main() -> None:
             render_profile=args.eval_config,
             overwrite=args.overwrite,
             device=args.device,
+            result_root=args.result_root,
+            evaluation_id=args.evaluation_id,
+            error_vmin=args.error_vmin,
+            error_vmax=args.error_vmax,
         )
         logger.info("Evaluation report saved: %s", result["metrics_path"])
         return

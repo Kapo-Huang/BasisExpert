@@ -1,7 +1,8 @@
-# Evaluate every archived Result run over every timestep. Existing render
-# images are reused when they were generated with the same render profile.
-run_root: Result
-summary_root: EvalResult/batch_logs/evaluation_result_full
+# Evaluate metrics for every archived Result run over every timestep without
+# generating reconstruction images.
+run_root: Result/RD Curve
+result_root: EvalResult
+evaluation_id: result_full
 continue_on_error: true
 item_timeout_seconds: 86400
 

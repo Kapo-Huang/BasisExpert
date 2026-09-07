@@ -52,6 +52,8 @@ training:
   epochs_per_scale: 500
   batch_size: 3200
   passes_per_epoch: 1
+  sampling_mode: budgeted_random
+  scalar_predictions_per_epoch_budget: 24000000
   lr: 0.001
   beta_1: 0.9
   beta_2: 0.999
@@ -102,6 +104,8 @@ cnn:
   - 64
   epochs: 100
   lr: 1.0e-05
+  sampling_mode: budgeted_tiles
+  core_voxel_budget: 600000000
 evaluation:
   batch_size: 3200
   save_predictions: false

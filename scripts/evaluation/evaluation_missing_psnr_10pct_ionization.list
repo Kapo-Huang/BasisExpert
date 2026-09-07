@@ -1,0 +1,3 @@
+# Existing Result entries whose PSNR metric is missing (2 entries).
+Result/Main/ECNR/Ionization/GT
+Result/Main/ECNR/Ionization/H_plus

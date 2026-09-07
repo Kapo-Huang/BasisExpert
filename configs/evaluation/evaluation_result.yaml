@@ -2,7 +2,8 @@
 # checkpoint under checkpoints/. Runs are discovered at launch, so new Result
 # entries are included automatically without editing a static list.
 run_root: Result
-summary_root: EvalResult/batch_logs/evaluation_result
+result_root: EvalResult
+evaluation_id: result_quality
 continue_on_error: true
 item_timeout_seconds: 3600
 

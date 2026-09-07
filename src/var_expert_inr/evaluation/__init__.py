@@ -7,6 +7,7 @@ from .selection import (
     parse_timestep_selection,
 )
 from .adapters import DecodeSession, RunAdapter, SUPPORTED_ADAPTERS
+from .artifacts import ArtifactStore, resolve_artifact_reference
 
 
 def evaluate_run(*args, **kwargs):
@@ -16,13 +17,22 @@ def evaluate_run(*args, **kwargs):
 
     return _evaluate_run(*args, **kwargs)
 
+
+def evaluate_dependency_run(*args, **kwargs):
+    from .dependency_service import evaluate_dependency_run as _evaluate_dependency_run
+
+    return _evaluate_dependency_run(*args, **kwargs)
+
 __all__ = [
     "QualityAccumulator",
     "evaluate_predictions",
     "evaluate_run",
+    "evaluate_dependency_run",
     "DecodeSession",
     "RunAdapter",
     "SUPPORTED_ADAPTERS",
+    "ArtifactStore",
+    "resolve_artifact_reference",
     "metrics_require_ground_truth",
     "metrics_require_rendering",
     "parse_metric_selection",

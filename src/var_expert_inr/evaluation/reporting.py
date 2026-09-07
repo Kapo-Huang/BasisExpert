@@ -13,13 +13,22 @@ import numpy as np
 import torch
 
 
-def evaluation_output_dir(run_dir: Path, *, repo_root: Path) -> Path:
-    """Map a Result run directory to its stable EvalResult counterpart."""
+def evaluation_output_dir(
+    run_dir: Path,
+    *,
+    repo_root: Path,
+    result_root: str | Path = "EvalResult",
+    evaluation_id: str = "default",
+) -> Path:
+    """Map a Result run into the schema-v2 evaluation namespace."""
     resolved_run = run_dir.expanduser().resolve()
-    result_root = (repo_root / "Result").resolve()
-    evaluation_root = repo_root / "EvalResult"
+    run_root = (repo_root / "Result").resolve()
+    evaluation_root = Path(result_root).expanduser()
+    if not evaluation_root.is_absolute():
+        evaluation_root = repo_root / evaluation_root
+    evaluation_root = evaluation_root.resolve() / "evaluations" / _safe_path_component(evaluation_id)
     try:
-        return evaluation_root / resolved_run.relative_to(result_root)
+        return evaluation_root / resolved_run.relative_to(run_root)
     except ValueError:
         # Keep non-Result runs separate while preserving their project-relative
         # hierarchy whenever they are located inside this repository.
@@ -52,6 +61,13 @@ def cache_key(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _safe_path_component(value: str) -> str:
+    text = str(value).strip() or "unknown"
+    for character in '<>:"/\\|?*':
+        text = text.replace(character, "_")
+    return text.rstrip(". ") or "unknown"
+
+
 def find_cached_evaluation(output_dir: Path, key: str) -> dict[str, Any] | None:
     if not output_dir.is_dir():
         return None
@@ -77,21 +93,6 @@ def find_cached_evaluation(output_dir: Path, key: str) -> dict[str, Any] | None:
         "metrics": metrics,
         "cache_hit": True,
     }
-
-
-def render_cache_matches_profile(output_dir: Path, fingerprint: str | None) -> bool:
-    """Return whether existing render files were produced with this profile."""
-    if fingerprint is None:
-        return False
-    manifest_path = output_dir / "manifest.json"
-    if not manifest_path.is_file():
-        return False
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return False
-    stored = (manifest.get("render_profile") or {}).get("fingerprint")
-    return bool(manifest.get("render_requested")) and stored == fingerprint
 
 
 def environment_manifest() -> dict[str, Any]:

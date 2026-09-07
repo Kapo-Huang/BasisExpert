@@ -9,6 +9,8 @@ from typing import Any
 import numpy as np
 import yaml
 
+from .metrics import validate_error_bounds
+
 
 TARGET_PRESET_ALIASES = {"h_plus": "H+", "h+": "H+"}
 DATASET_PROFILE_ALIASES = {"bathymetry": "redsea"}
@@ -26,6 +28,70 @@ def _yellow_biased_viridis():
     samples = np.linspace(0.0, 1.0, 256, dtype=np.float64)
     remapped = 1.0 - np.power(1.0 - samples, 1.18)
     return ListedColormap(cm.get_cmap("viridis", 256)(remapped), name="viridis_yellow_biased")
+
+
+@lru_cache(maxsize=1)
+def _white_to_red_colormap():
+    try:
+        from matplotlib.colors import LinearSegmentedColormap
+    except ImportError:
+        return "Reds"
+    return LinearSegmentedColormap.from_list(
+        "evaluation_error_white_to_red",
+        ("#ffffff", "#ff0000"),
+    )
+
+
+def _resolved_colormap(name: str):
+    normalized = str(name).strip().lower()
+    if normalized in {"error_white_to_red", "white_to_red"}:
+        return _white_to_red_colormap()
+    if normalized in {"yellow_biased_viridis", "viridis_yellow_biased"}:
+        return _yellow_biased_viridis()
+    return name
+
+
+def error_transfer_function() -> dict[str, list[dict[str, Any]]]:
+    """VolumeVis transfer function for a pre-normalized error volume."""
+    return {
+        "colorNodes": [
+            {"r": 255, "g": 255, "b": 255, "cx": 7, "color": "#ffffff"},
+            {"r": 255, "g": 0, "b": 0, "cx": 505, "color": "#ff0000"},
+        ],
+        "opacityNodes": [
+            {"opacity": 0.0, "cx": 7, "cy": 143},
+            {"opacity": 1.0, "cx": 505, "cy": 0},
+        ],
+    }
+
+
+def normalize_error_for_volume(
+    error_values: np.ndarray,
+    *,
+    error_vmin: float,
+    error_vmax: float,
+) -> np.ndarray:
+    lo, hi = validate_error_bounds(error_vmin, error_vmax)
+    clipped = np.clip(np.asarray(error_values), lo, hi)
+    normalized_zero_one = (clipped - lo) / (hi - lo)
+    return np.asarray(normalized_zero_one * 2.0 - 1.0, dtype=np.float32)
+
+
+def _error_render_profile(
+    profile: dict[str, Any],
+    *,
+    error_vmin: float,
+    error_vmax: float,
+) -> dict[str, Any]:
+    lo, hi = validate_error_bounds(error_vmin, error_vmax)
+    return {
+        **profile,
+        "cmap": "error_white_to_red",
+        "clim": [lo, hi],
+        "target_clims": {},
+        "clip_to_clim": True,
+        "values_are_scalar": True,
+    }
 
 
 def load_render_profile(
@@ -150,6 +216,43 @@ class VolumeRenderSession:
             "clipped_ratio": result.clipped_ratio,
         }
 
+    def render_error(
+        self,
+        values: np.ndarray,
+        output: Path,
+        *,
+        target: str,
+        error_vmin: float,
+        error_vmax: float,
+    ) -> dict[str, Any]:
+        from volume_vis import load_preset
+
+        lo, hi = validate_error_bounds(error_vmin, error_vmax)
+        scalar = np.asarray(visual_scalar(values))
+        below_count = int(np.count_nonzero(scalar < lo))
+        above_count = int(np.count_nonzero(scalar > hi))
+        namespace = str(self.profile.get("preset_namespace", "ionization"))
+        preset = load_preset(_preset_name(target, self.profile), namespace=namespace)
+        result = self._renderer.render(
+            normalize_error_for_volume(
+                scalar,
+                error_vmin=lo,
+                error_vmax=hi,
+            ),
+            output,
+            transfer_function=error_transfer_function(),
+            viewport=preset.viewport,
+            layout=str(self.profile.get("layout", "zyx")),
+        )
+        return {
+            "path": str(result.output_path),
+            "renderer": "volume_error",
+            "gpu_mode": result.gpu_mode_used,
+            "error_clim": [lo, hi],
+            "below_error_vmin_count": below_count,
+            "above_error_vmax_count": above_count,
+        }
+
 
 def compare_rendered_images(
     gt_path: Path,
@@ -245,7 +348,8 @@ def _mesh_scalar_values(
     coordinates: np.ndarray | None,
     association: str,
 ) -> tuple[np.ndarray, int, int | None]:
-    scalar = np.asarray(visual_scalar(values)).reshape(-1)
+    scalar_values = values if bool(profile.get("values_are_scalar", False)) else visual_scalar(values)
+    scalar = np.asarray(scalar_values).reshape(-1)
     if coordinates is not None and int(np.asarray(coordinates).shape[0]) != int(scalar.size):
         raise ValueError(
             f"Coordinate/value size mismatch: coordinates={np.asarray(coordinates).shape[0]}, values={scalar.size}"
@@ -302,11 +406,14 @@ def render_image_frame(
     except ImportError as exc:
         raise RuntimeError("2D rendering requires matplotlib; install .[evaluation]") from exc
 
-    scalar = np.squeeze(np.asarray(visual_scalar(values)))
+    scalar_values = values if bool(profile.get("values_are_scalar", False)) else visual_scalar(values)
+    scalar = np.squeeze(np.asarray(scalar_values))
     if scalar.ndim != 2:
         raise ValueError(f"image2d renderer requires a 2D scalar frame, got {scalar.shape}")
     gt_scalar = None if gt_values is None else np.squeeze(np.asarray(visual_scalar(gt_values)))
     clim = resolve_clim(profile, gt_scalar, target=target)
+    if bool(profile.get("clip_to_clim", False)):
+        scalar = np.clip(scalar, clim[0], clim[1])
     size = tuple(int(item) for item in profile.get("window_size", [1024, 1024]))
     if len(size) != 2 or min(size) <= 0:
         raise ValueError("image2d window_size must contain two positive integers")
@@ -319,7 +426,7 @@ def render_image_frame(
             origin=str(profile.get("origin", "lower")),
             interpolation=str(profile.get("interpolation", "nearest")),
             aspect=str(profile.get("aspect", "equal")),
-            cmap=str(profile.get("cmap", "viridis")),
+            cmap=_resolved_colormap(str(profile.get("cmap", "viridis"))),
             vmin=clim[0],
             vmax=clim[1],
         )
@@ -338,6 +445,30 @@ def render_image_frame(
         "cmap": str(profile.get("cmap", "viridis")),
         "clim": list(clim),
     }
+
+
+def render_error_image_frame(
+    values: np.ndarray,
+    output: Path,
+    *,
+    profile: dict[str, Any],
+    error_vmin: float,
+    error_vmax: float,
+) -> dict[str, Any]:
+    info = render_image_frame(
+        values,
+        output,
+        profile=_error_render_profile(
+            profile,
+            error_vmin=error_vmin,
+            error_vmax=error_vmax,
+        ),
+        gt_values=None,
+        target=None,
+    )
+    info["renderer"] = "image2d_error"
+    info["cmap"] = "white_to_red"
+    return info
 
 
 def _read_fort14(path: Path):
@@ -538,11 +669,7 @@ def render_node_frame(
         coordinates=coordinates,
         association=association,
     )
-    if association == "point":
-        mesh.point_data["evaluation_scalar"] = scalar
-    elif association == "cell":
-        mesh.cell_data["evaluation_scalar"] = scalar
-    else:
+    if association not in {"point", "cell"}:
         raise ValueError("node render association must be 'point' or 'cell'")
     gt_scalar = None
     if gt_values is not None:
@@ -554,13 +681,20 @@ def render_node_frame(
             association=association,
         )
     clim = resolve_clim(profile, gt_scalar, target=target)
+    if bool(profile.get("clip_to_clim", False)):
+        scalar = np.clip(scalar, clim[0], clim[1])
+    if association == "point":
+        mesh.point_data["evaluation_scalar"] = scalar
+    else:
+        mesh.cell_data["evaluation_scalar"] = scalar
     output.parent.mkdir(parents=True, exist_ok=True)
     size = tuple(int(item) for item in profile.get("window_size", [1800, 1400]))
     plotter = pv.Plotter(off_screen=True, window_size=size)
     try:
         plotter.set_background(str(profile.get("background", "white")))
-        cmap_name = str(profile.get("cmap", "yellow_biased_viridis")).lower()
-        cmap = _yellow_biased_viridis() if cmap_name in {"yellow_biased_viridis", "viridis_yellow_biased"} else cmap_name
+        cmap = _resolved_colormap(
+            str(profile.get("cmap", "yellow_biased_viridis"))
+        )
         plotter.add_mesh(
             mesh,
             scalars="evaluation_scalar",
@@ -589,6 +723,34 @@ def render_node_frame(
         "selected_value_count": selected_value_count,
         "mesh_mask_value_count": mask_value_count,
     }
+
+
+def render_error_node_frame(
+    values: np.ndarray,
+    output: Path,
+    *,
+    profile: dict[str, Any],
+    time_index: int,
+    coordinates: np.ndarray | None,
+    error_vmin: float,
+    error_vmax: float,
+) -> dict[str, Any]:
+    info = render_node_frame(
+        values,
+        output,
+        profile=_error_render_profile(
+            profile,
+            error_vmin=error_vmin,
+            error_vmax=error_vmax,
+        ),
+        time_index=time_index,
+        gt_values=None,
+        coordinates=coordinates,
+        target=None,
+    )
+    info["renderer"] = "mesh_error"
+    info["cmap"] = "white_to_red"
+    return info
 
 
 def profile_fingerprint(profile: dict[str, Any]) -> str:

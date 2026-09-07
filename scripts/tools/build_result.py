@@ -41,6 +41,13 @@ NATIVE_COMPLETION = (
     re.compile(r"(?i)Training completed(?:\.|,)"),
     re.compile(r"(?i)Saved final state dict to\s+\S+"),
 )
+MAIN_METHOD_ORDER = (
+    "Ours", "CoordNet", "SIREN", "Neural Experts", "MoE-INR", "fV-SRN",
+    "APMGSRN", "InstantVNR", "MINER", "ECNR", "STSR-INR", "MVNet",
+)
+MAIN_DATASET_ORDER = ("Ionization", "Combustion", "Katrina", "RedSea")
+RD_METHOD_ORDER = ("Ours", "CoordNet", "MoE-INR", "fV-SRN", "STSR-INR")
+RD_DATASET_ORDER = ("Ionization", "Combustion")
 PARAM_PATTERNS = (
     re.compile(r"(?i)Model size:\s*params=([\d,]+)"),
     re.compile(r"(?i)Number of parameters in the current model:\s*([\d,]+)"),
@@ -83,6 +90,7 @@ class Spec:
     config_path: Path
     exp_id: str
     group_variant: str = ""
+    source_exp_ids: tuple[str, ...] = ()
 
     @property
     def destination_parts(self) -> tuple[str, ...]:
@@ -169,6 +177,7 @@ def make_spec(
     item_parts: tuple[str, ...],
     config_path: Path,
     group_variant: str = "",
+    source_exp_ids: tuple[str, ...] = (),
 ) -> Spec:
     resolved = repo / config_path
     return Spec(
@@ -179,6 +188,7 @@ def make_spec(
         config_path=resolved,
         exp_id=exp_id_from_config(resolved),
         group_variant=group_variant,
+        source_exp_ids=source_exp_ids,
     )
 
 
@@ -221,15 +231,20 @@ def build_specs(repo: Path) -> list[Spec]:
         "MINER": "MINER",
         "STSR-INR": "STSR-INR",
     }
+    rd_datasets = {
+        "Ionization": "ionization*.yaml",
+        "Combustion": "combustion_40NH3_1*.yaml",
+    }
     for display_method, config_method in rd_methods.items():
         for size_key, rate in RD_LABEL.items():
             root = repo / "configs" / "rd_curve" / config_method / size_key
-            for config_path in sorted(root.glob("ionization*.yaml")):
-                specs.append(make_spec(
-                    repo, "RD Curve", display_method, "Ionization",
-                    (rate, target_label(config_path)), config_path.relative_to(repo),
-                    group_variant=rate,
-                ))
+            for dataset, pattern in rd_datasets.items():
+                for config_path in sorted(root.glob(pattern)):
+                    specs.append(make_spec(
+                        repo, "RD Curve", display_method, dataset,
+                        (rate, target_label(config_path)), config_path.relative_to(repo),
+                        group_variant=rate,
+                    ))
 
     main_ion = repo / "configs" / "main" / "VarExpert" / "ionization.yaml"
     no_embedding = repo / "configs" / "ablation" / "variable_conditioning" / "VarExpertNoEmbedding" / "ionization.yaml"
@@ -247,10 +262,16 @@ def build_specs(repo: Path) -> list[Spec]:
         match = re.search(r"experts(\d+)", config_path.as_posix())
         if not match:
             continue
-        value = f"E{int(match.group(1))}"
+        expert_count = int(match.group(1))
+        value = f"E{expert_count}"
+        source_exp_ids = (
+            (f"var-expert-ionization-e{expert_count}-k3",)
+            if 4 <= expert_count <= 8 else ()
+        )
         specs.append(make_spec(
             repo, "Sensitivity", "Ours", "Ionization", ("ExpertNum", value),
             config_path.relative_to(repo), group_variant="ExpertNum",
+            source_exp_ids=source_exp_ids,
         ))
     for config_path in sorted((sensitivity_root / "var_expert_topk").rglob("ionization.yaml")):
         match = re.search(r"top(\d+)", config_path.as_posix())
@@ -530,7 +551,11 @@ def select_runs(specs: list[Spec], index: dict[str, list[Candidate]]) -> list[Se
     selections: list[Selection] = []
     for spec in specs:
         expected = expected_cache.setdefault(spec.config_path, load_yaml(spec.config_path))
-        candidates = index.get(spec.exp_id, [])
+        candidates = [
+            candidate
+            for exp_id in (spec.exp_id, *spec.source_exp_ids)
+            for candidate in index.get(exp_id, [])
+        ]
         for candidate in candidates:
             candidate.config_mismatches = compare_scientific_config(expected, load_yaml(candidate.config_path))
         eligible = [
@@ -553,6 +578,40 @@ def select_runs(specs: list[Spec], index: dict[str, list[Candidate]]) -> list[Se
     return selections
 
 
+def apply_miner_main_rd041_substitutions(selections: list[Selection]) -> None:
+    """Fill unavailable MINER Ionization Main entries from RD Curve Size041."""
+    rd_sources: dict[str, Selection] = {}
+    for item in selections:
+        spec = item.spec
+        if (
+            spec.category == "RD Curve"
+            and spec.method == "MINER"
+            and spec.dataset == "Ionization"
+            and len(spec.item_parts) == 2
+            and spec.item_parts[0] == RD_LABEL["Size041"]
+            and item.selected is not None
+            and not item.substitution_kind
+        ):
+            rd_sources[spec.item_parts[-1]] = item
+
+    for item in selections:
+        spec = item.spec
+        if not (
+            item.selected is None
+            and spec.category == "Main"
+            and spec.method == "MINER"
+            and spec.dataset == "Ionization"
+        ):
+            continue
+        source = rd_sources.get(spec.item_parts[-1])
+        if source is None or source.selected is None:
+            continue
+        item.selected = source.selected
+        item.missing_reason = ""
+        item.substitution_kind = "RD Curve 0.41 substitution"
+        item.substitution_source = source.spec.label
+
+
 def apply_size163_main_substitutions(selections: list[Selection]) -> None:
     """Fill unavailable 1.63 MiB RD entries from the matching Main result.
 
@@ -562,7 +621,7 @@ def apply_size163_main_substitutions(selections: list[Selection]) -> None:
     """
     main_sources: dict[tuple[str, str, str], Selection] = {}
     for item in selections:
-        if item.spec.category != "Main" or item.selected is None:
+        if item.spec.category != "Main" or item.selected is None or item.substitution_kind:
             continue
         target = item.spec.item_parts[-1]
         main_sources[(item.spec.method, item.spec.dataset, target)] = item
@@ -573,7 +632,6 @@ def apply_size163_main_substitutions(selections: list[Selection]) -> None:
             continue
         if not (
             spec.category == "RD Curve"
-            and spec.dataset == "Ionization"
             and len(spec.item_parts) == 2
             and spec.item_parts[0] == RD_LABEL["Size163"]
         ):
@@ -732,18 +790,24 @@ def write_substitution_note(destination: Path, item: Selection, repo: Path) -> N
     selected = item.selected
     if not item.substitution_kind or selected is None:
         return
+    note_name = (
+        "SUBSTITUTED_FROM_MAIN.md"
+        if item.substitution_kind == "Main substitution"
+        else "SUBSTITUTED_FROM_RD_CURVE.md"
+    )
     note = "\n".join([
-        "# Main substitution for RD Curve Size163",
+        "# Approved experiment substitution",
         "",
-        "This directory is a user-approved substitute, not an actual 1.63 MiB RD training run.",
+        "This directory is a user-approved substitute, not a native run for the destination experiment.",
         "",
-        f"- RD Curve target: `{item.spec.label}`",
-        f"- Main source: `{item.substitution_source}`",
+        f"- Target: `{item.spec.label}`",
+        f"- Source kind: `{item.substitution_kind}`",
+        f"- Source experiment: `{item.substitution_source}`",
         f"- Original run: `{rel(selected.run_dir, repo)}`",
-        "- The directory and final checkpoint filename follow the RD Curve target; copied config, logs, and artifacts originate from Main.",
+        "- The directory and final checkpoint filename follow the target; copied config, logs, and artifacts originate from the source experiment.",
         "",
     ])
-    (destination / "SUBSTITUTED_FROM_MAIN.md").write_text(note, encoding="utf-8")
+    (destination / note_name).write_text(note, encoding="utf-8")
 
 
 def markdown_table(headers: list[str], rows: Iterable[Iterable[Any]]) -> str:
@@ -752,6 +816,67 @@ def markdown_table(headers: list[str], rows: Iterable[Iterable[Any]]) -> str:
         cells = [str(value).replace("|", "\\|").replace("\n", "<br>") for value in row]
         output.append("| " + " | ".join(cells) + " |")
     return "\n".join(output)
+
+
+def aggregate_selection_psnr(items: list[Selection]) -> str:
+    """Return a complete group mean, or a display marker for unavailable data."""
+    if not items:
+        return "—"
+    if any(item.selected is None or item.selected.psnr is None for item in items):
+        return "-"
+    return f"{statistics.fmean(item.selected.psnr for item in items if item.selected is not None):.4f}"
+
+
+def aggregated_psnr_block(selections: list[Selection]) -> list[str]:
+    main_groups: dict[tuple[str, str], list[Selection]] = defaultdict(list)
+    rd_groups: dict[tuple[str, str, str], list[Selection]] = defaultdict(list)
+    for item in selections:
+        if item.spec.category == "Main":
+            main_groups[(item.spec.method, item.spec.dataset)].append(item)
+        elif item.spec.category == "RD Curve":
+            rd_groups[(item.spec.method, item.spec.dataset, item.spec.group_variant)].append(item)
+
+    lines = [
+        "<!-- AGGREGATED_PSNR_START -->",
+        "## Aggregated PSNR",
+        "",
+        "多变量实验仅在全部变量均有 PSNR 时取算术平均；Joint 实验直接使用其 PSNR。`-` 表示结果或 PSNR 不完整，`—` 表示该方法未配置对应实验。",
+        "",
+        "### Main",
+        "",
+        markdown_table(
+            ["模型", *MAIN_DATASET_ORDER],
+            [
+                (
+                    method,
+                    *(aggregate_selection_psnr(main_groups.get((method, dataset), [])) for dataset in MAIN_DATASET_ORDER),
+                )
+                for method in MAIN_METHOD_ORDER
+            ],
+        ),
+        "",
+    ]
+    for dataset in RD_DATASET_ORDER:
+        lines.extend([
+            f"### RD Curve — {dataset}",
+            "",
+            markdown_table(
+                ["模型", *RD_LABEL.values()],
+                [
+                    (
+                        method,
+                        *(
+                            aggregate_selection_psnr(rd_groups.get((method, dataset, rate), []))
+                            for rate in RD_LABEL.values()
+                        ),
+                    )
+                    for method in RD_METHOD_ORDER
+                ],
+            ),
+            "",
+        ])
+    lines.append("<!-- AGGREGATED_PSNR_END -->")
+    return lines
 
 
 def rel(path: Path, repo: Path) -> str:
@@ -784,7 +909,7 @@ def summary_status(item: Selection) -> str:
     if item.selected is None:
         return "Missing"
     if item.substitution_kind:
-        return "Main substitution"
+        return item.substitution_kind
     return "Copied"
 
 
@@ -809,6 +934,10 @@ def write_reports(
         f"- 已复制：{len(copied)}",
         f"- 缺失或不可用：{len(missing)}",
         f"- PSNR 异常阈值：低于 {PSNR_FAILURE_DB:g} dB；NaN/Inf 也视为异常",
+        "",
+        *aggregated_psnr_block(selections),
+        "",
+        "## 逐实验明细",
         "",
     ]
     section_order = ["Main", "RD Curve", "Ablation", "Sensitivity", "Scaling"]
@@ -846,8 +975,8 @@ def write_reports(
             if item.substitution_kind:
                 anomaly_rows.append((
                     item.spec.label,
-                    "Main result substitution",
-                    f"Uses {item.substitution_source}; this is not a trained 1.63 MiB RD point.",
+                    "Approved result substitution",
+                    f"Uses {item.substitution_source}; this is not a native run for the destination experiment.",
                 ))
             if selected.config_mismatches:
                 anomaly_rows.append((
@@ -944,12 +1073,12 @@ def write_reports(
 
     substitutions = [item for item in selections if item.substitution_kind]
     substitution_lines = [
-        "# Approved Main substitutions for RD Curve Size163",
+        "# Approved experiment substitutions",
         "",
-        "These entries use a completed Main result for the identical method, dataset, and target because the corresponding Size163 run is unavailable. They are not actual 1.63 MiB RD training points.",
+        "These entries use a user-approved completed source result when the native destination run is unavailable. They are explicitly marked as substitutions rather than native training results.",
         "",
         markdown_table(
-            ["RD Curve target", "Main source", "PSNR(dB)"],
+            ["Target", "Source", "PSNR(dB)"],
             [
                 (
                     item.spec.label,
@@ -975,7 +1104,7 @@ def write_reports(
 `checkpoints/` 中只保留最终重建 checkpoint；旧格式中的 optimizer、scheduler、epoch 等训练恢复状态已在副本中移除，源 `runs` 不变。
 """
     (result_root / "README.md").write_text(
-        readme + "\n\n`SUBSTITUTIONS.md` documents approved Main-result substitutions used for unavailable RD Curve Size163 entries.",
+        readme + "\n\n`SUBSTITUTIONS.md` documents all approved result substitutions.",
         encoding="utf-8",
     )
 
@@ -1015,7 +1144,9 @@ def write_reports(
                 "result_format": audit.get("result_format", ""),
                 "purified": str(bool(audit.get("purified"))).lower() if selected else "",
                 "missing_reason": item.missing_reason,
-                "source_kind": item.substitution_kind or ("run" if selected else ""),
+                "source_kind": item.substitution_kind or (
+                    "run alias" if selected and selected.exp_id != item.spec.exp_id else ("run" if selected else "")
+                ),
                 "substitution_source": item.substitution_source,
             })
 
@@ -1049,8 +1180,14 @@ def build(repo: Path, output: Path, dry_run: bool, manifest_root: Path | None = 
     duplicates = sorted({parts for parts in destinations if destinations.count(parts) > 1})
     if duplicates:
         raise ValueError(f"Duplicate Result destinations: {duplicates[:10]}")
-    index = index_candidates(repo / "runs", {spec.exp_id for spec in specs})
+    wanted_ids = {
+        exp_id
+        for spec in specs
+        for exp_id in (spec.exp_id, *spec.source_exp_ids)
+    }
+    index = index_candidates(repo / "runs", wanted_ids)
     selections = select_runs(specs, index)
+    apply_miner_main_rd041_substitutions(selections)
     apply_size163_main_substitutions(selections)
     copied = sum(item.selected is not None for item in selections)
     print(f"target_items={len(selections)} selectable={copied} missing={len(selections) - copied}")

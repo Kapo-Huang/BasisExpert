@@ -1,0 +1,19 @@
+# PSNR-only evaluation for the 36 existing Result entries whose PSNR is unavailable.
+# 200 uniformly sampled frames, the rounded 10% subset of 2001 Combustion frames.
+list_path: scripts/evaluation/evaluation_missing_psnr_10pct_combustion.list
+result_root: EvalResult
+evaluation_id: missing_psnr_10pct_combustion
+continue_on_error: true
+item_timeout_seconds: 3600
+
+evaluation:
+  metrics:
+    - psnr
+  timesteps: uniform:200
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

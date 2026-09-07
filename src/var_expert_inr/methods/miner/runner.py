@@ -660,6 +660,13 @@ def run_train(
         completed: list[int] = []
         skipped: list[int] = []
         checkpoint_path = layout["checkpoints"] / f"{cfg['exp_id']}.pth"
+        compact_checkpoint = (
+            int(cfg["model"]["scales"]) == 1
+            and all(
+                int(size) == int(cfg["model"]["block_size"])
+                for size in reader.spatial_shape
+            )
+        )
         with TemporalCheckpointWriter(
             checkpoint_path,
             metadata={
@@ -669,6 +676,7 @@ def run_train(
                 "target": cfg["data"]["target"],
                 "volume_shape": cfg["data"]["volume_shape"],
             },
+            compact=compact_checkpoint,
         ) as checkpoint_writer:
             for time_index in cfg["training"]["time_indices"]:
                 token = f"t{int(time_index):04d}"

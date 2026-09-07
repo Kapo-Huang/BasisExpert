@@ -1,0 +1,48 @@
+# Cross-variable dependency evaluation. This intentionally runs separately
+# from image/render metrics because one result may combine sibling target runs.
+run_roots:
+  - Result/Main
+result_root: EvalResult
+evaluation_id: result_dependency
+continue_on_error: true
+item_timeout_seconds: 86400
+cache_root: EvalResult/artifacts/dependency_gt
+
+settings:
+  sample_ratio: 0.2
+  seed: 42
+  max_bins: 64
+  variance_eps: 1.0e-12
+
+datasets:
+  ionization:
+    config: configs/main/VarExpert/ionization.yaml
+    targets: [GT, H_plus, H2, He, PD]
+  combustion_40NH3_1:
+    config: configs/main/VarExpert/combustion_40NH3_1.yaml
+    targets:
+      - Absolute_Pressure
+      - Chemistry_Heat_Release_Rate
+      - Mole_Fraction_of_CH4
+      - Mole_Fraction_of_CO
+      - Mole_Fraction_of_CO2
+      - Mole_Fraction_of_H2O
+      - Mole_Fraction_of_NH2
+      - Mole_Fraction_of_NH3
+      - Mole_Fraction_of_OH
+      - Pressure
+      - Temperature
+      - Velocity_Magnitude
+  katrina:
+    config: configs/main/VarExpert/katrina.yaml
+    targets: [fort63, fort64, fort73, speed]
+  redsea:
+    config: configs/main/VarExpert/redsea.yaml
+    targets: [SALT, TEMP, U, V]
+
+evaluation:
+  metrics: [pearson_error, mi_error]
+  timesteps: uniform:30
+  source: checkpoint
+  overwrite: false
+  device: null

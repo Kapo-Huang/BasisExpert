@@ -1,0 +1,5 @@
+# Missing STSR-INR RD Curve experiments.
+configs/rd_curve/STSR-INR/Size326/ionization.yaml
+configs/rd_curve/STSR-INR/Size041/combustion_40NH3_1.yaml
+configs/rd_curve/STSR-INR/Size082/combustion_40NH3_1.yaml
+configs/rd_curve/STSR-INR/Size326/combustion_40NH3_1.yaml

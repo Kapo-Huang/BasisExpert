@@ -26,15 +26,15 @@ data:
   target: Temperature
 model:
   name: miner
-  scales: 4
-  block_size: 40
-  hidden_features: 6
+  scales: 1
+  block_size: 128
+  hidden_features: 19
   hidden_layers: 2
-  omega_0: 30.0
+  omega_0: 150.0
   coordinate_type: local
   propagation: coarse_to_fine
-  carry_start_scale: 2
-  coarse_feature_multiplier: 4
+  carry_start_scale: 1
+  coarse_feature_multiplier: 1
 training:
   epochs_per_scale: 500
   lr: 0.0005

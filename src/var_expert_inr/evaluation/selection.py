@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 
 ALL_TOKEN = "all"
+UNIFORM_PREFIX = "uniform:"
 
 
 def parse_name_selection(value: str | Iterable[str] | None) -> tuple[str, ...] | None:
@@ -22,7 +23,7 @@ def parse_name_selection(value: str | Iterable[str] | None) -> tuple[str, ...] |
 
 
 def parse_timestep_selection(value: str | Iterable[int] | None, total: int) -> tuple[int, ...]:
-    """Parse single values and inclusive ``start:end[:step]`` ranges."""
+    """Parse explicit, ranged, all, or uniformly sampled timestep selections."""
     total = int(total)
     if total <= 0:
         raise ValueError(f"total timesteps must be positive, got {total}")
@@ -37,6 +38,25 @@ def parse_timestep_selection(value: str | Iterable[int] | None, total: int) -> t
             raise ValueError("timestep selection must not be empty")
         if any(token.lower() == ALL_TOKEN for token in tokens):
             raise ValueError("'all' cannot be combined with explicit timesteps")
+        uniform_tokens = [token for token in tokens if token.lower().startswith(UNIFORM_PREFIX)]
+        if uniform_tokens:
+            if len(tokens) != 1:
+                raise ValueError("'uniform:N' cannot be combined with explicit timesteps")
+            fields = uniform_tokens[0].split(":")
+            if len(fields) != 2 or not fields[1]:
+                raise ValueError("uniform timestep selection must use 'uniform:N'")
+            try:
+                count = int(fields[1])
+            except ValueError as exc:
+                raise ValueError("uniform timestep count must be an integer") from exc
+            if count < 2:
+                raise ValueError("uniform timestep count must be at least 2")
+            if total <= count:
+                return tuple(range(total))
+            return tuple(
+                round(index * (total - 1) / (count - 1))
+                for index in range(count)
+            )
         for token in tokens:
             fields = token.split(":")
             if len(fields) == 1:
@@ -61,7 +81,16 @@ def parse_timestep_selection(value: str | Iterable[int] | None, total: int) -> t
 
 
 def parse_metric_selection(value: str | Iterable[str] | None) -> tuple[str, ...]:
-    allowed = ("psnr", "ssim", "lpips", "decode_time", "memory")
+    allowed = (
+        "psnr",
+        "ssim",
+        "lpips",
+        "error",
+        "pearson_error",
+        "mi_error",
+        "decode_time",
+        "memory",
+    )
     if value is None:
         return ("psnr",)
     raw = [value] if isinstance(value, str) else list(value)
@@ -77,7 +106,9 @@ def parse_metric_selection(value: str | Iterable[str] | None) -> tuple[str, ...]
 
 
 def metrics_require_ground_truth(metrics: Iterable[str]) -> bool:
-    return bool({"psnr", "ssim", "lpips"}.intersection(metrics))
+    return bool(
+        {"psnr", "ssim", "lpips", "error", "pearson_error", "mi_error"}.intersection(metrics)
+    )
 
 
 def metrics_require_rendering(metrics: Iterable[str]) -> bool:

@@ -1,0 +1,4 @@
+# Missing ECNR Main experiments for Ionization.
+configs/main/ECNR/ionization__H2.yaml
+configs/main/ECNR/ionization__He.yaml
+configs/main/ECNR/ionization__PD.yaml

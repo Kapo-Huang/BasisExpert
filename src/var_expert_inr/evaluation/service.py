@@ -20,7 +20,19 @@ from ..utils.checkpoint import (
     validate_checkpoint_target_layout,
 )
 from .ground_truth import portable_data_path, target_paths_from_config, validate_ground_truth_paths
-from .metrics import QualityAccumulator, mae, mse, psnr, summarize_selected_quality
+from .artifacts import ArtifactStore, LAYOUT_SCHEMA_VERSION
+from .metrics import (
+    ErrorAccumulator,
+    QualityAccumulator,
+    error_frame_statistics,
+    error_percentage,
+    mae,
+    mse,
+    pointwise_absolute_error,
+    psnr,
+    summarize_selected_quality,
+    validate_error_bounds,
+)
 from .performance import DecodeMeasurement, combine_memory_samples, synchronize_cuda
 from .rendering import (
     VolumeRenderSession,
@@ -28,6 +40,8 @@ from .rendering import (
     load_render_profile,
     preflight_rendering,
     profile_fingerprint,
+    render_error_image_frame,
+    render_error_node_frame,
     render_image_frame,
     render_node_frame,
     renderer_name,
@@ -37,8 +51,6 @@ from .reporting import (
     environment_manifest,
     evaluation_output_dir,
     find_cached_evaluation,
-    path_fingerprint,
-    render_cache_matches_profile,
     write_json,
     write_metrics_csv,
 )
@@ -66,6 +78,18 @@ class EvaluationRequest:
     render_profile: Path | str | None = None
     overwrite: bool = False
     device: str | None = None
+    result_root: Path | str = "EvalResult"
+    evaluation_id: str = "default"
+    error_vmin: float = 0.0
+    error_vmax: float = 5.0
+
+    def __post_init__(self) -> None:
+        error_vmin, error_vmax = validate_error_bounds(
+            self.error_vmin,
+            self.error_vmax,
+        )
+        object.__setattr__(self, "error_vmin", error_vmin)
+        object.__setattr__(self, "error_vmax", error_vmax)
 
 
 class _InferenceOnlyDataset(FieldDataset):
@@ -404,6 +428,9 @@ def _reshape_render_frame(dataset, values: np.ndarray) -> np.ndarray:
 
 def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     request = EvaluationRequest(**{**request.__dict__, "run_dir": request.run_dir.resolve()})
+    repo_root = _repo_root()
+    artifacts = ArtifactStore(repo_root=repo_root, result_root=request.result_root)
+    artifacts.initialize()
     metrics = () if request.metrics == () else parse_metric_selection(request.metrics)
     needs_gt = metrics_require_ground_truth(metrics)
     needs_render = bool(request.render or metrics_require_rendering(metrics))
@@ -414,7 +441,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         list(config.data.targets.keys()) if config.data.targets else ["target"]
     )
     targets = _select_targets(available_targets, request.targets)
-    gt_paths = target_paths_from_config(config.data, repo_root=_repo_root())
+    gt_paths = target_paths_from_config(config.data, repo_root=repo_root)
     ground_truth_available = all(name in gt_paths and gt_paths[name].is_file() for name in targets)
     volume_shape = None
     node_count = None
@@ -426,7 +453,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         total_timesteps = int(config.data.volume_shape.T)
     else:
         coords_path = portable_data_path(
-            config.data.coords_path, dataset_name=config.data.dataset_name, repo_root=_repo_root()
+            config.data.coords_path, dataset_name=config.data.dataset_name, repo_root=repo_root
         )
         coords = np.load(coords_path, mmap_mode="r", allow_pickle=False)
         node_count = int(coords.shape[0])
@@ -457,7 +484,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     if needs_render:
         profile = load_render_profile(
             config.data.dataset_name, request.render_profile or config.evaluation.render_profile,
-            repo_root=_repo_root(),
+            repo_root=repo_root,
         )
         if str(profile.get("kind", config.data.kind)).lower() != config.data.kind:
             raise ValueError("Render profile kind does not match dataset kind")
@@ -494,30 +521,37 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         raise FileNotFoundError(f"Evaluation checkpoint does not exist: {source_path}")
     if kind == "prediction" and not source_path.exists():
         raise FileNotFoundError(f"Evaluation prediction source does not exist: {source_path}")
+    ground_truth_fingerprints = {
+        name: artifacts.content_fingerprint(gt_paths[name]) for name in targets
+    } if ground_truth_available and (needs_gt or needs_render) else {}
+    source_fingerprint = artifacts.content_fingerprint(source_path)
     key_payload = {
-        "schema_version": 1,
-        "config": path_fingerprint(config_path),
+        "schema_version": LAYOUT_SCHEMA_VERSION,
+        "config": artifacts.content_fingerprint(config_path),
         "source_kind": kind,
-        "source": path_fingerprint(source_path),
+        "source": source_fingerprint,
         "metrics": list(metrics),
         "timesteps": list(timesteps),
         "targets": list(targets),
         "render": bool(needs_render),
         "render_profile": profile_fingerprint(profile) if profile is not None else None,
-        "ground_truth": {
-            name: path_fingerprint(gt_paths[name]) for name in targets
-        } if ground_truth_available and (needs_gt or needs_render) else None,
+        "ground_truth": ground_truth_fingerprints or None,
+        "error_analysis": {
+            "version": 1,
+            "gt_range": [-1.0, 1.0],
+            "percentage_formula": "abs_error / 2 * 100",
+            "error_vmin": request.error_vmin,
+            "error_vmax": request.error_vmax,
+        } if "error" in metrics else None,
     }
     evaluation_cache_key = cache_key(key_payload)
-    output_dir = evaluation_output_dir(request.run_dir, repo_root=_repo_root())
-    reuse_render_files = bool(
-        needs_render
-        and not request.overwrite
-        and render_cache_matches_profile(
-            output_dir,
-            profile_fingerprint(profile) if profile is not None else None,
-        )
+    output_dir = evaluation_output_dir(
+        request.run_dir,
+        repo_root=repo_root,
+        result_root=request.result_root,
+        evaluation_id=request.evaluation_id,
     )
+    render_fingerprint = profile_fingerprint(profile) if profile is not None else None
     cache_allowed = not {"decode_time", "memory"}.intersection(metrics)
     if cache_allowed and not request.overwrite:
         cached = find_cached_evaluation(output_dir, evaluation_cache_key)
@@ -549,6 +583,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     selected_values = 0
     target_accumulators = {name: QualityAccumulator() for name in targets}
+    error_accumulators = {name: ErrorAccumulator() for name in targets}
     volume_context = VolumeRenderSession(profile) if needs_render and selected_renderer == "volume" else nullcontext()
     with volume_context as volume_renderer:
         for timestep in timesteps:
@@ -587,60 +622,145 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                 if "psnr" in metrics:
                     target_accumulators[target].update(gt, pred_for_metrics)
                     row.update({"mse": mse(gt, pred_for_metrics), "mae": mae(gt, pred_for_metrics), "psnr": psnr(gt, pred_for_metrics)})
+                abs_error = None
+                if "error" in metrics:
+                    abs_error = pointwise_absolute_error(gt, pred_for_metrics)
+                    error_accumulators[target].update(abs_error)
+                    row.update(error_frame_statistics(abs_error))
                 if needs_render:
-                    render_dir = output_dir / "renders" / target
-                    pred_path = render_dir / f"pred_t{timestep:04d}.png"
-                    gt_path = render_dir / f"gt_t{timestep:04d}.png"
                     pred_render = _reshape_render_frame(dataset, pred)
                     gt_render = None if gt is None else _reshape_render_frame(dataset, gt)
-                    pred_info = {"reused": True} if reuse_render_files and pred_path.is_file() else None
-                    gt_info = (
-                        {"reused": True}
-                        if gt_render is not None and reuse_render_files and gt_path.is_file()
-                        else None
+                    frame_coords = (
+                        np.asarray(dataset._coords_np[frame_indexers[timestep]])
+                        if selected_renderer == "mesh" else None
                     )
-                    if pred_info is None or (gt_render is not None and gt_info is None):
-                        if selected_renderer == "volume":
-                            if pred_info is None:
-                                pred_info = volume_renderer.render(pred_render, pred_path, target=target)
-                            if gt_render is not None and gt_info is None:
-                                gt_info = volume_renderer.render(gt_render, gt_path, target=target)
-                        elif selected_renderer == "image2d":
-                            if pred_info is None:
-                                pred_info = render_image_frame(
-                                    pred_render, pred_path, profile=profile, gt_values=gt_render, target=target,
-                                )
-                            if gt_render is not None and gt_info is None:
-                                gt_info = render_image_frame(
-                                    gt_render, gt_path, profile=profile, gt_values=gt_render, target=target,
-                                )
-                        else:
-                            frame_coords = np.asarray(dataset._coords_np[frame_indexers[timestep]])
-                            if pred_info is None:
-                                pred_info = render_node_frame(
-                                    pred_render, pred_path, profile=profile, time_index=timestep,
-                                    gt_values=gt_render, coordinates=frame_coords, target=target,
-                                )
-                            if gt_render is not None and gt_info is None:
-                                gt_info = render_node_frame(
-                                    gt_render, gt_path, profile=profile, time_index=timestep,
-                                    gt_values=gt_render, coordinates=frame_coords, target=target,
-                                )
-                    row["pred_render_path"] = str(pred_path.resolve())
-                    row["render_info"] = pred_info
+                    gt_record = None
                     if gt_render is not None:
-                        row["gt_render_path"] = str(gt_path.resolve())
-                        row["gt_render_info"] = gt_info
+                        gt_spec = artifacts.ground_truth_spec(
+                            dataset=config.data.dataset_name,
+                            target=target,
+                            timestep=timestep,
+                            ground_truth_path=gt_paths[target],
+                            profile=profile,
+                        )
+
+                        def produce_gt(path: Path) -> dict[str, Any]:
+                            if selected_renderer == "volume":
+                                return volume_renderer.render(gt_render, path, target=target)
+                            if selected_renderer == "image2d":
+                                return render_image_frame(
+                                    gt_render, path, profile=profile, gt_values=gt_render, target=target,
+                                )
+                            return render_node_frame(
+                                gt_render, path, profile=profile, time_index=timestep,
+                                gt_values=gt_render, coordinates=frame_coords, target=target,
+                            )
+
+                        gt_record = artifacts.materialize(gt_spec, produce_gt)
+
+                    pred_spec = artifacts.prediction_spec(
+                        dataset=config.data.dataset_name,
+                        model=config.model.name,
+                        target=target,
+                        timestep=timestep,
+                        source_path=source_path,
+                        profile=profile,
+                        ground_truth_fingerprint=ground_truth_fingerprints.get(target),
+                    )
+
+                    def produce_pred(path: Path) -> dict[str, Any]:
+                        if selected_renderer == "volume":
+                            return volume_renderer.render(pred_render, path, target=target)
+                        if selected_renderer == "image2d":
+                            return render_image_frame(
+                                pred_render, path, profile=profile, gt_values=gt_render, target=target,
+                            )
+                        return render_node_frame(
+                            pred_render, path, profile=profile, time_index=timestep,
+                            gt_values=gt_render, coordinates=frame_coords, target=target,
+                        )
+
+                    pred_record = artifacts.materialize(
+                        pred_spec,
+                        produce_pred,
+                        overwrite=request.overwrite,
+                    )
+                    row["pred_render_path"] = artifacts.relative(pred_record.path)
+                    row["render_info"] = artifacts.describe(pred_record)
+                    if gt_record is not None:
+                        row["gt_render_path"] = artifacts.relative(gt_record.path)
+                        row["gt_render_info"] = artifacts.describe(gt_record)
+                    if abs_error is not None:
+                        error_spec = artifacts.error_spec(
+                            dataset=config.data.dataset_name,
+                            model=config.model.name,
+                            target=target,
+                            timestep=timestep,
+                            source_path=source_path,
+                            ground_truth_fingerprint=ground_truth_fingerprints[target],
+                            profile=profile,
+                            error_vmin=request.error_vmin,
+                            error_vmax=request.error_vmax,
+                        )
+
+                        def produce_error(path: Path) -> dict[str, Any]:
+                            error_render = _reshape_render_frame(
+                                dataset,
+                                error_percentage(abs_error),
+                            )
+                            if selected_renderer == "volume":
+                                return volume_renderer.render_error(
+                                    error_render,
+                                    path,
+                                    target=target,
+                                    error_vmin=request.error_vmin,
+                                    error_vmax=request.error_vmax,
+                                )
+                            if selected_renderer == "image2d":
+                                return render_error_image_frame(
+                                    error_render,
+                                    path,
+                                    profile=profile,
+                                    error_vmin=request.error_vmin,
+                                    error_vmax=request.error_vmax,
+                                )
+                            return render_error_node_frame(
+                                error_render,
+                                path,
+                                profile=profile,
+                                time_index=timestep,
+                                coordinates=frame_coords,
+                                error_vmin=request.error_vmin,
+                                error_vmax=request.error_vmax,
+                            )
+
+                        error_record = artifacts.materialize(
+                            error_spec,
+                            produce_error,
+                            overwrite=request.overwrite,
+                        )
+                        row["error_render_path"] = artifacts.relative(error_record.path)
+                        row["error_render_info"] = artifacts.describe(error_record)
                     if metrics_require_rendering(metrics):
-                        row.update(compare_rendered_images(gt_path, pred_path, metrics, device=str(device)))
+                        if gt_record is None:
+                            raise RuntimeError("Rendered image metrics require a ground-truth artifact")
+                        row.update(
+                            compare_rendered_images(
+                                gt_record.path, pred_record.path, metrics, device=str(device)
+                            )
+                        )
                 rows.append(row)
                 partial_targets, partial_aggregate = summarize_selected_quality(
-                    rows, target_accumulators, targets, metrics
+                    rows,
+                    target_accumulators,
+                    targets,
+                    metrics,
+                    error_accumulators,
                 )
                 write_json(
                     output_dir / "metrics.json",
                     {
-                        "schema_version": 1,
+                        "schema_version": LAYOUT_SCHEMA_VERSION,
                         "status": "running",
                         "targets": partial_targets,
                         "aggregate": partial_aggregate,
@@ -656,7 +776,11 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
             del decoded_frame
 
     per_target, aggregate = summarize_selected_quality(
-        rows, target_accumulators, targets, metrics
+        rows,
+        target_accumulators,
+        targets,
+        metrics,
+        error_accumulators,
     )
     performance: dict[str, Any] = {}
     if "decode_time" in metrics:
@@ -672,30 +796,43 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         performance.update(combine_memory_samples(memory_samples))
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": LAYOUT_SCHEMA_VERSION,
+        "evaluation_id": request.evaluation_id,
+        "result_root": ".",
+        "artifact_root": "artifacts",
         "run_dir": str(request.run_dir), "config_path": str(config_path),
         "model": config.model.name, "dataset_kind": config.data.kind,
         "dataset_name": config.data.dataset_name,
         "ground_truth_available": bool(ground_truth_available),
         "ground_truth_required": bool(needs_gt),
-        "ground_truth": {
-            name: path_fingerprint(gt_paths[name])
-            for name in targets if name in gt_paths and gt_paths[name].is_file()
-        },
+        "ground_truth": ground_truth_fingerprints,
         "metrics": list(metrics), "timesteps": list(timesteps), "targets": list(targets),
         "source_kind": kind, "source_path": str(source_path), "device": str(device),
-        "source_fingerprint": path_fingerprint(source_path),
+        "source_fingerprint": source_fingerprint,
         "render_requested": bool(needs_render),
         "render_profile": None if profile is None else {
             "path": profile.get("_path"),
             "fingerprint": profile_fingerprint(profile),
             "renderer": selected_renderer,
         },
+        "error_analysis": {
+            "enabled": True,
+            "version": 1,
+            "space": "normalized",
+            "vector_reduction": "pointwise_l2",
+            "gt_range": [-1.0, 1.0],
+            "percentage_formula": "abs_error / 2 * 100",
+            "percentage_unit": "%",
+            "error_vmin": request.error_vmin,
+            "error_vmax": request.error_vmax,
+            "pointwise_fields_saved": False,
+            "pooled_percentiles": False,
+        } if "error" in metrics else {"enabled": False},
         "environment": environment_manifest(),
         "cache_key": evaluation_cache_key,
     }
     payload = {
-        "schema_version": 1, "status": "complete", "targets": per_target, "aggregate": aggregate,
+        "schema_version": LAYOUT_SCHEMA_VERSION, "status": "complete", "targets": per_target, "aggregate": aggregate,
         "performance": performance, "per_timestep": rows,
     }
     manifest_path = write_json(output_dir / "manifest.json", manifest)
@@ -739,6 +876,10 @@ def evaluate_run(
     render_profile: str | Path | None = None,
     overwrite: bool = False,
     device: str | None = None,
+    result_root: str | Path = "EvalResult",
+    evaluation_id: str = "default",
+    error_vmin: float | None = None,
+    error_vmax: float | None = None,
 ) -> dict[str, Any]:
     resolved_run = Path(run_dir).expanduser().resolve()
     config_path = resolve_run_config(resolved_run)
@@ -754,15 +895,57 @@ def evaluate_run(
     selected_targets = targets if targets is not None else configured_evaluation.get("targets", "all")
     selected_source = source if source is not None else configured_evaluation.get("source", "auto")
     selected_profile = render_profile if render_profile is not None else configured_evaluation.get("render_profile")
+    selected_error_vmin = (
+        error_vmin
+        if error_vmin is not None
+        else configured_evaluation.get("error_vmin", 0.0)
+    )
+    selected_error_vmax = (
+        error_vmax
+        if error_vmax is not None
+        else configured_evaluation.get("error_vmax", 5.0)
+    )
+    parsed_metrics = () if selected_metrics == () else parse_metric_selection(selected_metrics)
+    dependency_metrics = tuple(
+        metric for metric in parsed_metrics if metric in {"pearson_error", "mi_error"}
+    )
+    if dependency_metrics:
+        ordinary_metrics = tuple(metric for metric in parsed_metrics if metric not in dependency_metrics)
+        if ordinary_metrics:
+            raise ValueError(
+                "pearson_error/mi_error are group-level metrics and cannot be mixed with "
+                f"per-target metrics in one evaluate call: {ordinary_metrics}"
+            )
+        if render:
+            raise ValueError("Dependency-only evaluation does not render images")
+        if checkpoint is not None or prediction is not None:
+            raise ValueError(
+                "Explicit checkpoint/prediction paths are ambiguous for dependency groups; "
+                "select sources through the run group"
+            )
+        from .dependency_service import evaluate_dependency_run
+
+        return evaluate_dependency_run(
+            resolved_run,
+            metrics=dependency_metrics,
+            timesteps=str(selected_timesteps or "all"),
+            source=str(selected_source or "auto"),
+            overwrite=bool(overwrite),
+            device=device,
+            result_root=result_root,
+            evaluation_id=evaluation_id,
+        )
     request = EvaluationRequest(
         run_dir=resolved_run,
-        metrics=() if selected_metrics == () else parse_metric_selection(selected_metrics),
+        metrics=parsed_metrics,
         timesteps=str(selected_timesteps or "all"),
         targets=parse_name_selection(selected_targets),
         source=str(selected_source or "auto"),
         checkpoint=None if checkpoint is None else Path(checkpoint),
         prediction=None if prediction is None else Path(prediction),
         render=bool(render), render_profile=selected_profile, overwrite=bool(overwrite), device=device,
+        result_root=result_root, evaluation_id=evaluation_id,
+        error_vmin=float(selected_error_vmin), error_vmax=float(selected_error_vmax),
     )
     from .adapters import select_run_adapter
 

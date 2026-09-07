@@ -1,0 +1,28 @@
+# Dynamically evaluate only archived Result entries whose PSNR is still blank in
+# Result/MANIFEST.tsv. Existing complete PSNR evaluations are reused across
+# evaluation namespaces when checkpoint, targets, and timestep coverage match.
+manifest_path: Result/MANIFEST.tsv
+manifest_selection:
+  missing_fields:
+    - psnr_db
+result_root: EvalResult
+evaluation_id: result_psnr
+continue_on_error: true
+item_timeout_seconds: 3600
+
+evaluation:
+  metrics:
+    - psnr
+  timesteps: uniform:10
+  timesteps_by_dataset:
+    Ionization: uniform:10
+    combustion_40NH3_1: uniform:200
+    Katrina: uniform:16
+    RedSea: uniform:10
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

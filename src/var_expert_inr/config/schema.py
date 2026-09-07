@@ -159,8 +159,11 @@ class EvaluationConfig:
     targets: tuple[str, ...] | str = "all"
     render_profile: str = "auto"
     source: str = "auto"
+    error_vmin: float = 0.0
+    error_vmax: float = 5.0
 
     def __post_init__(self) -> None:
+        from ..evaluation.metrics import validate_error_bounds
         from ..evaluation.selection import parse_metric_selection
 
         object.__setattr__(self, "metrics", parse_metric_selection(self.metrics))
@@ -174,6 +177,12 @@ class EvaluationConfig:
         object.__setattr__(self, "source", normalized_source)
         if int(self.batch_size) <= 0:
             raise ValueError("evaluation.batch_size must be positive")
+        error_vmin, error_vmax = validate_error_bounds(
+            self.error_vmin,
+            self.error_vmax,
+        )
+        object.__setattr__(self, "error_vmin", error_vmin)
+        object.__setattr__(self, "error_vmax", error_vmax)
 
 
 @dataclass(frozen=True)

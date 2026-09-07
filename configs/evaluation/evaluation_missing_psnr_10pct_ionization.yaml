@@ -1,0 +1,19 @@
+# PSNR-only evaluation for the 2 existing Result entries whose PSNR is unavailable.
+# 10 uniformly sampled frames from the 100-frame Ionization volume.
+list_path: scripts/evaluation/evaluation_missing_psnr_10pct_ionization.list
+result_root: EvalResult
+evaluation_id: missing_psnr_10pct_ionization
+continue_on_error: true
+item_timeout_seconds: 3600
+
+evaluation:
+  metrics:
+    - psnr
+  timesteps: uniform:10
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

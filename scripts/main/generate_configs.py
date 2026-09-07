@@ -221,6 +221,15 @@ MINER_SIZE_HIDDEN_FEATURES = {
     "Size326": 6,
     "Size652": 9,
 }
+MINER_COMBUSTION_RD_PROFILES = {
+    # One 128x128 block is trained for each of the 2001 frames.  With a
+    # coarse multiplier of one, these widths give approximately
+    # 0.416/0.828/1.592/3.195 MiB of FP16 parameters per scalar target.
+    "Size041": {"hidden_features": 6},
+    "Size082": {"hidden_features": 9},
+    "Size163": {"hidden_features": 13},
+    "Size326": {"hidden_features": 19},
+}
 NEURAL_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 48}
 MC_SIZE_DIMS = {"Size082": 30, "Size163": 43, "Size326": 62, "Size652": 88}
 APMG_MAIN_MODEL = {
@@ -1440,6 +1449,8 @@ def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
         "training": {
             "epochs_per_scale": 500, "batch_size": 3200,
             "passes_per_epoch": 1,
+            "sampling_mode": "budgeted_random",
+            "scalar_predictions_per_epoch_budget": 24_000_000,
             "lr": 1.0e-3, "beta_1": 0.9, "beta_2": 0.999,
             "weight_decay": 2.0e-5,
             "pruning_epochs": [150, 225, 300, 375],
@@ -1462,6 +1473,7 @@ def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
             "bias": True, "hidden_activation": "relu",
             "output_activation": "none", "halo": 5,
             "tile_core_shape_zyx": [32, 64, 64], "epochs": 100, "lr": 1.0e-5,
+            "sampling_mode": "budgeted_tiles", "core_voxel_budget": 600_000_000,
         },
         "evaluation": {
             "batch_size": 3200, "save_predictions": False,
@@ -1536,7 +1548,14 @@ def miner_payload(target: str, dataset: str = "ionization") -> dict:
 def generate_miner() -> int:
     count = 0
     for target in DATASETS["ionization"]["targets"]:
-        dump(MAIN_CONFIGS / "MINER" / f"ionization__{target}.yaml", miner_payload(target))
+        payload = miner_payload(target)
+        payload["model"].update(
+            {
+                "block_size": 40,
+                "hidden_features": MINER_SIZE_HIDDEN_FEATURES["Size041"],
+            }
+        )
+        dump(MAIN_CONFIGS / "MINER" / f"ionization__{target}.yaml", payload)
         count += 1
     for target in COMBUSTION_SCALAR_TARGETS:
         dump(
@@ -1572,18 +1591,17 @@ def generate_miner() -> int:
             payload["exp_id"] = (
                 f"miner-{COMBUSTION_DATASET['name']}-{size.lower()}-{target}"
             )
-            sized_model = miner_payload(target)["model"]
-            if size != "Size163":
-                sized_model.update(
-                    {
-                        "scales": 4,
-                        "block_size": 40,
-                        "hidden_features": hidden_features,
-                        "hidden_layers": 2,
-                        "carry_start_scale": 2,
-                        "coarse_feature_multiplier": 4,
-                    }
-                )
+            sized_model = miner_payload(target, COMBUSTION_DATASET["name"])["model"]
+            sized_model.update(
+                {
+                    "scales": 1,
+                    "block_size": 128,
+                    "hidden_features": MINER_COMBUSTION_RD_PROFILES[size]["hidden_features"],
+                    "hidden_layers": 2,
+                    "carry_start_scale": 1,
+                    "coarse_feature_multiplier": 1,
+                }
+            )
             payload["model"] = sized_model
             dump(
                 RD_CURVE_CONFIGS / "MINER" / size

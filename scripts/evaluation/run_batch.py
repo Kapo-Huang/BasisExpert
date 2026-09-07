@@ -1,3 +1,5 @@
+"""Schema-v2 batch evaluation entry point."""
+
 from __future__ import annotations
 
 import argparse
@@ -25,13 +27,17 @@ from var_expert_inr.evaluation.rendering import (
     profile_fingerprint,
     renderer_name,
 )
+from var_expert_inr.evaluation.metrics import validate_error_bounds
+from var_expert_inr.evaluation.dependency_cache import load_dependency_configuration
+from var_expert_inr.evaluation.dependency_service import canonical_dependency_run_dirs
 from var_expert_inr.evaluation.reporting import (
     evaluation_output_dir,
-    path_fingerprint,
     write_json,
     write_metrics_csv,
 )
+from var_expert_inr.evaluation.artifacts import ArtifactStore, LAYOUT_SCHEMA_VERSION, resolve_artifact_reference
 from var_expert_inr.evaluation.service import evaluate_run, resolve_run_config
+from var_expert_inr.evaluation.selection import parse_timestep_selection
 
 
 LOGGER = logging.getLogger("evaluation_exploration")
@@ -49,6 +55,7 @@ SUMMARY_FIELDS = (
     "worker_log",
     "return_code",
     "elapsed_seconds",
+    "reuse_reason",
     "error_type",
     "error",
 )
@@ -74,6 +81,50 @@ def _read_run_list(path: Path) -> list[Path]:
             continue
         runs.append(_resolve_repo_path(line))
     return runs
+
+
+def _read_manifest_runs(
+    path: Path,
+    *,
+    datasets: tuple[str, ...] = (),
+    missing_fields: tuple[str, ...] = (),
+) -> list[Path]:
+    """Select evaluable Result entries from the archive manifest."""
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields = set(reader.fieldnames or ())
+        required = {"dataset", "status", "result_path", *missing_fields}
+        absent = sorted(required - fields)
+        if absent:
+            raise ValueError(
+                f"Result manifest is missing required columns {absent}: {path}"
+            )
+        selected_datasets = {name.strip().lower() for name in datasets if name.strip()}
+        runs: set[Path] = set()
+        for row in reader:
+            if str(row.get("status", "")).strip().lower() == "missing":
+                continue
+            dataset = str(row.get("dataset", "")).strip().lower()
+            if selected_datasets and dataset not in selected_datasets:
+                continue
+            if missing_fields and all(
+                str(row.get(field, "")).strip() for field in missing_fields
+            ):
+                continue
+            run_dir = _resolve_repo_path(str(row.get("result_path", "")).strip())
+            try:
+                resolve_run_config(run_dir)
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    f"Selected Result entry has no evaluation config: {run_dir}"
+                ) from exc
+            checkpoint_dir = run_dir / "checkpoints"
+            if not any(checkpoint_dir.glob("*.pth")):
+                raise FileNotFoundError(
+                    f"Selected Result entry has no checkpoint: {run_dir}"
+                )
+            runs.add(run_dir.resolve())
+    return sorted(runs)
 
 
 def _discover_checkpoint_runs(root: Path) -> list[Path]:
@@ -121,6 +172,17 @@ def _normalized_target_map(value: Any) -> dict[str, str]:
     }
 
 
+def _normalized_timestep_map(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("evaluation.timesteps_by_dataset must be a mapping when provided")
+    return {
+        str(dataset).strip().lower(): str(selection).strip()
+        for dataset, selection in value.items()
+    }
+
+
 def _configure_logging(log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -136,7 +198,7 @@ def _write_summary(output_dir: Path, records: list[dict[str, Any]], config_path:
     skipped = sum(row["status"] == "skipped" for row in records)
     completed = succeeded + skipped
     summary = {
-        "schema_version": 1,
+        "schema_version": LAYOUT_SCHEMA_VERSION,
         "config_path": str(config_path),
         "status": "complete" if completed == len(records) else "failed",
         "total": len(records),
@@ -161,14 +223,63 @@ def _write_summary(output_dir: Path, records: list[dict[str, Any]], config_path:
         writer.writerows(records)
 
 
-def _explicit_timesteps(value: str) -> tuple[int, ...] | None:
+def _explicit_timesteps(
+    value: str,
+    *,
+    stored_timesteps: tuple[int, ...] = (),
+) -> tuple[int, ...] | None:
     tokens = [token.strip() for token in value.split(",") if token.strip()]
-    if not tokens or any(":" in token or token.lower() == "all" for token in tokens):
+    if not tokens or any(token.lower() == "all" for token in tokens):
+        return None
+    if len(tokens) == 1 and tokens[0].lower().startswith("uniform:"):
+        if not stored_timesteps:
+            return None
+        try:
+            return parse_timestep_selection(value, stored_timesteps[-1] + 1)
+        except (IndexError, ValueError):
+            return None
+    if any(":" in token for token in tokens):
         return None
     try:
         return tuple(int(token) for token in tokens)
     except ValueError:
         return None
+
+
+def _is_uniform_timestep_request(value: str) -> bool:
+    tokens = [token.strip() for token in value.split(",") if token.strip()]
+    return len(tokens) == 1 and tokens[0].lower().startswith("uniform:")
+
+
+def _matching_stored_timesteps(
+    value: str,
+    *,
+    stored_timesteps: tuple[int, ...],
+) -> tuple[tuple[int, ...], str] | None:
+    """Return the completed coverage and its reuse reason, if reusable.
+
+    Explicit selections require exact equality.  A uniform request can reuse a
+    denser completed uniform evaluation because the archived metrics cover at
+    least as many uniformly selected frames as the current request.
+    """
+    requested_timesteps = _explicit_timesteps(
+        value,
+        stored_timesteps=stored_timesteps,
+    )
+    if requested_timesteps is None:
+        return None
+    if _is_uniform_timestep_request(value):
+        if len(stored_timesteps) < len(requested_timesteps):
+            return None
+        reason = (
+            "exact-timestep-match"
+            if stored_timesteps == requested_timesteps
+            else "uniform-coverage"
+        )
+        return stored_timesteps, reason
+    if stored_timesteps != requested_timesteps:
+        return None
+    return requested_timesteps, "exact-timestep-match"
 
 
 def _requested_target_names(raw: dict[str, Any], target: str) -> tuple[str, ...]:
@@ -181,7 +292,31 @@ def _requested_target_names(raw: dict[str, Any], target: str) -> tuple[str, ...]
     return tuple(str(name) for name in configured) if isinstance(configured, dict) else ()
 
 
-def _existing_evaluation_state(
+def _source_fingerprint_matches(
+    stored: Any,
+    source_path: Path,
+    artifact_store: ArtifactStore,
+) -> bool:
+    if stored is None:
+        return True
+    current = artifact_store.content_fingerprint(source_path)
+    if stored == current:
+        return True
+    if not isinstance(stored, dict) or "path" not in stored:
+        return False
+    try:
+        legacy_path = Path(str(stored["path"])).expanduser().resolve()
+        stat = source_path.stat()
+        return (
+            legacy_path == source_path
+            and int(stored["size"]) == int(stat.st_size)
+            and int(stored["mtime_ns"]) == int(stat.st_mtime_ns)
+        )
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def _existing_evaluation_state_at(
     run_dir: Path,
     *,
     raw: dict[str, Any],
@@ -190,8 +325,11 @@ def _existing_evaluation_state(
     requested_metrics: tuple[str, ...],
     render: bool,
     current_profile_fingerprint: str | None,
+    result_root: Path,
+    output_dir: Path,
+    error_vmin: float,
+    error_vmax: float,
 ) -> dict[str, Any] | None:
-    output_dir = evaluation_output_dir(run_dir, repo_root=REPO_ROOT)
     manifest_path = output_dir / "manifest.json"
     metrics_path = output_dir / "metrics.json"
     csv_path = output_dir / "metrics.csv"
@@ -214,19 +352,29 @@ def _existing_evaluation_state(
     if not source_path.is_file():
         return None
     stored_source_fingerprint = manifest.get("source_fingerprint")
-    if stored_source_fingerprint is not None and stored_source_fingerprint != path_fingerprint(source_path):
+    artifact_store = ArtifactStore(repo_root=REPO_ROOT, result_root=result_root)
+    if not _source_fingerprint_matches(
+        stored_source_fingerprint,
+        source_path,
+        artifact_store,
+    ):
         return None
 
-    selected_timesteps = _explicit_timesteps(timesteps)
-    if selected_timesteps is None or tuple(manifest.get("timesteps") or ()) != selected_timesteps:
+    stored_timesteps = tuple(int(item) for item in (manifest.get("timesteps") or ()))
+    timestep_match = _matching_stored_timesteps(
+        timesteps,
+        stored_timesteps=stored_timesteps,
+    )
+    if timestep_match is None:
         return None
+    covered_timesteps, reuse_reason = timestep_match
     requested_targets = _requested_target_names(raw, target)
     stored_targets = tuple(str(name) for name in (manifest.get("targets") or ()))
     if requested_targets and set(stored_targets) != set(requested_targets):
         return None
 
     rows = list(payload.get("per_timestep") or ())
-    expected = {(name, step) for name in stored_targets for step in selected_timesteps}
+    expected = {(name, step) for name in stored_targets for step in covered_timesteps}
     rows_by_key = {
         (str(row.get("target")), int(row.get("timestep"))): row
         for row in rows
@@ -239,6 +387,23 @@ def _existing_evaluation_state(
                 completed_metrics.add(metric)
             elif metric == "memory" and payload.get("performance", {}).get("peak_memory_bytes") is not None:
                 completed_metrics.add(metric)
+        elif metric == "error" and expected and all(
+            all(
+                rows_by_key.get(key, {}).get(field) is not None
+                for field in (
+                    "mean_absolute_error",
+                    "max_absolute_error",
+                    "p95_absolute_error",
+                    "p99_absolute_error",
+                    "mean_error_percentage",
+                    "max_error_percentage",
+                    "p95_error_percentage",
+                    "p99_error_percentage",
+                )
+            )
+            for key in expected
+        ):
+            completed_metrics.add(metric)
         elif expected and all(rows_by_key.get(key, {}).get(metric) is not None for key in expected):
             completed_metrics.add(metric)
 
@@ -246,17 +411,100 @@ def _existing_evaluation_state(
     if render and expected and bool(manifest.get("render_requested")):
         stored_profile = (manifest.get("render_profile") or {}).get("fingerprint")
         render_complete = stored_profile == current_profile_fingerprint and all(
-            Path(str(rows_by_key.get(key, {}).get("pred_render_path", ""))).is_file()
-            and Path(str(rows_by_key.get(key, {}).get("gt_render_path", ""))).is_file()
+            resolve_artifact_reference(result_root, str(rows_by_key.get(key, {}).get("pred_render_path", ""))).is_file()
+            and resolve_artifact_reference(result_root, str(rows_by_key.get(key, {}).get("gt_render_path", ""))).is_file()
             for key in expected
         )
+        if render_complete and "error" in requested_metrics:
+            stored_error = manifest.get("error_analysis") or {}
+            try:
+                render_complete = (
+                    bool(stored_error.get("enabled"))
+                    and float(stored_error.get("error_vmin")) == error_vmin
+                    and float(stored_error.get("error_vmax")) == error_vmax
+                    and stored_error.get("gt_range") == [-1.0, 1.0]
+                    and all(
+                        resolve_artifact_reference(result_root, str(rows_by_key.get(key, {}).get("error_render_path", ""))).is_file()
+                        for key in expected
+                    )
+                )
+            except (TypeError, ValueError):
+                render_complete = False
     return {
         "output_dir": output_dir,
         "manifest": manifest,
         "metrics": payload,
         "completed_metrics": completed_metrics,
         "render_complete": render_complete,
+        "reuse_reason": reuse_reason,
     }
+
+
+def _existing_evaluation_state(
+    run_dir: Path,
+    *,
+    raw: dict[str, Any],
+    target: str,
+    timesteps: str,
+    requested_metrics: tuple[str, ...],
+    render: bool,
+    current_profile_fingerprint: str | None,
+    result_root: Path,
+    evaluation_id: str,
+    error_vmin: float,
+    error_vmax: float,
+) -> dict[str, Any] | None:
+    current_output = evaluation_output_dir(
+        run_dir,
+        repo_root=REPO_ROOT,
+        result_root=result_root,
+        evaluation_id=evaluation_id,
+    )
+    candidates = [current_output]
+    evaluation_root = result_root / "evaluations"
+    if evaluation_root.is_dir():
+        for namespace in sorted(path for path in evaluation_root.iterdir() if path.is_dir()):
+            candidate = evaluation_output_dir(
+                run_dir,
+                repo_root=REPO_ROOT,
+                result_root=result_root,
+                evaluation_id=namespace.name,
+            )
+            if candidate != current_output and candidate.is_dir():
+                candidates.append(candidate)
+
+    current_state: dict[str, Any] | None = None
+    for candidate in candidates:
+        state = _existing_evaluation_state_at(
+            run_dir,
+            raw=raw,
+            target=target,
+            timesteps=timesteps,
+            requested_metrics=requested_metrics,
+            render=render,
+            current_profile_fingerprint=current_profile_fingerprint,
+            result_root=result_root,
+            output_dir=candidate,
+            error_vmin=error_vmin,
+            error_vmax=error_vmax,
+        )
+        if state is None:
+            continue
+        is_current = candidate == current_output
+        if is_current:
+            current_state = state
+        metrics_complete = set(requested_metrics).issubset(state["completed_metrics"])
+        render_complete = not render or bool(state["render_complete"])
+        if metrics_complete and render_complete:
+            if not is_current:
+                state["reuse_reason"] = (
+                    "cross-namespace-" + str(state["reuse_reason"])
+                )
+            return state
+    # Partial results are merged only inside the requested namespace. This
+    # prevents a worker from overwriting a legacy namespace while still letting
+    # complete legacy metrics satisfy a new request.
+    return current_state
 
 
 def _merge_incremental_result(
@@ -290,7 +538,7 @@ def _merge_incremental_result(
     merged_performance = dict(previous_payload.get("performance") or {})
     merged_performance.update(current_payload.get("performance") or {})
     merged_payload = {
-        "schema_version": 1,
+        "schema_version": LAYOUT_SCHEMA_VERSION,
         "status": "complete",
         "targets": merged_targets,
         "aggregate": merged_aggregate,
@@ -394,6 +642,10 @@ def _worker_main(request_path: Path, result_path: Path) -> int:
             render_profile=request.get("render_profile"),
             overwrite=bool(request["overwrite"]),
             device=request.get("device"),
+            result_root=request.get("result_root", "EvalResult"),
+            evaluation_id=request.get("evaluation_id", "default"),
+            error_vmin=request.get("error_vmin"),
+            error_vmax=request.get("error_vmax"),
         )
         response = {
             "status": "success",
@@ -430,16 +682,42 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
         raise ValueError(f"Missing evaluation mapping in {resolved_config}")
 
     list_path_value = batch.get("list_path")
+    manifest_path_value = batch.get("manifest_path")
     run_root_value = batch.get("run_root")
-    if list_path_value is not None and run_root_value is not None:
-        raise ValueError("Specify either list_path or run_root, not both")
-    if list_path_value is None and run_root_value is None:
-        raise ValueError("Missing list_path or run_root")
-    list_path = None if list_path_value is None else _resolve_repo_path(list_path_value)
-    run_root = None if run_root_value is None else _resolve_repo_path(run_root_value)
-    summary_root = _resolve_repo_path(
-        batch.get("summary_root", "batch_logs/evaluation_exploration")
+    run_roots_value = batch.get("run_roots")
+    configured_sources = sum(
+        value is not None
+        for value in (
+            list_path_value,
+            manifest_path_value,
+            run_root_value,
+            run_roots_value,
+        )
     )
+    if configured_sources > 1:
+        raise ValueError(
+            "Specify only one of list_path, manifest_path, run_root, or run_roots"
+        )
+    if configured_sources == 0:
+        raise ValueError("Missing list_path, manifest_path, run_root, or run_roots")
+    list_path = None if list_path_value is None else _resolve_repo_path(list_path_value)
+    manifest_path = (
+        None
+        if manifest_path_value is None
+        else _resolve_repo_path(manifest_path_value)
+    )
+    run_root = None if run_root_value is None else _resolve_repo_path(run_root_value)
+    if run_roots_value is None:
+        run_roots: tuple[Path, ...] = ()
+    else:
+        if not isinstance(run_roots_value, (list, tuple)) or not run_roots_value:
+            raise ValueError("run_roots must be a non-empty list of directories")
+        run_roots = tuple(_resolve_repo_path(value) for value in run_roots_value)
+    result_root = _resolve_repo_path(batch.get("result_root", "EvalResult"))
+    evaluation_id = str(batch.get("evaluation_id") or "").strip()
+    if not evaluation_id:
+        raise ValueError("evaluation_id is required")
+    summary_root = result_root / "batches" / evaluation_id
     continue_on_error = bool(batch.get("continue_on_error", True))
     timeout_seconds = int(batch.get("item_timeout_seconds", 3600))
     if timeout_seconds <= 0:
@@ -462,6 +740,10 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
     overwrite = bool(evaluation.get("overwrite", False))
     device_value = evaluation.get("device")
     device = None if device_value in (None, "", "auto") else str(device_value)
+    error_vmin, error_vmax = validate_error_bounds(
+        evaluation.get("error_vmin", 0.0),
+        evaluation.get("error_vmax", 5.0),
+    )
     profile_value = evaluation.get("render_profile", "auto")
     render_profile = (
         None
@@ -471,7 +753,57 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
     targets_by_dataset = _normalized_target_map(
         evaluation.get("targets_by_dataset")
     )
-    run_dirs = _read_run_list(list_path) if list_path is not None else _discover_checkpoint_runs(run_root)
+    timesteps_by_dataset = _normalized_timestep_map(
+        evaluation.get("timesteps_by_dataset")
+    )
+    if list_path is not None:
+        run_dirs = _read_run_list(list_path)
+        run_source: Any = list_path
+    elif manifest_path is not None:
+        selection = batch.get("manifest_selection") or {}
+        if not isinstance(selection, dict):
+            raise ValueError("manifest_selection must be a mapping when provided")
+        datasets_value = selection.get("datasets") or ()
+        missing_fields_value = selection.get("missing_fields") or ()
+        if isinstance(datasets_value, str):
+            datasets = (datasets_value,)
+        elif isinstance(datasets_value, (list, tuple)):
+            datasets = tuple(str(value) for value in datasets_value)
+        else:
+            raise ValueError("manifest_selection.datasets must be a string or list")
+        if isinstance(missing_fields_value, str):
+            missing_fields = (missing_fields_value,)
+        elif isinstance(missing_fields_value, (list, tuple)):
+            missing_fields = tuple(str(value) for value in missing_fields_value)
+        else:
+            raise ValueError(
+                "manifest_selection.missing_fields must be a string or list"
+            )
+        run_dirs = _read_manifest_runs(
+            manifest_path,
+            datasets=datasets,
+            missing_fields=missing_fields,
+        )
+        run_source = manifest_path
+    elif run_root is not None:
+        run_dirs = _discover_checkpoint_runs(run_root)
+        run_source = run_root
+    else:
+        run_dirs = sorted(
+            {
+                run_dir
+                for root in run_roots
+                for run_dir in _discover_checkpoint_runs(root)
+            }
+        )
+        run_source = run_roots
+    discovered_run_count = len(run_dirs)
+    dependency_metrics = {"pearson_error", "mi_error"}
+    if metrics and set(metrics).issubset(dependency_metrics):
+        dependency_configuration = load_dependency_configuration(resolved_config)
+        run_dirs = list(
+            canonical_dependency_run_dirs(run_dirs, dependency_configuration)
+        )
     _preflight_dependencies(
         run_dirs,
         metrics=metrics,
@@ -486,7 +818,12 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
     _configure_logging(output_dir / "batch.log")
 
     records: list[dict[str, Any]] = []
-    run_source = list_path if list_path is not None else run_root
+    if len(run_dirs) != discovered_run_count:
+        LOGGER.info(
+            "Collapsed %d discovered dependency runs to %d canonical groups",
+            discovered_run_count,
+            len(run_dirs),
+        )
     LOGGER.info("Loaded %d evaluation runs from %s", len(run_dirs), run_source)
     for index, run_dir in enumerate(run_dirs, start=1):
         worker_log = worker_dir / f"{index:03d}.log"
@@ -505,6 +842,7 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
             "worker_log": str(worker_log.resolve()),
             "return_code": "",
             "elapsed_seconds": 0.0,
+            "reuse_reason": "",
             "error_type": "",
             "error": "",
         }
@@ -513,6 +851,7 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
         try:
             model_name, dataset, _, raw = _run_identity(run_dir)
             target = targets_by_dataset.get(dataset.lower(), "all")
+            run_timesteps = timesteps_by_dataset.get(dataset.lower(), timesteps)
             record.update(model=model_name, dataset=dataset, target=target)
             current_profile_fingerprint = None
             if render:
@@ -527,10 +866,14 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
                     run_dir,
                     raw=raw,
                     target=target,
-                    timesteps=timesteps,
+                    timesteps=run_timesteps,
                     requested_metrics=metrics,
                     render=render,
                     current_profile_fingerprint=current_profile_fingerprint,
+                    result_root=result_root,
+                    evaluation_id=evaluation_id,
+                    error_vmin=error_vmin,
+                    error_vmax=error_vmax,
                 )
             completed_metrics = (
                 set(existing_state["completed_metrics"])
@@ -544,6 +887,8 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
                     or not bool(existing_state["render_complete"])
                 )
             )
+            if pending_render and "error" in metrics and "error" not in pending_metrics:
+                pending_metrics = (*pending_metrics, "error")
             if existing_state is not None and not pending_metrics and not pending_render:
                 existing_output = Path(existing_state["output_dir"])
                 record.update(
@@ -552,11 +897,13 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
                     metrics_path=str((existing_output / "metrics.json").resolve()),
                     log_path=str((existing_output / "logs" / "evaluate.log").resolve()),
                     return_code=0,
+                    reuse_reason=str(existing_state["reuse_reason"]),
                 )
                 LOGGER.info(
-                    "[%d/%d] Skipped completed checkpoint: %s",
+                    "[%d/%d] Skipped completed checkpoint (%s): %s",
                     index,
                     len(run_dirs),
+                    existing_state["reuse_reason"],
                     run_dir,
                 )
                 record["elapsed_seconds"] = round(time.perf_counter() - started, 6)
@@ -583,13 +930,17 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
                     {
                         "run_dir": str(run_dir),
                         "metrics": list(pending_metrics),
-                        "timesteps": timesteps,
+                        "timesteps": run_timesteps,
                         "target": target,
                         "source": source,
                         "render": worker_render,
                         "render_profile": None if render_profile is None else str(render_profile),
                         "overwrite": overwrite,
                         "device": device,
+                        "result_root": str(result_root),
+                        "evaluation_id": evaluation_id,
+                        "error_vmin": error_vmin,
+                        "error_vmax": error_vmax,
                     },
                     indent=2,
                     ensure_ascii=False,

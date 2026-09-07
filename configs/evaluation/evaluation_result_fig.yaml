@@ -1,0 +1,22 @@
+# Quickly inspect reconstruction quality for Main and RD Curve runs using 20
+# uniformly sampled timesteps. Outputs stay isolated from EvalResult.
+run_roots:
+  - Result/RD Curve
+result_root: EvalResult
+evaluation_id: result_figures
+continue_on_error: true
+item_timeout_seconds: 7200
+
+evaluation:
+  metrics:
+    - psnr
+    - ssim
+    - lpips
+  timesteps: uniform:20
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

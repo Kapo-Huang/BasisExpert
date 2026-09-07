@@ -54,6 +54,8 @@ DEFAULT_TRAINING = {
     "epochs_per_scale": 500,
     "batch_size": 3200,
     "passes_per_epoch": 1,
+    "sampling_mode": "full_pass",
+    "scalar_predictions_per_epoch_budget": 0,
     "lr": 1.0e-3,
     "beta_1": 0.9,
     "beta_2": 0.999,
@@ -97,6 +99,8 @@ DEFAULT_CNN = {
     "tile_core_shape_zyx": [32, 64, 64],
     "epochs": 100,
     "lr": 1.0e-5,
+    "sampling_mode": "full_volume",
+    "core_voxel_budget": 0,
 }
 
 DEFAULT_EVALUATION = {
@@ -215,7 +219,8 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     for key in (
         "epochs_per_scale", "batch_size", "passes_per_epoch",
         "quantization_finetune_epochs", "quantization_finetune_passes_per_epoch",
-        "save_every", "log_every", "progress_log_seconds", "seed",
+        "scalar_predictions_per_epoch_budget", "save_every", "log_every",
+        "progress_log_seconds", "seed",
     ):
         training[key] = int(training[key])
         if training[key] < 0:
@@ -226,6 +231,17 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     for key in ("batch_size", "passes_per_epoch", "quantization_finetune_passes_per_epoch"):
         if training[key] == 0:
             raise ValueError(f"training.{key} must be positive")
+    training["sampling_mode"] = str(training["sampling_mode"]).strip().lower()
+    if training["sampling_mode"] not in {"full_pass", "budgeted_random"}:
+        raise ValueError("training.sampling_mode must be 'full_pass' or 'budgeted_random'")
+    if training["sampling_mode"] == "budgeted_random":
+        if training["scalar_predictions_per_epoch_budget"] <= 0:
+            raise ValueError(
+                "training.scalar_predictions_per_epoch_budget must be positive "
+                "for budgeted_random sampling"
+            )
+        if training["passes_per_epoch"] != 1 or training["quantization_finetune_passes_per_epoch"] != 1:
+            raise ValueError("budgeted_random sampling fixes primary and QAT passes_per_epoch to 1")
     for key in (
         "lr", "beta_1", "beta_2", "weight_decay", "pruning_loss_weight",
         "pruning_lr_gamma", "quantization_finetune_lr",
@@ -252,15 +268,29 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
 
     cnn = {**DEFAULT_CNN, **_mapping(cfg.get("cnn"), "cnn")}
     _reject(cnn, set(DEFAULT_CNN), "cnn")
-    structural_cnn = tuple(key for key in DEFAULT_CNN if key not in {"tile_core_shape_zyx", "epochs", "lr"})
+    structural_cnn = tuple(
+        key
+        for key in DEFAULT_CNN
+        if key not in {
+            "tile_core_shape_zyx", "epochs", "lr", "sampling_mode", "core_voxel_budget"
+        }
+    )
     _fixed(cnn, DEFAULT_CNN, structural_cnn, "cnn")
     cnn["tile_core_shape_zyx"] = [int(value) for value in cnn["tile_core_shape_zyx"]]
     if len(cnn["tile_core_shape_zyx"]) != 3 or any(value <= 0 for value in cnn["tile_core_shape_zyx"]):
         raise ValueError("cnn.tile_core_shape_zyx must contain three positive integers")
     cnn["epochs"] = int(cnn["epochs"])
     cnn["lr"] = float(cnn["lr"])
+    cnn["sampling_mode"] = str(cnn["sampling_mode"]).strip().lower()
+    cnn["core_voxel_budget"] = int(cnn["core_voxel_budget"])
     if cnn["epochs"] < 0 or cnn["lr"] <= 0:
         raise ValueError("cnn.epochs must be non-negative and cnn.lr positive")
+    if cnn["sampling_mode"] not in {"full_volume", "budgeted_tiles"}:
+        raise ValueError("cnn.sampling_mode must be 'full_volume' or 'budgeted_tiles'")
+    if cnn["core_voxel_budget"] < 0:
+        raise ValueError("cnn.core_voxel_budget must be non-negative")
+    if cnn["sampling_mode"] == "budgeted_tiles" and cnn["core_voxel_budget"] <= 0:
+        raise ValueError("cnn.core_voxel_budget must be positive for budgeted_tiles sampling")
     cfg["cnn"] = cnn
 
     evaluation = {**DEFAULT_EVALUATION, **_mapping(cfg.get("evaluation"), "evaluation")}

@@ -1,0 +1,19 @@
+# No-op PSNR list retained for completeness; Katrina currently has no missing PSNR.
+# 16 uniformly sampled frames, the rounded 10% subset of 162 Katrina frames.
+list_path: scripts/evaluation/evaluation_missing_psnr_10pct_katrina.list
+result_root: EvalResult
+evaluation_id: missing_psnr_10pct_katrina
+continue_on_error: true
+item_timeout_seconds: 3600
+
+evaluation:
+  metrics:
+    - psnr
+  timesteps: uniform:16
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

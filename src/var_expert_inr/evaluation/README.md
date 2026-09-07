@@ -12,7 +12,9 @@ render matching frames.
 ```bash
 python -m var_expert_inr.cli evaluate \
   --run runs/<exp_id>/<timestamp> \
-  --metrics psnr,ssim,lpips,decode_time,memory \
+  --result-root EvalResult \
+  --evaluation-id quality \
+  --metrics psnr,ssim,lpips,error,decode_time,memory \
   --targets GT,H2 \
   --timesteps 0,10:30,40:99:10
 ```
@@ -31,11 +33,14 @@ The default metric is `psnr`.
 | `psnr` | Required | No | MSE, MAE, and PSNR summaries. |
 | `ssim` | Required | Required | SSIM on matched GT and prediction images. |
 | `lpips` | Required | Required | LPIPS on matched GT and prediction images. |
+| `error` | Required | Optional | Per-frame absolute-error and normalized error-percentage statistics; with `--render`, a fixed-scale error image. |
+| `pearson_error` | Required | No | Absolute error in the sampled cross-variable Pearson matrix. |
+| `mi_error` | Required | No | Absolute error in the sampled cross-variable histogram-MI matrix, in nats. |
 | `decode_time` | Not required | No | Fresh decode timing, excluding rendering and metric work. |
 | `memory` | Not required | No | Process RSS and, when available, CUDA allocated/reserved peaks. |
 | `--render` | Optional | Required | Selected prediction frames; GT frames are added when available. |
 
-PSNR, SSIM, and LPIPS fail before decoding when ground truth is missing,
+PSNR, SSIM, LPIPS, and error analysis fail before decoding when ground truth is missing,
 unreadable, or shape-incompatible. Checkpoint-based performance evaluation can
 construct coordinates without targets; node evaluation still needs its
 coordinate array.
@@ -106,20 +111,87 @@ There is no point-cloud fallback. Prediction-only rendering must provide a
 fixed `clim` or target-specific `target_clims`; otherwise color limits are
 derived from ground truth.
 
+Error analysis operates directly in the normalized target space. Scalar
+fields use `abs(prediction - ground_truth)` and vector fields use the
+point-wise L2 norm. The reported percentage is `absolute_error / 2 * 100`,
+using the fixed normalized GT range `[-1, 1]`. Each timestep reports exact
+mean, maximum, p95, and p99 values; target summaries pool only mean and maximum.
+Point-wise error arrays are not persisted.
+
+Use `--error-vmin` and `--error-vmax`, or the matching `evaluation` YAML keys,
+to set one comparison scale in percentage units. Defaults are `0` and `5`.
+Error images clamp to this range and use white-to-red. Ionization error volumes
+also map opacity from zero at no error to one at `error_vmax`.
+
 ## Reports and caching
 
-Each new evaluation writes:
+Every evaluation recipe has a unique `evaluation_id`. Evaluation directories
+contain only reports, state, logs, and relative artifact references:
 
 ```text
-EvalResult/Main/<model>/<dataset>/<target>/
-├── manifest.json
-├── metrics.json
-├── metrics.csv
-├── logs/evaluate.log
-└── renders/<target>/...   # when rendering is requested
+EvalResult/
+├── artifacts/
+│   ├── ground_truth/<dataset>/<target>/<render_key>/gt_tXXXX.png
+│   ├── prediction/<dataset>/<model>/<source_key>/<target>/<render_key>/pred_tXXXX.png
+│   ├── error/<dataset>/<model>/<comparison_key>/<target>/<render_key>/error_tXXXX.png
+│   └── dependency_gt/<dataset>/<dependency_key>/
+├── evaluations/<evaluation_id>/<Result-relative-path>/
+│   ├── manifest.json
+│   ├── metrics.json
+│   ├── metrics.csv
+│   ├── progress.json
+│   └── logs/evaluate.log
+├── batches/<evaluation_id>/
+└── migration/
 ```
 
-Quality and render results may be reused when the source, selections, render
-profile, and ground-truth fingerprints match. `--overwrite` bypasses that
-cache. `decode_time` and `memory` always perform fresh measurement and are not
-served from the quality-result cache.
+GT, prediction, and error images are written directly to the shared artifact
+store. Their keys include content fingerprints, the normalized render profile,
+external mesh/preset resources, and the renderer schema version. Paths stored
+in reports are relative to `EvalResult`, so moving the whole tree preserves
+references. Concurrent writers use per-artifact locks and atomic replacement.
+
+`--overwrite` refreshes the current evaluation and model-derived artifacts; it
+does not invalidate an unchanged GT artifact. `decode_time` and `memory` always
+perform fresh measurements. GT materialization is lazy: the first request
+renders a frame and all later evaluations reference that same artifact without
+copying it into their own directories.
+
+Run a batch recipe and inspect or maintain the result tree with:
+
+```bash
+python scripts/evaluation/run_batch.py --config configs/evaluation/evaluation_result.yaml
+python scripts/evaluation/manage_eval_result.py status
+python scripts/evaluation/manage_eval_result.py verify
+python scripts/evaluation/manage_eval_result.py prune        # dry run
+python scripts/evaluation/manage_eval_result.py prune --apply
+```
+
+Batch configuration uses only top-level `result_root` and `evaluation_id` for
+layout selection. See `scripts/evaluation/examples/` for quality, figure,
+error, and dependency invocations.
+
+## Cross-variable dependency evaluation
+
+`pearson_error` and `mi_error` are group-level metrics and run separately from
+per-target quality/render metrics. Every timestep uses the same stable 20%
+spatial-index sample for GT and reconstruction. Pearson is accumulated in
+float64; MI uses GT quantile-bin edges cached and reused for reconstruction.
+Only valid upper-triangle target pairs are averaged, first within a timestep
+and then equally across selected timesteps.
+
+Build the reusable dependency GT caches once, then use the same batch entry
+point for archived groups:
+
+```bash
+python scripts/evaluation/build_dependency_gt_cache.py --dataset all
+python scripts/evaluation/run_batch.py \
+  --config configs/evaluation/evaluation_result_dependency.yaml
+```
+
+Joint runs are evaluated directly. A single-target run resolves the canonical
+sibling runs under its parent directory; missing or duplicate targets are
+errors. Outputs are isolated by `evaluation_id` under `EvalResult/evaluations`
+and include
+`metrics.json`, `metrics.csv`, `dependency_metrics.npz`, and a manifest with
+all source/cache fingerprints.

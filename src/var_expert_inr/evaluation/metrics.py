@@ -8,6 +8,108 @@ from typing import Any
 import numpy as np
 
 EPS = 1e-12
+ERROR_GT_MIN = -1.0
+ERROR_GT_MAX = 1.0
+ERROR_GT_DYNAMIC_RANGE = ERROR_GT_MAX - ERROR_GT_MIN
+ERROR_PERCENT_SCALE = 100.0 / ERROR_GT_DYNAMIC_RANGE
+
+
+def validate_error_bounds(error_vmin: float, error_vmax: float) -> tuple[float, float]:
+    lo, hi = float(error_vmin), float(error_vmax)
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        raise ValueError("error_vmin and error_vmax must be finite")
+    if lo < 0.0 or hi <= lo:
+        raise ValueError("error bounds must satisfy 0 <= error_vmin < error_vmax")
+    return lo, hi
+
+
+def pointwise_absolute_error(gt: np.ndarray, pred: np.ndarray) -> np.ndarray:
+    """Return scalar point-wise error, using L2 for vector-valued fields."""
+    gt_values = np.asarray(gt)
+    pred_values = np.asarray(pred)
+    if gt_values.shape != pred_values.shape:
+        raise ValueError(
+            f"Point-wise error shape mismatch: {gt_values.shape} vs {pred_values.shape}"
+        )
+    difference = np.subtract(pred_values, gt_values)
+    if difference.ndim in {2, 4} and difference.shape[-1] in {2, 3}:
+        return np.linalg.norm(difference, axis=-1)
+    if difference.ndim in {2, 4} and difference.shape[-1] == 1:
+        difference = difference[..., 0]
+    return np.abs(difference)
+
+
+def error_percentage(abs_error: np.ndarray) -> np.ndarray:
+    return np.asarray(abs_error) * ERROR_PERCENT_SCALE
+
+
+def error_frame_statistics(abs_error: np.ndarray) -> dict[str, float]:
+    values = np.asarray(abs_error).reshape(-1)
+    if values.size == 0:
+        return {
+            "mean_absolute_error": float("nan"),
+            "max_absolute_error": float("nan"),
+            "p95_absolute_error": float("nan"),
+            "p99_absolute_error": float("nan"),
+            "mean_error_percentage": float("nan"),
+            "max_error_percentage": float("nan"),
+            "p95_error_percentage": float("nan"),
+            "p99_error_percentage": float("nan"),
+        }
+    mean_value = float(np.mean(values, dtype=np.float64))
+    max_value = float(np.max(values))
+    p95_value, p99_value = (
+        float(item) for item in np.percentile(values, (95.0, 99.0))
+    )
+    return {
+        "mean_absolute_error": mean_value,
+        "max_absolute_error": max_value,
+        "p95_absolute_error": p95_value,
+        "p99_absolute_error": p99_value,
+        "mean_error_percentage": mean_value * ERROR_PERCENT_SCALE,
+        "max_error_percentage": max_value * ERROR_PERCENT_SCALE,
+        "p95_error_percentage": p95_value * ERROR_PERCENT_SCALE,
+        "p99_error_percentage": p99_value * ERROR_PERCENT_SCALE,
+    }
+
+
+class ErrorAccumulator:
+    """Exact streaming mean/max summary across selected point-wise fields."""
+
+    def __init__(self) -> None:
+        self.total_absolute_error = 0.0
+        self.total_count = 0
+        self.max_absolute_error = float("-inf")
+
+    def update(self, abs_error: np.ndarray) -> None:
+        values = np.asarray(abs_error)
+        if values.size == 0:
+            return
+        self.total_absolute_error += float(np.sum(values, dtype=np.float64))
+        self.total_count += int(values.size)
+        self.max_absolute_error = max(
+            self.max_absolute_error,
+            float(np.max(values)),
+        )
+
+    def as_dict(self) -> dict[str, float | int]:
+        if self.total_count <= 0:
+            return {
+                "error_count": 0,
+                "mean_absolute_error": float("nan"),
+                "max_absolute_error": float("nan"),
+                "mean_error_percentage": float("nan"),
+                "max_error_percentage": float("nan"),
+            }
+        mean_value = float(self.total_absolute_error / self.total_count)
+        max_value = float(self.max_absolute_error)
+        return {
+            "error_count": int(self.total_count),
+            "mean_absolute_error": mean_value,
+            "max_absolute_error": max_value,
+            "mean_error_percentage": mean_value * ERROR_PERCENT_SCALE,
+            "max_error_percentage": max_value * ERROR_PERCENT_SCALE,
+        }
 
 
 class PSNRAccumulator:
@@ -71,12 +173,15 @@ def summarize_selected_quality(
     accumulators: dict[str, QualityAccumulator],
     targets: tuple[str, ...],
     metrics: tuple[str, ...],
+    error_accumulators: dict[str, ErrorAccumulator] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
     per_target: dict[str, dict[str, Any]] = {}
     for target in targets:
         summary: dict[str, Any] = {}
         if "psnr" in metrics:
             summary.update(accumulators[target].as_dict())
+        if "error" in metrics and error_accumulators is not None:
+            summary.update(error_accumulators[target].as_dict())
         target_rows = [row for row in rows if row.get("target") == target]
         for metric in ("ssim", "lpips"):
             values = [float(row[metric]) for row in target_rows if row.get(metric) is not None]
@@ -89,6 +194,14 @@ def summarize_selected_quality(
         values = [float(summary[metric]) for summary in per_target.values() if metric in summary]
         if values:
             aggregate[metric] = float(np.mean(values))
+    for metric in ("mean_absolute_error", "mean_error_percentage"):
+        values = [float(summary[metric]) for summary in per_target.values() if metric in summary]
+        if values:
+            aggregate[metric] = float(np.mean(values))
+    for metric in ("max_absolute_error", "max_error_percentage"):
+        values = [float(summary[metric]) for summary in per_target.values() if metric in summary]
+        if values:
+            aggregate[metric] = float(np.max(values))
     return per_target, aggregate
 
 

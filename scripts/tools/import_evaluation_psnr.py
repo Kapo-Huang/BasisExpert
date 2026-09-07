@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""Import valid PSNR measurements from evaluation roots into ``Result``.
+
+Only completed evaluations with at least ten uniformly selected timesteps are
+eligible.
+When an experiment exists in multiple evaluation recipes, the result with more
+sampled timesteps is preferred; tied measurements must agree, after which the
+recipe order is used as a deterministic tie-break.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import statistics
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+MIN_TIMESTEPS = 10
+PSNR_ANOMALY_DB = 20.0
+SUMMARY_MARKER = (
+    "> PSNR values marked as evaluation-imported were read from completed "
+    "checkpoint evaluations with at least 10 uniformly selected timesteps."
+)
+AGGREGATED_START = "<!-- AGGREGATED_PSNR_START -->"
+AGGREGATED_END = "<!-- AGGREGATED_PSNR_END -->"
+MAIN_METHOD_ORDER = (
+    "Ours", "CoordNet", "SIREN", "Neural Experts", "MoE-INR", "fV-SRN",
+    "APMGSRN", "InstantVNR", "MINER", "ECNR", "STSR-INR", "MVNet",
+)
+MAIN_DATASET_ORDER = ("Ionization", "Combustion", "Katrina", "RedSea")
+RD_METHOD_ORDER = ("Ours", "CoordNet", "MoE-INR", "fV-SRN", "STSR-INR")
+RD_DATASET_ORDER = ("Ionization", "Combustion")
+RD_SIZE_ORDER = ("0.41", "0.82", "1.63", "3.26")
+RESULT_CATEGORIES = {"Main", "RD Curve", "Ablation", "Sensitivity", "Scaling"}
+
+
+@dataclass(frozen=True)
+class EvaluationPSNR:
+    result_relative: str
+    root_name: str
+    evaluation_dir: Path
+    timesteps: tuple[int, ...]
+    psnr_db: float
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--result", type=Path, default=None)
+    parser.add_argument(
+        "--evaluation-root",
+        action="append",
+        default=None,
+        help="Evaluation root, in priority order for equal timestep counts. Repeat as needed.",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args()
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def normalized_relative(path: Path) -> str:
+    return path.as_posix().replace("\\", "/")
+
+
+def manifest_row_label(row: dict[str, str]) -> str:
+    item_parts = [part for part in str(row.get("item", "")).split("/") if part]
+    return " / ".join((row["category"], row["method"], row["dataset"], *item_parts))
+
+
+def default_evaluation_roots(repo: Path) -> list[str]:
+    root = repo / "EvalResult" / "evaluations"
+    return [root.relative_to(repo).as_posix()] if root.is_dir() else []
+
+
+def is_uniform_timestep_selection(timesteps: tuple[int, ...]) -> bool:
+    if len(timesteps) < MIN_TIMESTEPS or not timesteps:
+        return False
+    total = timesteps[-1] + 1
+    if total < len(timesteps):
+        return False
+    expected = tuple(
+        round(index * (total - 1) / (len(timesteps) - 1))
+        for index in range(len(timesteps))
+    )
+    return timesteps == expected
+
+
+def scan_evaluations(repo: Path, roots: list[str]) -> dict[str, list[EvaluationPSNR]]:
+    candidates: dict[str, list[EvaluationPSNR]] = defaultdict(list)
+    for root_name in roots:
+        root = (repo / root_name).resolve()
+        if not root.is_dir():
+            continue
+        for manifest_path in root.rglob("manifest.json"):
+            metrics_path = manifest_path.with_name("metrics.json")
+            if not metrics_path.is_file():
+                continue
+            manifest = read_json(manifest_path)
+            metrics = read_json(metrics_path)
+            if manifest is None or metrics is None or metrics.get("status") != "complete":
+                continue
+            try:
+                timesteps = tuple(int(value) for value in manifest.get("timesteps") or ())
+                psnr_db = float((metrics.get("aggregate") or {})["psnr"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not is_uniform_timestep_selection(timesteps) or not math.isfinite(psnr_db):
+                continue
+            relative_parts = manifest_path.parent.relative_to(root).parts
+            # Schema v2 inserts the evaluation recipe id before the original
+            # Result-relative directory. A caller can still point directly at
+            # one recipe directory, in which case the category is first.
+            if int(manifest.get("schema_version", 0)) == 2 and relative_parts:
+                if relative_parts[0] in RESULT_CATEGORIES:
+                    result_parts = relative_parts
+                    recipe = root_name
+                elif len(relative_parts) > 1:
+                    result_parts = relative_parts[1:]
+                    recipe = f"{root_name}/{relative_parts[0]}"
+                else:
+                    continue
+            else:
+                result_parts = relative_parts
+                recipe = root_name
+            result_relative = normalized_relative(Path(*result_parts))
+            if result_relative.split("/", 1)[0] not in RESULT_CATEGORIES:
+                continue
+            candidates[result_relative].append(EvaluationPSNR(
+                result_relative=result_relative,
+                root_name=recipe,
+                evaluation_dir=manifest_path.parent,
+                timesteps=timesteps,
+                psnr_db=psnr_db,
+            ))
+    return candidates
+
+
+def choose_candidates(
+    candidates: dict[str, list[EvaluationPSNR]],
+    root_priority: dict[str, int],
+) -> dict[str, EvaluationPSNR]:
+    selected: dict[str, EvaluationPSNR] = {}
+    for relative, options in candidates.items():
+        max_timesteps = max(len(option.timesteps) for option in options)
+        most_complete = [option for option in options if len(option.timesteps) == max_timesteps]
+        values = {round(option.psnr_db, 12) for option in most_complete}
+        if len(values) > 1:
+            details = ", ".join(
+                f"{option.root_name}:{option.psnr_db:.12g}" for option in most_complete
+            )
+            raise ValueError(f"Conflicting evaluation PSNR for {relative}: {details}")
+        selected[relative] = min(
+            most_complete,
+            key=lambda option: root_priority[option.root_name],
+        )
+    return selected
+
+
+def read_manifest(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        rows = list(reader)
+        return list(reader.fieldnames or ()), rows
+
+
+def write_manifest(path: Path, fields: list[str], rows: list[dict[str, str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def markdown_table(headers: list[str], rows: list[tuple[str, ...]]) -> str:
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows)
+    return "\n".join(lines)
+
+
+def update_summary(path: Path, psnr_by_key: dict[tuple[str, str, str, str], float]) -> int:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    category = ""
+    updates = 0
+    result: list[str] = []
+    for line in lines:
+        if line.startswith("## "):
+            category = line[3:].strip()
+        if line.startswith("| ") and line.endswith(" |"):
+            cells = [cell.strip() for cell in line[1:-1].split("|")]
+            if len(cells) == 5:
+                key = (category, cells[0], cells[1], cells[2])
+                psnr_db = psnr_by_key.get(key)
+                if psnr_db is not None:
+                    cells[-1] = f"{psnr_db:.4f}"
+                    line = "| " + " | ".join(cells) + " |"
+                    updates += 1
+        result.append(line)
+    result = [line for line in result if line != SUMMARY_MARKER]
+    insertion = next((index + 1 for index, line in enumerate(result) if line.startswith("# ")), 1)
+    result[insertion:insertion] = ["", SUMMARY_MARKER]
+    path.write_text("\n".join(result) + "\n", encoding="utf-8")
+    return updates
+
+
+def aggregate_manifest_psnr(
+    rows: list[dict[str, str]],
+    *,
+    category: str,
+    method: str,
+    dataset: str,
+    size: str | None = None,
+) -> str:
+    items = [
+        row for row in rows
+        if row.get("category") == category
+        and row.get("method") == method
+        and row.get("dataset") == dataset
+        and (size is None or str(row.get("item", "")).startswith(f"{size}/"))
+    ]
+    if not items:
+        return "—"
+    if any(row.get("status") == "missing" or not str(row.get("psnr_db", "")).strip() for row in items):
+        return "-"
+    return f"{statistics.fmean(float(row['psnr_db']) for row in items):.4f}"
+
+
+def aggregated_psnr_block(rows: list[dict[str, str]]) -> list[str]:
+    lines = [
+        AGGREGATED_START,
+        "## Aggregated PSNR",
+        "",
+        "多变量实验仅在全部变量均有 PSNR 时取算术平均；Joint 实验直接使用其 PSNR。`-` 表示结果或 PSNR 不完整，`—` 表示该方法未配置对应实验。",
+        "",
+        "### Main",
+        "",
+        markdown_table(
+            ["模型", *MAIN_DATASET_ORDER],
+            [
+                (
+                    method,
+                    *(
+                        aggregate_manifest_psnr(
+                            rows, category="Main", method=method, dataset=dataset,
+                        )
+                        for dataset in MAIN_DATASET_ORDER
+                    ),
+                )
+                for method in MAIN_METHOD_ORDER
+            ],
+        ),
+        "",
+    ]
+    for dataset in RD_DATASET_ORDER:
+        lines.extend([
+            f"### RD Curve — {dataset}",
+            "",
+            markdown_table(
+                ["模型", *RD_SIZE_ORDER],
+                [
+                    (
+                        method,
+                        *(
+                            aggregate_manifest_psnr(
+                                rows,
+                                category="RD Curve",
+                                method=method,
+                                dataset=dataset,
+                                size=size,
+                            )
+                            for size in RD_SIZE_ORDER
+                        ),
+                    )
+                    for method in RD_METHOD_ORDER
+                ],
+            ),
+            "",
+        ])
+    lines.append(AGGREGATED_END)
+    return lines
+
+
+def update_aggregated_summary(path: Path, rows: list[dict[str, str]]) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        start = lines.index(AGGREGATED_START)
+        end = lines.index(AGGREGATED_END, start) + 1
+    except ValueError as error:
+        raise ValueError(f"Aggregated PSNR markers are missing from {path}") from error
+    lines[start:end] = aggregated_psnr_block(rows)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def propagate_substitution_psnr(
+    rows: list[dict[str, str]],
+    evaluated_relatives: set[str],
+) -> tuple[int, int]:
+    source_by_label = {manifest_row_label(row): row for row in rows}
+    fills = 0
+    replacements = 0
+    for row in rows:
+        if row.get("status") != "substituted":
+            continue
+        relative = str(row.get("result_path", "")).replace("\\", "/").removeprefix("Result/")
+        if relative in evaluated_relatives:
+            continue
+        source = source_by_label.get(str(row.get("substitution_source", "")))
+        source_psnr = str(source.get("psnr_db", "")).strip() if source else ""
+        if not source_psnr:
+            continue
+        previous = str(row.get("psnr_db", "")).strip()
+        if not previous:
+            fills += 1
+        elif not math.isclose(float(previous), float(source_psnr), rel_tol=1e-8, abs_tol=1e-8):
+            replacements += 1
+        row["psnr_db"] = source_psnr
+    return fills, replacements
+
+
+def update_substitutions(path: Path, psnr_by_label: dict[str, float]) -> int:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    updates = 0
+    result: list[str] = []
+    for line in lines:
+        if line.startswith("| ") and line.endswith(" |"):
+            cells = [cell.strip() for cell in line[1:-1].split("|")]
+            if len(cells) == 3:
+                psnr_db = psnr_by_label.get(cells[0])
+                if psnr_db is not None:
+                    cells[-1] = f"{psnr_db:.4f}"
+                    line = "| " + " | ".join(cells) + " |"
+                    updates += 1
+        result.append(line)
+    path.write_text("\n".join(result) + "\n", encoding="utf-8")
+    return updates
+
+
+def write_evaluation_audit(
+    path: Path,
+    selected: dict[str, EvaluationPSNR],
+    *,
+    fills: int,
+    replacements: int,
+) -> None:
+    root_counts = Counter(item.root_name for item in selected.values())
+    rows = [
+        (
+            f"Result/{relative}",
+            f"{item.psnr_db:.4f}",
+            str(len(item.timesteps)),
+            item.root_name,
+            normalized_relative(item.evaluation_dir),
+        )
+        for relative, item in sorted(selected.items())
+    ]
+    lines = [
+        "# Imported evaluation PSNR",
+        "",
+        f"- Validity rule: completed PSNR evaluation with a uniform selection of at least {MIN_TIMESTEPS} timesteps; a single timestep `0` is excluded.",
+        f"- Qualified Result entries synchronized: {len(selected)} (changes in this invocation — filled blanks: {fills}; replaced existing archived PSNR: {replacements}).",
+        "- Source selection: most sampled timesteps first; ties use evaluation recipe order.",
+        f"- Selected sources: {', '.join(f'{root}={count}' for root, count in sorted(root_counts.items()))}.",
+        "",
+        markdown_table(["Result entry", "PSNR(dB)", "Timesteps", "Source", "Evaluation directory"], rows),
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def append_anomaly_audit(path: Path, selected: dict[str, EvaluationPSNR], labels: dict[str, str]) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    heading = "## Imported evaluation PSNR"
+    if heading in lines:
+        lines = lines[:lines.index(heading)]
+        while lines and not lines[-1]:
+            lines.pop()
+    low_psnr = [
+        (labels[relative], f"{item.psnr_db:.4f}", str(len(item.timesteps)), item.root_name)
+        for relative, item in sorted(selected.items())
+        if item.psnr_db < PSNR_ANOMALY_DB
+    ]
+    lines.extend([
+        "",
+        heading,
+        "",
+        f"Completed checkpoint evaluations with a uniform selection of at least {MIN_TIMESTEPS} timesteps were imported into MANIFEST.tsv and EXPERIMENT_SUMMARY.md.",
+        f"The table below lists the {len(low_psnr)} imported values below {PSNR_ANOMALY_DB:g} dB.",
+        "",
+        markdown_table(["Experiment", "PSNR(dB)", "Timesteps", "Source"], low_psnr) if low_psnr else "No imported PSNR values are below the threshold.",
+        "",
+    ])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main() -> int:
+    args = parse_args()
+    repo = args.repo.resolve()
+    result_root = (args.result or repo / "Result").resolve()
+    roots = args.evaluation_root or default_evaluation_roots(repo)
+    root_priority: dict[str, int] = {}
+    for index, root in enumerate(roots):
+        root_priority[root] = index
+        root_path = (repo / root).resolve()
+        if root_path.name == "evaluations" and root_path.is_dir():
+            for recipe_index, recipe in enumerate(sorted(path for path in root_path.iterdir() if path.is_dir())):
+                root_priority[f"{root}/{recipe.name}"] = index * 10000 + recipe_index
+    manifest_path = result_root / "MANIFEST.tsv"
+    fields, rows = read_manifest(manifest_path)
+    row_by_relative = {
+        str(row.get("result_path", "")).replace("\\", "/").removeprefix("Result/"): row
+        for row in rows if row.get("result_path")
+    }
+    selected_all = choose_candidates(scan_evaluations(repo, roots), root_priority)
+    selected = {relative: item for relative, item in selected_all.items() if relative in row_by_relative}
+    unmatched = sorted(set(selected_all).difference(row_by_relative))
+    if unmatched:
+        raise ValueError(f"Evaluation results not found in Result manifest: {unmatched[:10]}")
+
+    fills = 0
+    replacements = 0
+    for relative, item in selected.items():
+        row = row_by_relative[relative]
+        previous = str(row.get("psnr_db", "")).strip()
+        if not previous:
+            fills += 1
+        elif not math.isclose(float(previous), item.psnr_db, rel_tol=1e-8, abs_tol=1e-8):
+            replacements += 1
+        row["psnr_db"] = f"{item.psnr_db:.10g}"
+
+    substitution_fills, substitution_replacements = propagate_substitution_psnr(
+        rows, set(selected),
+    )
+
+    print(
+        f"valid={len(selected)} filled={fills} replaced={replacements} "
+        f"sources={dict(Counter(item.root_name for item in selected.values()))} "
+        f"substitution_filled={substitution_fills} "
+        f"substitution_replaced={substitution_replacements}"
+    )
+    if args.dry_run:
+        return 0
+
+    write_manifest(manifest_path, fields, rows)
+    psnr_by_key = {
+        (row["category"], row["method"], row["dataset"], row["item"]): float(row["psnr_db"])
+        for row in rows if row.get("psnr_db")
+    }
+    labels = {relative: manifest_row_label(row) for relative, row in row_by_relative.items()}
+    psnr_by_label = {
+        manifest_row_label(row): float(row["psnr_db"])
+        for row in rows if row.get("psnr_db")
+    }
+    summary_updates = update_summary(result_root / "EXPERIMENT_SUMMARY.md", psnr_by_key)
+    update_aggregated_summary(result_root / "EXPERIMENT_SUMMARY.md", rows)
+    substitution_updates = update_substitutions(result_root / "SUBSTITUTIONS.md", psnr_by_label)
+    write_evaluation_audit(
+        result_root / "EVALUATION_PSNR.md",
+        selected,
+        fills=fills,
+        replacements=replacements,
+    )
+    append_anomaly_audit(result_root / "ANOMALIES.md", selected, labels)
+    print(f"summary_updates={summary_updates} substitution_updates={substitution_updates}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
