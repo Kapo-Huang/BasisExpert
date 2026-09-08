@@ -1,0 +1,26 @@
+# Evaluate SSIM and LPIPS together for every archived Result run using
+# dataset-specific uniform sampling. Both metrics consume the same decoded
+# prediction and the same shared GT/prediction render artifacts.
+run_root: Result
+result_root: EvalResult
+evaluation_id: result_perceptual_sampled
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - ssim
+    - lpips
+  timesteps: uniform:10
+  timesteps_by_dataset:
+    Ionization: uniform:10
+    combustion_40NH3_1: uniform:200
+    Katrina: uniform:16
+    RedSea: uniform:10
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

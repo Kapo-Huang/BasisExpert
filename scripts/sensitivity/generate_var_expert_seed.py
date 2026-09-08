@@ -18,7 +18,7 @@ from scripts.main.generate_configs import RUNS_ROOT_TOKEN, dump
 MAIN_CONFIG = ROOT / "configs/main/VarExpert/ionization.yaml"
 CONFIG_ROOT = ROOT / "configs/sensitivity/var_expert_seed"
 CONFIG_LIST = ROOT / "scripts/sensitivity/var_expert_seed.list"
-RUN_ROOT = f"{RUNS_ROOT_TOKEN}/sensitivity/var_expert_seed"
+RUN_ROOT = f"{RUNS_ROOT_TOKEN}/sensitivity/var_expert_joint_seed"
 SIZE = "Size163"
 SEEDS = (43, 44, 45)
 
@@ -32,11 +32,15 @@ def _load_main_payload() -> dict:
 
 def build_payload(main_payload: dict, *, seed: int) -> dict:
     payload = deepcopy(main_payload)
-    payload["experiment"] = f"sensitivity_varexpert_seed_{SIZE.lower()}_seed{seed}"
-    payload["exp_id"] = f"sensitivity-varexpert-seed-{SIZE.lower()}-seed{seed}"
+    payload["experiment"] = f"sensitivity_varexpert_joint_seed_{SIZE.lower()}_seed{seed}"
+    payload["exp_id"] = f"sensitivity-varexpert-joint-seed-{SIZE.lower()}-seed{seed}"
     payload["experiment_root"] = RUN_ROOT
     payload["training"]["seed"] = int(seed)
     payload["training"]["epochs"] = 100
+    payload["training"]["pretrain"]["cluster_seed"] = int(seed)
+    payload["training"]["pretrain"]["assignments_cache_path"] = (
+        f"${{REPO_ROOT}}/data/cache/ionization_voxel_assignments_6_seed{seed}.npy"
+    )
     return payload
 
 
@@ -54,7 +58,7 @@ def generate() -> int:
         config_paths.append(config_path.relative_to(ROOT).as_posix())
 
     CONFIG_LIST.write_text(
-        "# VarExpert random-seed sensitivity: main seed 42 is the completed baseline; run seeds 43-45.\n"
+        "# VarExpert joint training/clustering seed sensitivity: main seed 42 is the baseline; run seeds 43-45.\n"
         + "\n".join(config_paths)
         + "\n",
         encoding="utf-8",

@@ -1,4 +1,4 @@
-# VarExpert random-seed sensitivity: main seed 42 is the completed baseline; run seeds 43-45.
+# VarExpert joint training/clustering seed sensitivity: main seed 42 is the baseline; run seeds 43-45.
 configs/sensitivity/var_expert_seed/VarExpert/Size163/seed43/ionization.yaml
 configs/sensitivity/var_expert_seed/VarExpert/Size163/seed44/ionization.yaml
 configs/sensitivity/var_expert_seed/VarExpert/Size163/seed45/ionization.yaml

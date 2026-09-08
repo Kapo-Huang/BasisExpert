@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import math
+import os
 import re
 import time
 from datetime import datetime
@@ -18,6 +19,7 @@ from sklearn.cluster import MiniBatchKMeans
 
 from ...data import build_dataset
 from ...evaluation.metrics import EPS, save_metrics
+from ...evaluation.selection import parse_timestep_selection
 from ...pretrain.assignments import PretrainAssignmentConfig, compute_pretrain_assignments
 from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
@@ -629,6 +631,10 @@ def _run_meta_initialization(
     if cluster_ids.size == 0:
         raise RuntimeError("Meta initialization requires at least one non-empty cluster")
 
+    training_samples = 0
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    training_started_at = time.perf_counter()
     loss_history: list[float] = []
     final_iteration = start_iteration - 1
     for iteration in range(start_iteration, int(config.training.meta_iterations) + 1):
@@ -683,6 +689,7 @@ def _run_meta_initialization(
 
                     task_loss_total += float(loss.item())
                     task_steps += 1
+                    training_samples += int(rows.size)
 
             if task_steps <= 0:
                 continue
@@ -736,12 +743,17 @@ def _run_meta_initialization(
             )
             break
 
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    training_seconds = float(time.perf_counter() - training_started_at)
     return {
         "template_model": template_model,
         "last_iteration": final_iteration,
         "best_loss": best_loss,
         "epochs_no_improve": epochs_no_improve,
         "loss_history": loss_history,
+        "training_samples": int(training_samples),
+        "training_seconds": training_seconds,
     }
 
 
@@ -803,6 +815,10 @@ def _run_stage(
         if probe_rows is not None and metrics_dir is not None
         else None
     )
+    training_samples = 0
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    training_started_at = time.perf_counter()
     for epoch in range(start_epoch, int(epochs) + 1):
         final_epoch = epoch
         rng = np.random.default_rng(int(config.training.seed) + epoch + 10_000 + int(split_round) * 100_000)
@@ -841,6 +857,7 @@ def _run_stage(
             batch_size_current = int(coords.shape[0])
             epoch_loss_sum += float(loss.item()) * batch_size_current
             total_samples += batch_size_current
+            training_samples += batch_size_current
 
         avg_loss = epoch_loss_sum / max(total_samples, 1)
         if scheduler is not None:
@@ -932,6 +949,9 @@ def _run_stage(
             target_layout=layout,
             assignments=assignments,
         )
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    training_seconds = float(time.perf_counter() - training_started_at)
     return {
         "last_epoch": final_epoch,
         "best_loss": best_loss,
@@ -940,6 +960,8 @@ def _run_stage(
         "scheduler": scheduler,
         "sample_counts": sample_counts,
         "batch_cluster_unique_counts": batch_cluster_unique_counts,
+        "training_samples": int(training_samples),
+        "training_seconds": training_seconds,
     }
 
 
@@ -1146,12 +1168,18 @@ def _predict_and_save_streaming(
     exp_id: str,
     checkpoint_path: str | Path | None = None,
     compute_metrics: bool = False,
+    row_slices: tuple[slice, ...] | None = None,
+    compact_timestep_count: int | None = None,
 ) -> dict[str, Any]:
     prediction_dir.mkdir(parents=True, exist_ok=True)
     prediction_paths: dict[str, Path] = {}
     prediction_memmaps: dict[str, np.memmap] = {}
     flat_prediction_views: dict[str, np.memmap] = {}
 
+    output_sample_count = (
+        int(dataset.meta.n_samples) if row_slices is None
+        else sum(int(item.stop - item.start) for item in row_slices)
+    )
     metrics_state: dict[str, Any] | None = None
     if compute_metrics:
         metrics_state = {}
@@ -1180,21 +1208,44 @@ def _predict_and_save_streaming(
 
     for entry in layout:
         path = _prediction_path(prediction_dir, exp_id, entry.name)
-        final_shape = prediction_shape(dataset.meta, int(entry.dim))
+        volume_shape = dataset.meta.volume_shape
+        if row_slices is None:
+            final_shape = prediction_shape(dataset.meta, int(entry.dim))
+        elif volume_shape is None:
+            final_shape = (output_sample_count, int(entry.dim))
+        else:
+            spatial = (int(volume_shape.Z), int(volume_shape.Y), int(volume_shape.X))
+            final_shape = (
+                (int(compact_timestep_count), *spatial)
+                if int(entry.dim) == 1
+                else (int(compact_timestep_count), *spatial, int(entry.dim))
+            )
         mmap = open_memmap(path, mode="w+", dtype=np.float32, shape=final_shape)
         prediction_paths[entry.name] = path
         prediction_memmaps[entry.name] = mmap
-        flat_prediction_views[entry.name] = mmap.reshape(int(dataset.meta.n_samples), int(entry.dim))
+        flat_prediction_views[entry.name] = mmap.reshape(output_sample_count, int(entry.dim))
 
     model.eval()
     with torch.no_grad():
-        for rows in _iter_dataset_row_chunks(len(dataset), int(batch_size)):
+        row_chunks = (
+            _iter_dataset_row_chunks(len(dataset), int(batch_size))
+            if row_slices is None
+            else (
+                np.arange(start, min(start + int(batch_size), int(interval.stop)), dtype=np.int64)
+                for interval in row_slices
+                for start in range(int(interval.start), int(interval.stop), int(batch_size))
+            )
+        )
+        write_offset = 0
+        for rows in row_chunks:
             batch = dataset.fetch_batch(rows.tolist(), include_targets=compute_metrics)
             coords = batch.coords.to(device, non_blocking=True)
             preds = model(coords)
+            output_rows = rows if row_slices is None else slice(write_offset, write_offset + int(rows.size))
+            write_offset += int(rows.size)
             for entry in layout:
                 pred_np = np.asarray(preds[entry.name].detach().cpu().numpy(), dtype=np.float32)
-                flat_prediction_views[entry.name][rows] = pred_np
+                flat_prediction_views[entry.name][output_rows] = pred_np
                 if metrics_state is None:
                     continue
                 if isinstance(batch.targets, torch.Tensor):
@@ -1291,6 +1342,8 @@ def run_train(config_path: str | Path) -> dict[str, Any]:
             "last_iteration": int(meta_result["last_iteration"]),
             "best_loss": float(meta_result["best_loss"]),
             "loss_history": [float(loss) for loss in meta_result["loss_history"]],
+            "training_samples": int(meta_result["training_samples"]),
+            "training_seconds": float(meta_result["training_seconds"]),
         }
 
         model = _build_model(config, dataset, centroids=centroids, target_layout=layout)
@@ -1327,6 +1380,8 @@ def run_train(config_path: str | Path) -> dict[str, Any]:
                 "last_epoch": int(finetune_result["last_epoch"]),
                 "sample_counts": [int(value) for value in finetune_result["sample_counts"]],
                 "batch_cluster_unique_counts": [int(value) for value in finetune_result["batch_cluster_unique_counts"]],
+                "training_samples": int(finetune_result["training_samples"]),
+                "training_seconds": float(finetune_result["training_seconds"]),
             }
         )
 
@@ -1387,9 +1442,26 @@ def run_train(config_path: str | Path) -> dict[str, Any]:
                     "last_epoch": int(finetune_result["last_epoch"]),
                     "sample_counts": [int(value) for value in finetune_result["sample_counts"]],
                     "batch_cluster_unique_counts": [int(value) for value in finetune_result["batch_cluster_unique_counts"]],
+                    "training_samples": int(finetune_result["training_samples"]),
+                    "training_seconds": float(finetune_result["training_seconds"]),
                 }
             )
 
+        runtime_strata = [
+            {
+                "name": "meta_init",
+                "samples": int(training_summary["meta_init"]["training_samples"]),
+                "seconds": float(training_summary["meta_init"]["training_seconds"]),
+            },
+            *[
+                {
+                    "name": f"finetune_round_{item['split_round']}",
+                    "samples": int(item["training_samples"]),
+                    "seconds": float(item["training_seconds"]),
+                }
+                for item in training_summary["finetune_rounds"]
+            ],
+        ]
         final_checkpoint = save_mc_checkpoint(
             path=Path(dirs["checkpoint_dir"]) / f"{config.exp_id}.pth",
             model=model,
@@ -1408,6 +1480,11 @@ def run_train(config_path: str | Path) -> dict[str, Any]:
             "checkpoint_bytes": checkpoint_bytes,
             "raw_target_bytes": int(raw_target_bytes),
             "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
+            "runtime_training": {
+                "samples": sum(int(item["samples"]) for item in runtime_strata),
+                "seconds": sum(float(item["seconds"]) for item in runtime_strata),
+                "strata": runtime_strata,
+            },
         }
         if not bool(config.evaluation.save_predictions):
             logger.info("Skipping automatic prediction/evaluation after training.")
@@ -1456,7 +1533,35 @@ def _load_checkpoint_model_for_inference(
     return model, layout
 
 
-def run_predict(config_path: str | Path, *, checkpoint_path: str | Path | None = None) -> dict[str, Any]:
+def _selected_time_slices(
+    dataset,
+    time_indices: str | tuple[int, ...] | list[int],
+) -> tuple[tuple[int, ...], tuple[slice, ...], int | None]:
+    volume_shape = dataset.meta.volume_shape
+    if volume_shape is not None:
+        total = int(volume_shape.T)
+        selected = parse_timestep_selection(time_indices, total)
+        values_per_timestep = int(volume_shape.X) * int(volume_shape.Y) * int(volume_shape.Z)
+        slices = tuple(
+            slice(int(timestep) * values_per_timestep, (int(timestep) + 1) * values_per_timestep)
+            for timestep in selected
+        )
+        return selected, slices, len(selected)
+
+    from ...evaluation.service import _node_time_indexers
+
+    coords = np.load(dataset.coords_path, mmap_mode="r", allow_pickle=False)
+    indexers = _node_time_indexers(coords)
+    selected = parse_timestep_selection(time_indices, len(indexers))
+    return selected, tuple(indexers[timestep] for timestep in selected), None
+
+
+def run_predict(
+    config_path: str | Path,
+    *,
+    checkpoint_path: str | Path | None = None,
+    time_indices: str | tuple[int, ...] | list[int] | None = None,
+) -> dict[str, Any]:
     apply_runtime_thread_limits()
     try:
         config, dirs, dataset, device = _prepare_runtime(
@@ -1464,6 +1569,11 @@ def run_predict(config_path: str | Path, *, checkpoint_path: str | Path | None =
             create_run=False,
             checkpoint_path=checkpoint_path,
         )
+        selected: tuple[int, ...] = ()
+        row_slices = None
+        compact_timestep_count = None
+        if time_indices is not None:
+            selected, row_slices, compact_timestep_count = _selected_time_slices(dataset, time_indices)
         resolved_checkpoint = (
             Path(checkpoint_path)
             if checkpoint_path is not None
@@ -1483,15 +1593,22 @@ def run_predict(config_path: str | Path, *, checkpoint_path: str | Path | None =
             layout=layout,
             device=device,
             batch_size=int(config.evaluation.batch_size or config.training.pred_batch_size),
-            prediction_dir=Path(dirs["prediction_dir"]),
+            prediction_dir=Path(os.environ.get("VAR_EXPERT_EVALUATION_OUTPUT_DIR", dirs["prediction_dir"])),
             exp_id=config.exp_id,
             checkpoint_path=resolved_checkpoint,
             compute_metrics=False,
+            row_slices=row_slices,
+            compact_timestep_count=compact_timestep_count,
         )
-        return {
+        result = {
             "checkpoint_path": str(resolved_checkpoint),
             "prediction_paths": prediction_result["prediction_paths"],
         }
+        if time_indices is not None:
+            result["decoded_timesteps"] = list(selected)
+            if compact_timestep_count is None:
+                result["decoded_counts"] = [int(item.stop - item.start) for item in row_slices or ()]
+        return result
     finally:
         close_file_handlers()
 

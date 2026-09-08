@@ -356,7 +356,7 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument(
         "--metrics",
         default=None,
-        help="Comma-separated: psnr,ssim,lpips,error,pearson_error,mi_error,decode_time,memory",
+        help="Comma-separated: psnr,ssim,lpips,error,pearson_error,mi_error,decode_time,training_time,inference_time,memory",
     )
     eval_parser.add_argument(
         "--timesteps",
@@ -372,6 +372,9 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument("--error-vmax", type=float, default=None, help="Fixed error-render maximum in percent")
     eval_parser.add_argument("--result-root", default="EvalResult", help="Schema-v2 result root")
     eval_parser.add_argument("--evaluation-id", default="default", help="Evaluation namespace")
+    eval_parser.add_argument("--training-probe-samples", type=int, default=72_000_000)
+    eval_parser.add_argument("--training-total-samples", type=int, default=14_400_000_000)
+    eval_parser.add_argument("--inference-fraction", type=float, default=0.1)
     return parser.parse_args()
 
 
@@ -420,6 +423,9 @@ def main() -> None:
             evaluation_id=args.evaluation_id,
             error_vmin=args.error_vmin,
             error_vmax=args.error_vmax,
+            training_probe_samples=args.training_probe_samples,
+            training_total_samples=args.training_total_samples,
+            inference_fraction=args.inference_fraction,
         )
         logger.info("Evaluation report saved: %s", result["metrics_path"])
         return

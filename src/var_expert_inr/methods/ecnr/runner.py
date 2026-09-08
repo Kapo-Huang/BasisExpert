@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -1554,7 +1555,10 @@ def run_predict(
 ) -> dict[str, Any]:
     cfg = load_config(config_path, target_override=target)
     dirs = _run_for_path(cfg, checkpoint)
-    workspace = CacheWorkspace(dirs["cache"])
+    runtime_output = os.environ.get("VAR_EXPERT_EVALUATION_OUTPUT_DIR")
+    prediction_dir = Path(runtime_output) if runtime_output else dirs["predictions"]
+    cache_dir = prediction_dir / "cache" if runtime_output else dirs["cache"]
+    workspace = CacheWorkspace(cache_dir)
     try:
         device = _device(cfg["training"]["device"])
         payload, source = _load_inference_payload(
@@ -1566,12 +1570,12 @@ def run_predict(
             time_indices,
             int(cfg["data"]["volume_shape"]["T"]),
         )
-        output_path = dirs["predictions"] / f"{cfg['exp_id']}.npy"
+        output_path = prediction_dir / f"{cfg['exp_id']}.npy"
         decode_checkpoint_payload(
             payload,
             device=device,
             batch_size=int(cfg["evaluation"]["batch_size"]),
-            work_dir=dirs["cache"] / "decode",
+            work_dir=cache_dir / "decode",
             output_path=output_path,
             time_indices=selected,
             workspace=workspace,

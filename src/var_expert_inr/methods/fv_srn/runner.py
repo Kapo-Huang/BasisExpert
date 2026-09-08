@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -278,6 +279,8 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict:
 
         probe_cfg = normalize_probe(cfg.get("exploration_probe"))
         probe_recorder = ExplorationProbeRecorder(dirs["metrics"], probe_cfg) if probe_cfg.enabled else None
+        training_loop_seconds = 0.0
+        training_samples = 0
         for epoch in range(int(cfg["training"]["epochs"])):
             if cfg["training"]["rebuild_every"] and (epoch + 1) % int(cfg["training"]["rebuild_every"]) == 0:
                 errors = _error_grids(model, volume, cfg["training"], device=device, rng=rng)
@@ -289,6 +292,9 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict:
                     rng=rng,
                     error_grids=errors,
                 )
+            if device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.synchronize(device)
+            epoch_training_started_at = time.perf_counter()
             model.train()
             train_total = train_count = 0
             for t in rng.permutation(volume.shape["T"]).tolist():
@@ -303,6 +309,10 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict:
                     optimizer.step()
                     train_total += float(loss.detach()) * len(picked)
                     train_count += len(picked)
+            if device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.synchronize(device)
+            training_loop_seconds += time.perf_counter() - epoch_training_started_at
+            training_samples += int(train_count)
             scheduler.step()
             val_loss = _validate_epoch(model, pool, device=device, training=cfg["training"])
             if (epoch + 1) % int(cfg["training"]["log_every"]) == 0:
@@ -345,6 +355,11 @@ def run_train(config_path: str | Path, *, target: str | None = None) -> dict:
             "checkpoint_bytes": int(checkpoint_payload["checkpoint_bytes"]),
             "raw_target_bytes": int(volume.raw_bytes),
             "cr": float(volume.raw_bytes / checkpoint_payload["checkpoint_bytes"]),
+            "runtime_training": {
+                "samples": int(training_samples),
+                "seconds": float(training_loop_seconds),
+                "strata": [{"name": "main", "samples": int(training_samples), "seconds": float(training_loop_seconds)}],
+            },
         }
         (dirs["metrics"] / "training_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         if cfg["evaluation"]["run_after_training"]:
@@ -372,7 +387,7 @@ def run_predict(
     selected = parse_timestep_selection(time_indices, volume.shape["T"])
     prediction_path = _predict(
         model, volume, device=device, batch_size=int(cfg["evaluation"]["batch_size"]),
-        output_path=dirs["predictions"] / f"{cfg['exp_id']}.npy",
+        output_path=Path(os.environ.get("VAR_EXPERT_EVALUATION_OUTPUT_DIR", dirs["predictions"])) / f"{cfg['exp_id']}.npy",
         time_indices=selected,
     )
     return {

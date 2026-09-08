@@ -131,13 +131,17 @@ def _discover_checkpoint_runs(root: Path) -> list[Path]:
     """Find archived runs that can be evaluated from their local checkpoint."""
     if not root.is_dir():
         raise FileNotFoundError(f"Evaluation run root does not exist: {root}")
-    runs: list[Path] = []
-    for config_path in sorted(root.rglob("configs/config.yaml")):
-        run_dir = config_path.parent.parent
+    runs: set[Path] = set()
+    for config_path in sorted(root.rglob("config.yaml")):
+        run_dir = (
+            config_path.parent.parent
+            if config_path.parent.name == "configs"
+            else config_path.parent
+        )
         checkpoint_dir = run_dir / "checkpoints"
         if any(checkpoint_dir.glob("*.pth")):
-            runs.append(run_dir.resolve())
-    return runs
+            runs.add(run_dir.resolve())
+    return sorted(runs)
 
 
 def _section(payload: dict[str, Any], lower: str, upper: str) -> dict[str, Any]:
@@ -193,6 +197,73 @@ def _configure_logging(log_path: Path) -> None:
     )
 
 
+def _write_runtime_summaries(output_dir: Path, records: list[dict[str, Any]]) -> None:
+    entries: list[dict[str, Any]] = []
+    for record in records:
+        if record.get("status") not in COMPLETED_STATUSES or not record.get("metrics_path"):
+            continue
+        try:
+            payload = json.loads(Path(record["metrics_path"]).read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        performance = payload.get("performance") or {}
+        training = performance.get("training_time") or {}
+        inference = performance.get("inference_time") or {}
+        if not training and not inference:
+            continue
+        entries.append({
+            "model": record.get("model", ""),
+            "dataset": record.get("dataset", ""),
+            "target": record.get("target", ""),
+            "run_dir": record.get("run_dir", ""),
+            "estimated_training_seconds": training.get("estimated_training_seconds"),
+            "estimated_training_hours": training.get("estimated_training_hours"),
+            "estimated_total_inference_seconds": inference.get("estimated_total_inference_seconds"),
+            "estimated_total_inference_hours": inference.get("estimated_total_inference_hours"),
+            "training_samples_per_second": training.get("samples_per_second"),
+            "inference_values_per_second": inference.get("values_per_second"),
+        })
+    if not entries:
+        return
+
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in entries:
+        key = (str(entry["model"]), str(entry["dataset"]))
+        group = grouped.setdefault(
+            key,
+            {
+                "model": key[0],
+                "dataset": key[1],
+                "experiment_count": 0,
+                "estimated_training_seconds": 0.0,
+                "estimated_total_inference_seconds": 0.0,
+            },
+        )
+        group["experiment_count"] += 1
+        for field in ("estimated_training_seconds", "estimated_total_inference_seconds"):
+            value = entry.get(field)
+            if value is not None:
+                group[field] += float(value)
+    groups = list(grouped.values())
+    for group in groups:
+        group["estimated_training_hours"] = group["estimated_training_seconds"] / 3600.0
+        group["estimated_total_inference_hours"] = group["estimated_total_inference_seconds"] / 3600.0
+
+    write_json(output_dir / "runtime_summary.json", {
+        "schema_version": LAYOUT_SCHEMA_VERSION,
+        "grouping": ["model", "dataset"],
+        "experiment_count": len(entries),
+        "entries": entries,
+        "groups": groups,
+    })
+    for name, rows in (("runtime_entries.tsv", entries), ("runtime_groups.tsv", groups)):
+        fields = list(dict.fromkeys(key for row in rows for key in row))
+        with (output_dir / name).open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+
+
 def _write_summary(output_dir: Path, records: list[dict[str, Any]], config_path: Path) -> None:
     succeeded = sum(row["status"] == "success" for row in records)
     skipped = sum(row["status"] == "skipped" for row in records)
@@ -221,6 +292,7 @@ def _write_summary(output_dir: Path, records: list[dict[str, Any]], config_path:
         )
         writer.writeheader()
         writer.writerows(records)
+    _write_runtime_summaries(output_dir, records)
 
 
 def _explicit_timesteps(
@@ -340,7 +412,28 @@ def _existing_evaluation_state_at(
         payload = json.loads(metrics_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return None
-    if payload.get("status") != "complete" or manifest.get("source_kind") != "checkpoint":
+    if payload.get("status") != "complete":
+        return None
+    performance = payload.get("performance") or {}
+    runtime_completed = {
+        metric
+        for metric in ("training_time", "inference_time")
+        if isinstance(performance.get(metric), dict)
+    }
+    if (
+        requested_metrics
+        and set(requested_metrics).issubset(runtime_completed)
+        and not render
+    ):
+        return {
+            "output_dir": output_dir,
+            "manifest": manifest,
+            "metrics": payload,
+            "completed_metrics": runtime_completed,
+            "render_complete": False,
+            "reuse_reason": "experiment-runtime-cache",
+        }
+    if manifest.get("source_kind") != "checkpoint":
         return None
 
     source_path = Path(str(manifest.get("source_path", ""))).expanduser().resolve()
@@ -382,7 +475,10 @@ def _existing_evaluation_state_at(
     }
     completed_metrics: set[str] = set()
     for metric in requested_metrics:
-        if metric in {"decode_time", "memory"}:
+        if metric in {"training_time", "inference_time"}:
+            if isinstance(performance.get(metric), dict):
+                completed_metrics.add(metric)
+        elif metric in {"decode_time", "memory"}:
             if metric == "decode_time" and payload.get("performance", {}).get("total_decode_seconds") is not None:
                 completed_metrics.add(metric)
             elif metric == "memory" and payload.get("performance", {}).get("peak_memory_bytes") is not None:
@@ -646,6 +742,9 @@ def _worker_main(request_path: Path, result_path: Path) -> int:
             evaluation_id=request.get("evaluation_id", "default"),
             error_vmin=request.get("error_vmin"),
             error_vmax=request.get("error_vmax"),
+            training_probe_samples=int(request.get("training_probe_samples", 72_000_000)),
+            training_total_samples=int(request.get("training_total_samples", 14_400_000_000)),
+            inference_fraction=float(request.get("inference_fraction", 0.1)),
         )
         response = {
             "status": "success",
@@ -744,6 +843,13 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
         evaluation.get("error_vmin", 0.0),
         evaluation.get("error_vmax", 5.0),
     )
+    training_probe_samples = int(evaluation.get("training_probe_samples", 72_000_000))
+    training_total_samples = int(evaluation.get("training_total_samples", 14_400_000_000))
+    inference_fraction = float(evaluation.get("inference_fraction", 0.1))
+    if training_probe_samples <= 0 or training_total_samples <= 0:
+        raise ValueError("evaluation training sample budgets must be positive")
+    if not 0.0 < inference_fraction <= 1.0:
+        raise ValueError("evaluation.inference_fraction must be in (0, 1]")
     profile_value = evaluation.get("render_profile", "auto")
     render_profile = (
         None
@@ -941,6 +1047,9 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
                         "evaluation_id": evaluation_id,
                         "error_vmin": error_vmin,
                         "error_vmax": error_vmax,
+                        "training_probe_samples": training_probe_samples,
+                        "training_total_samples": training_total_samples,
+                        "inference_fraction": inference_fraction,
                     },
                     indent=2,
                     ensure_ascii=False,

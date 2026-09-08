@@ -1,0 +1,24 @@
+﻿# Evaluate PSNR for every archived Result entry using dataset-specific uniform
+# sampling. Manifest discovery also supports the root config.yaml layout used by Neural Experts.
+manifest_path: Result/MANIFEST.tsv
+result_root: EvalResult
+evaluation_id: result_psnr_sampled
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - psnr
+  timesteps: uniform:10
+  timesteps_by_dataset:
+    Ionization: uniform:10
+    combustion_40NH3_1: uniform:200
+    Katrina: uniform:16
+    RedSea: uniform:10
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

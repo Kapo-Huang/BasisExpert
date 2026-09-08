@@ -14,7 +14,7 @@ python -m var_expert_inr.cli evaluate \
   --run runs/<exp_id>/<timestamp> \
   --result-root EvalResult \
   --evaluation-id quality \
-  --metrics psnr,ssim,lpips,error,decode_time,memory \
+  --metrics psnr,ssim,lpips,error,decode_time,training_time,inference_time,memory \
   --targets GT,H2 \
   --timesteps 0,10:30,40:99:10
 ```
@@ -37,6 +37,8 @@ The default metric is `psnr`.
 | `pearson_error` | Required | No | Absolute error in the sampled cross-variable Pearson matrix. |
 | `mi_error` | Required | No | Absolute error in the sampled cross-variable histogram-MI matrix, in nats. |
 | `decode_time` | Not required | No | Fresh decode timing, excluding rendering and metric work. |
+| `training_time` | Not required | No | Runs a short training probe from the archived config and extrapolates the configured common sample budget. |
+| `inference_time` | Not required | No | Uniformly decodes 10% of timesteps from the archived checkpoint and projects checkpoint-load plus full reconstruction time. |
 | `memory` | Not required | No | Process RSS and, when available, CUDA allocated/reserved peaks. |
 | `--render` | Optional | Required | Selected prediction frames; GT frames are added when available. |
 
@@ -153,14 +155,17 @@ references. Concurrent writers use per-artifact locks and atomic replacement.
 
 `--overwrite` refreshes the current evaluation and model-derived artifacts; it
 does not invalidate an unchanged GT artifact. `decode_time` and `memory` always
-perform fresh measurements. GT materialization is lazy: the first request
-renders a frame and all later evaluations reference that same artifact without
+perform fresh measurements. `training_time` and `inference_time` are cached by
+experiment and evaluation ID; `--overwrite` reruns their probes. GT
+materialization is lazy: the first request renders a frame and all later
+evaluations reference that same artifact without
 copying it into their own directories.
 
 Run a batch recipe and inspect or maintain the result tree with:
 
 ```bash
 python scripts/evaluation/run_batch.py --config configs/evaluation/evaluation_result.yaml
+python scripts/evaluation/run_batch.py --config configs/evaluation/evaluation_result_runtime.yaml
 python scripts/evaluation/manage_eval_result.py status
 python scripts/evaluation/manage_eval_result.py verify
 python scripts/evaluation/manage_eval_result.py prune        # dry run

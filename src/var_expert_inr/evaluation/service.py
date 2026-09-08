@@ -82,6 +82,9 @@ class EvaluationRequest:
     evaluation_id: str = "default"
     error_vmin: float = 0.0
     error_vmax: float = 5.0
+    training_probe_samples: int = 72_000_000
+    training_total_samples: int = 14_400_000_000
+    inference_fraction: float = 0.1
 
     def __post_init__(self) -> None:
         error_vmin, error_vmax = validate_error_bounds(
@@ -91,6 +94,12 @@ class EvaluationRequest:
         object.__setattr__(self, "error_vmin", error_vmin)
         object.__setattr__(self, "error_vmax", error_vmax)
 
+        if int(self.training_probe_samples) <= 0:
+            raise ValueError("training_probe_samples must be positive")
+        if int(self.training_total_samples) <= 0:
+            raise ValueError("training_total_samples must be positive")
+        if not 0.0 < float(self.inference_fraction) <= 1.0:
+            raise ValueError("inference_fraction must be in (0, 1]")
 
 class _InferenceOnlyDataset(FieldDataset):
     """Coordinate dataset used when performance/render tasks have no GT."""
@@ -789,6 +798,8 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
             "load_seconds": load_seconds,
             "reconstruction_seconds": reconstruction_seconds,
             "total_decode_seconds": total_decode,
+            "selected_values": int(selected_values),
+            "total_values": int(dataset.meta.n_samples) * sum(int(dataset.meta.target_dims[name]) for name in targets),
             "values_per_second": float(selected_values / reconstruction_seconds) if reconstruction_seconds > 0 else None,
             "decode_selection_mode": "selected",
         })
@@ -880,6 +891,9 @@ def evaluate_run(
     evaluation_id: str = "default",
     error_vmin: float | None = None,
     error_vmax: float | None = None,
+    training_probe_samples: int = 72_000_000,
+    training_total_samples: int = 14_400_000_000,
+    inference_fraction: float = 0.1,
 ) -> dict[str, Any]:
     resolved_run = Path(run_dir).expanduser().resolve()
     config_path = resolve_run_config(resolved_run)
@@ -946,9 +960,36 @@ def evaluate_run(
         render=bool(render), render_profile=selected_profile, overwrite=bool(overwrite), device=device,
         result_root=result_root, evaluation_id=evaluation_id,
         error_vmin=float(selected_error_vmin), error_vmax=float(selected_error_vmax),
+        training_probe_samples=int(training_probe_samples),
+        training_total_samples=int(training_total_samples),
+        inference_fraction=float(inference_fraction),
     )
     from .adapters import select_run_adapter
 
-    return select_run_adapter(raw).evaluate(
-        request, raw, config_path
+    adapter = select_run_adapter(raw)
+    runtime_metrics = tuple(
+        metric for metric in parsed_metrics
+        if metric in {"training_time", "inference_time"}
     )
+    ordinary_metrics = tuple(
+        metric for metric in parsed_metrics
+        if metric not in {"training_time", "inference_time"}
+    )
+    ordinary_result = None
+    if ordinary_metrics or request.render:
+        ordinary_result = adapter.evaluate(
+            replace(request, metrics=ordinary_metrics), raw, config_path
+        )
+    if runtime_metrics:
+        from .runtime import run_runtime_evaluation
+
+        return run_runtime_evaluation(
+            replace(request, metrics=runtime_metrics),
+            raw,
+            config_path,
+            adapter_name=adapter.name,
+            existing_result=ordinary_result,
+        )
+    if ordinary_result is None:
+        raise ValueError("Evaluation selected no metrics or rendering work")
+    return ordinary_result

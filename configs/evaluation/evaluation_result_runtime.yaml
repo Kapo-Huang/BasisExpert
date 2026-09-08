@@ -1,0 +1,24 @@
+# Estimate end-to-end training and inference time for every archived experiment.
+# Training probes use 72M samples (three VarExpert-style 1,500 x 16,000 rounds)
+# and extrapolate every experiment to the Main VarExpert budget of 14.4B samples.
+# Inference uniformly decodes ceil(10% * T) frames and projects to all values.
+run_root: Result
+result_root: EvalResult
+evaluation_id: result_runtime
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - training_time
+    - inference_time
+  timesteps: all
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  training_probe_samples: 72000000
+  training_total_samples: 14400000000
+  inference_fraction: 0.1

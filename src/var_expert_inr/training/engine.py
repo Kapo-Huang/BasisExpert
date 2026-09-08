@@ -4,6 +4,7 @@ import copy
 import logging
 import math
 import time
+import os
 from pathlib import Path
 
 import numpy as np
@@ -747,7 +748,7 @@ def _train_model_impl(
     is_var_expert = bool(getattr(backbone, "supports_expert_routing_aux", False))
     is_instant_ngp = isinstance(backbone, InstantNGP)
     is_mvnet = isinstance(backbone, MVNet4D)
-    if is_mvnet:
+    if is_mvnet and os.environ.get("VAR_EXPERT_RUNTIME_BENCHMARK") != "1":
         validate_mvnet_training_config(cfg)
 
     timing_enabled = bool(log_cfg.timing.enabled)
@@ -889,6 +890,10 @@ def _train_model_impl(
     stopped_early = False
     completed_epoch = 0
     optimizer.zero_grad(set_to_none=True)
+
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    training_loop_started_at = time.perf_counter()
 
     for epoch in range(1, cfg.epochs + 1):
         completed_epoch = epoch
@@ -1422,6 +1427,9 @@ def _train_model_impl(
                 breakdown=epoch_timing,
             )
 
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    training_loop_seconds = float(time.perf_counter() - training_loop_started_at)
     if accumulation_count != 0:
         raise RuntimeError(
             "Training ended with an incomplete gradient accumulation window"
@@ -1461,6 +1469,17 @@ def _train_model_impl(
         "global_data_step": global_data_step,
         "global_optimizer_step": global_optimizer_step,
         "gradient_accumulation_count": accumulation_count,
+        "runtime_training": {
+            "samples": int(global_data_step) * int(cfg.batch_size),
+            "seconds": training_loop_seconds,
+            "strata": [
+                {
+                    "name": "main",
+                    "samples": int(global_data_step) * int(cfg.batch_size),
+                    "seconds": training_loop_seconds,
+                }
+            ],
+        },
     }
     if not bool(predict_after_training):
         logger.info("Skipping automatic prediction/evaluation after training.")

@@ -16,7 +16,7 @@ def add_run_evaluation_arguments(
     parser.add_argument(
         "--metrics",
         default=None,
-        help="Comma-separated psnr,ssim,lpips,error,pearson_error,mi_error,decode_time,memory",
+        help="Comma-separated psnr,ssim,lpips,error,pearson_error,mi_error,decode_time,training_time,inference_time,memory",
     )
     parser.add_argument(
         "--timesteps",
@@ -36,6 +36,9 @@ def add_run_evaluation_arguments(
     parser.add_argument("--error-vmax", type=float, default=None, help="Fixed error-render maximum in percent")
     parser.add_argument("--result-root", default="EvalResult", help="Schema-v2 result root")
     parser.add_argument("--evaluation-id", default="default", help="Evaluation namespace")
+    parser.add_argument("--training-probe-samples", type=int, default=72_000_000)
+    parser.add_argument("--training-total-samples", type=int, default=14_400_000_000)
+    parser.add_argument("--inference-fraction", type=float, default=0.1)
 
 
 def execute_run_evaluation(args: argparse.Namespace) -> dict:
@@ -55,6 +58,9 @@ def execute_run_evaluation(args: argparse.Namespace) -> dict:
         evaluation_id=args.evaluation_id,
         error_vmin=args.error_vmin,
         error_vmax=args.error_vmax,
+        training_probe_samples=args.training_probe_samples,
+        training_total_samples=args.training_total_samples,
+        inference_fraction=args.inference_fraction,
     )
     print(json.dumps({"output_dir": str(result["output_dir"])}, ensure_ascii=False))
     return result

@@ -318,6 +318,8 @@ def _train_active_model(
     logical_samples = 0
     optimizer_steps = 0
     epochs_executed = 0
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
     started = time.perf_counter()
     batch_blocks = int(training["max_active_blocks_per_step"])
     base_lr = float(training["lr"]) / (4.0 if int(scale_index) == 0 else 1.0)
@@ -387,6 +389,9 @@ def _train_active_model(
         ):
             break
         previous_loss = current_loss
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    training_loop_seconds = float(time.perf_counter() - started)
     predictions = _predict_blocks(
         model,
         coordinates.detach().cpu(),
@@ -399,7 +404,7 @@ def _train_active_model(
         "logical_samples": logical_samples,
         "optimizer_steps": optimizer_steps,
         "remaining_active_blocks": int(active.numel()),
-        "elapsed_seconds": float(time.perf_counter() - started),
+        "elapsed_seconds": training_loop_seconds,
     }, predictions
 
 
@@ -615,6 +620,10 @@ def _train_timestep(
         "optimizer_steps": int(total_optimizer_steps),
         "elapsed_seconds": float(time.perf_counter() - started),
         "effective_scales": int(effective_scales),
+        "training_loop_seconds": float(sum(
+            float(item.get("training", {}).get("elapsed_seconds", 0.0))
+            for item in completed_scales
+        )),
         "scale_metrics": scale_metrics,
     }
     metrics_path = _write_json(timestep_dir / "metrics.json", metrics_payload)

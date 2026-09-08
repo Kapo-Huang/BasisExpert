@@ -8,6 +8,6 @@ server_env_init "$@" || exit $?
 RUN_TOKEN="${RUN_TOKEN:-$(date +%Y%m%d_%H%M%S)}"
 export RUN_TOKEN
 export CONFIG_LIST_FILE="${CONFIG_LIST_FILE:-${SCRIPT_DIR}/var_expert_seed.list}"
-export BATCH_LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/sensitivity/var_expert_seed/${RUN_TOKEN}}"
+export BATCH_LOG_ROOT="${BATCH_LOG_ROOT:-${REPO_ROOT}/batch_logs/sensitivity/var_expert_joint_seed/${RUN_TOKEN}}"
 
 exec bash "${SCRIPT_DIR}/../main/run_all.sh" "$@"

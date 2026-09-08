@@ -1,6 +1,6 @@
-experiment: sensitivity_varexpert_seed_size163_seed43
-exp_id: sensitivity-varexpert-seed-size163-seed43
-experiment_root: ${RUNS_ROOT}/sensitivity/var_expert_seed
+experiment: sensitivity_varexpert_joint_seed_size163_seed43
+exp_id: sensitivity-varexpert-joint-seed-size163-seed43
+experiment_root: ${RUNS_ROOT}/sensitivity/var_expert_joint_seed
 data:
   kind: volume
   dataset_name: ionization
@@ -54,8 +54,8 @@ training:
     enabled: true
     epochs: 5
     lr: 5.0e-05
-    cluster_seed: 42
-    assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_6.npy
+    cluster_seed: 43
+    assignments_cache_path: ${REPO_ROOT}/data/cache/ionization_voxel_assignments_6_seed43.npy
 evaluation:
   batch_size: 16000
   save_predictions: false

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +15,7 @@ import torch
 from numpy.lib.format import open_memmap
 
 from ...evaluation.metrics import PSNRAccumulator, save_metrics
+from ...evaluation.selection import parse_timestep_selection
 from ...utils.io import sha256_payload
 from ...utils.logging_utils import close_file_handlers, setup_logging
 from ...utils.model_stats import collect_model_statistics
@@ -115,9 +117,11 @@ def _predict(
     batch_size: int,
     mean_path: Path,
     variance_path: Path,
+    time_indices: tuple[int, ...] | list[int] | None = None,
 ) -> tuple[Path, Path]:
+    selected = tuple(range(volume.shape["T"])) if time_indices is None else tuple(int(value) for value in time_indices)
     shape = (
-        volume.shape["T"],
+        len(selected),
         volume.shape["Z"],
         volume.shape["Y"],
         volume.shape["X"],
@@ -127,9 +131,9 @@ def _predict(
     spatial_count = int(np.prod(volume.spatial_shape, dtype=np.int64))
     model.eval()
     with torch.no_grad():
-        for timestep in range(volume.shape["T"]):
-            mean_flat = mean_output[timestep].reshape(-1)
-            variance_flat = variance_output[timestep].reshape(-1)
+        for position, timestep in enumerate(selected):
+            mean_flat = mean_output[position].reshape(-1)
+            variance_flat = variance_output[position].reshape(-1)
             for start in range(0, spatial_count, int(batch_size)):
                 stop = min(start + int(batch_size), spatial_count)
                 coords = torch.from_numpy(volume.full_coords(start, stop)).to(
@@ -140,7 +144,7 @@ def _predict(
                 variance_flat[start:stop] = variance.detach().cpu().numpy()[:, 0]
             mean_output.flush()
             variance_output.flush()
-            logger.info("RMDSRN predicted timestep %d/%d", timestep + 1, volume.shape["T"])
+            logger.info("RMDSRN predicted timestep %d/%d", position + 1, len(selected))
     return mean_path, variance_path
 
 
@@ -370,6 +374,8 @@ def run_train(
             cfg["training"].get("lambda_schedule_steps", cfg["training"]["steps"])
         )
         final_weight = float(cfg["training"]["lambda_min"])
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(device)
         started_at = time.perf_counter()
         for step in range(1, int(cfg["training"]["steps"]) + 1):
             timestep = frame_sampler.next()
@@ -473,6 +479,9 @@ def run_train(
                     )
                 model.train()
 
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(device)
+        training_loop_seconds = float(time.perf_counter() - started_at)
         checkpoint_path = save_checkpoint(
             dirs["checkpoints"] / f"{cfg['exp_id']}.pth",
             model=model,
@@ -489,6 +498,12 @@ def run_train(
             "lr_schedule_steps": int(
                 cfg["training"].get("lr_schedule_steps", cfg["training"]["steps"])
             ),
+            "batch_size": int(cfg["training"]["batch_size"]),
+            "runtime_training": {
+                "samples": int(cfg["training"]["steps"]) * int(cfg["training"]["batch_size"]),
+                "seconds": training_loop_seconds,
+                "strata": [{"name": "main", "samples": int(cfg["training"]["steps"]) * int(cfg["training"]["batch_size"]), "seconds": training_loop_seconds}],
+            },
             "lambda_schedule_steps": lambda_schedule_steps,
             "final_lr": float(optimizer.param_groups[0]["lr"]),
             "final_lambda": final_weight,
@@ -500,7 +515,7 @@ def run_train(
                 None if best_probe_progress is None else best_probe_psnr
             ),
             "final_losses": final_losses,
-            "elapsed_seconds": float(time.perf_counter() - started_at),
+            "elapsed_seconds": training_loop_seconds,
         }
         _json_dump(dirs["metrics"] / "training_summary.json", summary)
         if cfg["evaluation"]["run_after_training"]:
@@ -520,12 +535,14 @@ def run_predict(
     *,
     target: str | None = None,
     checkpoint: str | Path | None = None,
+    time_indices: str | tuple[int, ...] | list[int] | None = None,
 ) -> dict[str, Any]:
     apply_runtime_thread_limits()
     cfg = load_config(config_path, target_override=target)
     dirs = _run_for_path(cfg, checkpoint)
     device = _device(cfg["training"]["device"])
     volume = TemporalVolume(cfg["data"]["target_path"], cfg["data"]["volume_shape"])
+    selected = parse_timestep_selection(time_indices, volume.shape["T"])
     model, model_path, _ = _load_inference_model(
         cfg,
         device=device,
@@ -537,13 +554,15 @@ def run_predict(
         volume,
         device=device,
         batch_size=int(cfg["evaluation"]["batch_size"]),
-        mean_path=dirs["predictions"] / f"{cfg['exp_id']}_mean.npy",
-        variance_path=dirs["predictions"] / f"{cfg['exp_id']}_variance.npy",
+        mean_path=Path(os.environ.get("VAR_EXPERT_EVALUATION_OUTPUT_DIR", dirs["predictions"])) / f"{cfg['exp_id']}_mean.npy",
+        variance_path=Path(os.environ.get("VAR_EXPERT_EVALUATION_OUTPUT_DIR", dirs["predictions"])) / f"{cfg['exp_id']}_variance.npy",
+        time_indices=selected,
     )
     return {
         "mean_prediction_path": str(mean_path),
         "variance_prediction_path": str(variance_path),
         "model_path": str(model_path),
+        "decoded_timesteps": list(selected),
     }
 
 

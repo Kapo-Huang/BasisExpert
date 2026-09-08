@@ -89,6 +89,8 @@ def parse_metric_selection(value: str | Iterable[str] | None) -> tuple[str, ...]
         "pearson_error",
         "mi_error",
         "decode_time",
+        "training_time",
+        "inference_time",
         "memory",
     )
     if value is None:

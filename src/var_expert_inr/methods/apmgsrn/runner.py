@@ -281,6 +281,11 @@ def _train_single_timestep(
         scheduler_step_iterations,
     )
 
+    executed_iterations = 0
+    if train_device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(train_device)
+    training_loop_started_at = time.perf_counter()
+
     for iteration in range(iterations):
         if bool(cfg["TRAINING"].get("early_stopping", True)) and early_stop_reconstruction and early_stop_grid:
             logger.info("APMGSRN timestep %s early stopped at iteration %d", _timestep_token(time_index), iteration)
@@ -341,6 +346,7 @@ def _train_single_timestep(
             scheduler_model.step()
         elif early_stop_grid and iteration >= 1000:
             scheduler_model.step(float(reconstruction_losses[iteration - 1000 : iteration].mean().item()))
+        executed_iterations += 1
 
         if log_every > 0 and ((iteration + 1) % log_every == 0 or iteration == 0):
             logger.info(
@@ -374,6 +380,10 @@ def _train_single_timestep(
             )
             model.train()
 
+    if train_device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(train_device)
+    training_loop_seconds = float(time.perf_counter() - training_loop_started_at)
+
     checkpoint_payload = _checkpoint_payload(
         model=model,
         cfg=cfg,
@@ -395,6 +405,8 @@ def _train_single_timestep(
             "prediction_path": None,
             "metrics_path": None,
             "model_stats": dict(stats),
+            "training_loop_seconds": training_loop_seconds,
+            "training_samples": int(executed_iterations * points_per_iteration),
             "checkpoint_payload": checkpoint_payload,
         }
     prediction = dataset.reconstruct(model, batch_size=prediction_batch_size, model_device=train_device)
@@ -425,6 +437,8 @@ def _train_single_timestep(
         "metrics_path": str(metrics_path),
         "model_stats": dict(stats),
         "checkpoint_payload": checkpoint_payload,
+        "training_loop_seconds": training_loop_seconds,
+        "training_samples": int(executed_iterations * points_per_iteration),
         "psnr": float(timestep_metrics["psnr"]),
         "mse": float(timestep_metrics["mse"]),
         "mae": float(timestep_metrics["mae"]),

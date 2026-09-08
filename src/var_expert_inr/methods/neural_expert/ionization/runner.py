@@ -177,6 +177,10 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             probe_values = np.asarray(probe_target, dtype=np.float32).reshape(-1)
             probe_recorder = ExplorationProbeRecorder(run_dir / "metrics", probe_cfg)
 
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(device)
+        runtime_training_started_at = time.perf_counter()
+        runtime_training_samples = 0
         for step, data in enumerate(train_dataloader):
             if step >= max_epochs:
                 break
@@ -205,6 +209,7 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             loss_dict["loss"].backward()
             optimizer.step()
             scheduler.step()
+            runtime_training_samples += int(data["nonmnfld_points"].shape[-2])
 
             current_step = step + 1
             if (
@@ -252,6 +257,9 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
                     _log_timing_window(log_file, timing_window_start_epoch, completed_epochs, max_epochs, timing_window_elapsed)
                     timing_window_elapsed = 0.0
                     timing_window_start_epoch = completed_epochs + 1
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(device)
+        runtime_training_seconds = float(time.perf_counter() - runtime_training_started_at)
 
         final_state_path = (
             Path(cfg["MODEL"]["manager_pt_path"])
@@ -268,6 +276,11 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             "checkpoint_bytes": checkpoint_bytes,
             "raw_target_bytes": raw_target_bytes,
             "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
+            "runtime_training": {
+                "samples": int(runtime_training_samples),
+                "seconds": runtime_training_seconds,
+                "strata": [{"name": "main", "samples": int(runtime_training_samples), "seconds": runtime_training_seconds}],
+            },
         }
     finally:
         if timing_enabled:

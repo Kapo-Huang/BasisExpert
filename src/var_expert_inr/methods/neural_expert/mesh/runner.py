@@ -143,6 +143,9 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
     save_interval = int(cfg["TRAINING"].get("save_every", 100))
     log_interval = int(cfg["TRAINING"].get("log_every", 100) or 100)
     grad_clip_norm = float(cfg["TRAINING"].get("grad_clip_norm", 0.0) or 0.0)
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    runtime_training_samples = 0
     train_started_at = time.perf_counter()
     last_log_at = train_started_at
     last_logged_step = -1
@@ -173,6 +176,7 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
             nn_utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
         optimizer.step()
         scheduler.step()
+        runtime_training_samples += int(data["nonmnfld_points"].shape[-2])
 
         if step % log_interval == 0:
             _sync_device_for_timing(device)
@@ -225,4 +229,9 @@ def run_train(cfg: dict, *, gpu: int = 0) -> dict:
         "checkpoint_bytes": checkpoint_bytes,
         "raw_target_bytes": raw_target_bytes,
         "cr": float(raw_target_bytes / max(checkpoint_bytes, 1)),
+        "runtime_training": {
+            "samples": int(runtime_training_samples),
+            "seconds": float(training_elapsed),
+            "strata": [{"name": "main", "samples": int(runtime_training_samples), "seconds": float(training_elapsed)}],
+        },
     }

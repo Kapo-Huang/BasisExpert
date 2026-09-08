@@ -324,7 +324,11 @@ def _invoke_predict(
 ):
     if subsystem == "mc_inr":
         from ..methods.mc_inr.runner import run_predict
-        return run_predict(config_path, checkpoint_path=source_path if source_kind == "checkpoint" else None)
+        return run_predict(
+            config_path,
+            checkpoint_path=source_path if source_kind == "checkpoint" else None,
+            time_indices=timesteps,
+        )
     if subsystem == "fv_srn":
         from ..methods.fv_srn.runner import run_predict
         return run_predict(
@@ -335,7 +339,12 @@ def _invoke_predict(
         )
     if subsystem == "rmdsrn":
         from ..methods.rmdsrn.runner import run_predict
-        return run_predict(config_path, target=target, checkpoint=source_path)
+        return run_predict(
+            config_path,
+            target=target,
+            checkpoint=source_path,
+            time_indices=timesteps,
+        )
     if subsystem == "ecnr":
         from ..methods.ecnr.runner import run_predict
         return run_predict(
@@ -364,9 +373,13 @@ def _array_frame(
     timestep: int,
     indexer: slice,
     shape_tzyx: tuple[int, int, int, int] | None,
-    decoded_positions: dict[int, int] | None = None,
+    decoded_positions: dict[int, int | slice] | None = None,
 ) -> np.ndarray:
     if shape_tzyx is None:
+        if decoded_positions is not None:
+            compact_indexer = decoded_positions.get(int(timestep))
+            if isinstance(compact_indexer, slice):
+                return np.asarray(array[compact_indexer])
         return np.asarray(array[indexer])
     if decoded_positions is not None:
         values = np.asarray(array[decoded_positions[int(timestep)]])
@@ -558,7 +571,7 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
     measurement = DecodeMeasurement(device=device)
     load_seconds = reconstruction_seconds = 0.0
     decoded_frames: dict[tuple[str, int], np.ndarray] | None = None
-    decoded_positions: dict[int, int] | None = None
+    decoded_positions: dict[int, int | slice] | None = None
     if source_kind == "prediction":
         prediction_result: dict[str, Any] = {}
         prediction_paths = _prediction_paths(prediction_result, source_path, tuple(targets))
@@ -605,10 +618,19 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
             reconstruction_seconds = float(time.perf_counter() - started)
         prediction_paths = _prediction_paths(prediction_result, source_path, tuple(targets))
         if prediction_result.get("decoded_timesteps") is not None:
-            decoded_positions = {
-                int(timestep): position
-                for position, timestep in enumerate(prediction_result["decoded_timesteps"])
-            }
+            decoded_timesteps = prediction_result["decoded_timesteps"]
+            decoded_counts = prediction_result.get("decoded_counts")
+            if decoded_counts:
+                decoded_positions = {}
+                offset = 0
+                for timestep, count in zip(decoded_timesteps, decoded_counts):
+                    decoded_positions[int(timestep)] = slice(offset, offset + int(count))
+                    offset += int(count)
+            else:
+                decoded_positions = {
+                    int(timestep): position
+                    for position, timestep in enumerate(decoded_timesteps)
+                }
     if source_kind == "prediction" and ({"decode_time", "memory"}.intersection(request.metrics)):
         with measurement:
             started = time.perf_counter()
@@ -807,13 +829,22 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
             ).size)
             for name in targets for timestep in timesteps
         )
+        selected_points = sum(
+            int(indexers[timestep].stop - indexers[timestep].start)
+            for timestep in timesteps
+        )
+        total_points = sum(int(indexer.stop - indexer.start) for indexer in indexers)
+        values_per_point = float(selected_values) / max(selected_points, 1)
+        total_values = int(round(total_points * values_per_point))
         total_decode = load_seconds + reconstruction_seconds
         performance.update({
             "load_seconds": load_seconds,
             "reconstruction_seconds": reconstruction_seconds,
             "total_decode_seconds": total_decode,
+            "selected_values": int(selected_values),
+            "total_values": int(total_values),
             "values_per_second": float(selected_values / reconstruction_seconds) if reconstruction_seconds > 0 else None,
-            "decode_selection_mode": "selected" if subsystem in {"apmgsrn", "miner", "neural_expert", "fv_srn", "ecnr"} or source_kind == "prediction" else "full_required",
+            "decode_selection_mode": "selected" if subsystem in {"mc_inr", "apmgsrn", "miner", "neural_expert", "fv_srn", "rmdsrn", "ecnr"} or source_kind == "prediction" else "full_required",
         })
     if "memory" in request.metrics:
         performance.update(measurement.as_dict())
