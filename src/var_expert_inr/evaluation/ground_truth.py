@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from ..utils.io import resolve_path
 
 
 DATASET_PATH_ALIASES = {"bathymetry": "redsea"}
@@ -27,11 +30,21 @@ def portable_data_path(
     dataset_name = str(dataset_name or "").strip()
     canonical_name = DATASET_PATH_ALIASES.get(dataset_name.lower(), dataset_name)
     display_name = DATASET_LOCAL_FOLDERS.get(canonical_name.lower(), canonical_name.capitalize())
-    candidates = [
+    candidates: list[Path] = []
+    root_override = f"{display_name.upper()}_ROOT"
+    server_env = os.environ.get("SERVER_ENV", "original").strip().lower()
+    if canonical_name.lower() in DATASET_LOCAL_FOLDERS and (
+        server_env == "autodl" or os.environ.get(root_override)
+    ):
+        placeholder = f"${{{root_override}}}"
+        environment_root = resolve_path(placeholder, base_dir=repo_root)
+        if environment_root is not None:
+            candidates.append(Path(environment_root) / original.name)
+    candidates.extend([
         repo_root.parent.parent / "Datasets" / canonical_name / original.name,
         repo_root / "data" / "Volume" / display_name / original.name,
         repo_root / "data" / "Mesh" / display_name / original.name,
-    ]
+    ])
     existing = [candidate for candidate in candidates if candidate.is_file()]
     return existing[0] if existing else original
 

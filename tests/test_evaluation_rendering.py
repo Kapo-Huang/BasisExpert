@@ -145,6 +145,79 @@ def test_legacy_bathymetry_data_path_uses_redsea_folder(tmp_path: Path) -> None:
     assert resolved == target
 
 
+@pytest.mark.parametrize(
+    ("dataset_name", "folder"),
+    [
+        ("ionization", "Ionization"),
+        ("combustion_40NH3_1", "Combustion"),
+        ("redsea", "RedSea"),
+        ("bathymetry", "RedSea"),
+        ("katrina", "Katrina"),
+    ],
+)
+def test_legacy_data_path_uses_autodl_dataset_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dataset_name: str,
+    folder: str,
+) -> None:
+    autodl_root = tmp_path / "autodl-tmp"
+    target = autodl_root / folder / "target.npy"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"test")
+    monkeypatch.setenv("SERVER_ENV", "autodl")
+    monkeypatch.setenv("AUTODL_DATA_ROOT", str(autodl_root))
+
+    resolved = portable_data_path(
+        f"/old/server/data/{folder}/target.npy",
+        dataset_name=dataset_name,
+        repo_root=tmp_path / "project",
+    )
+
+    assert resolved == target
+
+
+def test_dataset_root_override_takes_precedence_over_autodl_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    autodl_root = tmp_path / "autodl-tmp"
+    override_root = tmp_path / "custom-ionization"
+    target = override_root / "target_GT.npy"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"test")
+    monkeypatch.setenv("SERVER_ENV", "autodl")
+    monkeypatch.setenv("AUTODL_DATA_ROOT", str(autodl_root))
+    monkeypatch.setenv("IONIZATION_ROOT", str(override_root))
+
+    resolved = portable_data_path(
+        "/old/server/data/Volume/Ionization/target_GT.npy",
+        dataset_name="ionization",
+        repo_root=tmp_path / "project",
+    )
+
+    assert resolved == target
+
+
+def test_existing_data_path_is_not_rewritten(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = tmp_path / "old-server" / "target_GT.npy"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"test")
+    monkeypatch.setenv("SERVER_ENV", "autodl")
+    monkeypatch.setenv("AUTODL_DATA_ROOT", str(tmp_path / "autodl-tmp"))
+
+    resolved = portable_data_path(
+        original,
+        dataset_name="ionization",
+        repo_root=tmp_path / "project",
+    )
+
+    assert resolved == original
+
+
 def test_image_metrics_do_not_require_volume_vis(tmp_path: Path) -> None:
     pytest.importorskip("PIL")
     pytest.importorskip("skimage")
