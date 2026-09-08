@@ -162,7 +162,9 @@ def _run_layout(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
         "logs": run_dir / "logs",
     }
     if create:
-        for path in result.values():
+        for key, path in result.items():
+            if key == "predictions":
+                continue
             path.mkdir(parents=True, exist_ok=True)
     return result
 
@@ -814,5 +816,10 @@ def run_evaluate(
             "psnr": psnr(gt, estimated),
         },
     }
-    metrics_path = save_metrics(Path(prediction_result["prediction_path"]).parent.parent / "metrics" / f"{cfg['exp_id']}.json", metrics)
-    return {**prediction_result, "metrics": metrics, "metrics_path": metrics_path}
+    prediction_path = Path(prediction_result["prediction_path"])
+    metrics_path = save_metrics(prediction_path.parent.parent / "metrics" / f"{cfg['exp_id']}.json", metrics)
+    del prediction
+    prediction_path.unlink(missing_ok=True)
+    if prediction_path.parent.name == "predictions" and prediction_path.parent.is_dir() and not any(prediction_path.parent.iterdir()):
+        prediction_path.parent.rmdir()
+    return {**prediction_result, "prediction_path": None, "metrics": metrics, "metrics_path": metrics_path}

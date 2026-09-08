@@ -54,7 +54,9 @@ def _dirs(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
         "logs": run_dir / "logs",
     }
     if create:
-        for path in result.values():
+        for key, path in result.items():
+            if key == "predictions":
+                continue
             path.mkdir(parents=True, exist_ok=True)
     return result
 
@@ -119,6 +121,8 @@ def _predict(
     variance_path: Path,
     time_indices: tuple[int, ...] | list[int] | None = None,
 ) -> tuple[Path, Path]:
+    mean_path.parent.mkdir(parents=True, exist_ok=True)
+    variance_path.parent.mkdir(parents=True, exist_ok=True)
     selected = tuple(range(volume.shape["T"])) if time_indices is None else tuple(int(value) for value in time_indices)
     shape = (
         len(selected),
@@ -591,4 +595,13 @@ def run_evaluate(
         seed=int(cfg["evaluation"]["seed"]),
     )
     metrics_path = save_metrics(dirs["metrics"] / f"{cfg['exp_id']}.json", metrics)
+    mean_path = Path(prediction["mean_prediction_path"])
+    variance_path = Path(prediction["variance_prediction_path"])
+    mean_path.unlink(missing_ok=True)
+    variance_path.unlink(missing_ok=True)
+    prediction["mean_prediction_path"] = None
+    prediction["variance_prediction_path"] = None
+    prediction_dir = mean_path.parent
+    if prediction_dir.name == "predictions" and prediction_dir.is_dir() and not any(prediction_dir.iterdir()):
+        prediction_dir.rmdir()
     return {**prediction, "metrics_path": str(metrics_path), "metrics": metrics}

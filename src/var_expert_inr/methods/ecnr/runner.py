@@ -83,7 +83,9 @@ def _dirs(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
         "cache": run_dir / "cache",
     }
     if create:
-        for path in result.values():
+        for key, path in result.items():
+            if key == "predictions":
+                continue
             path.mkdir(parents=True, exist_ok=True)
     return result
 
@@ -1557,6 +1559,7 @@ def run_predict(
     dirs = _run_for_path(cfg, checkpoint)
     runtime_output = os.environ.get("VAR_EXPERT_EVALUATION_OUTPUT_DIR")
     prediction_dir = Path(runtime_output) if runtime_output else dirs["predictions"]
+    prediction_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = prediction_dir / "cache" if runtime_output else dirs["cache"]
     workspace = CacheWorkspace(cache_dir)
     try:
@@ -1644,12 +1647,13 @@ def run_evaluate(
     metrics = _evaluate(volume, prediction, Path(prediction_result["model_path"]))
     del prediction
     metrics_path = save_metrics(dirs["metrics"] / f"{cfg['exp_id']}.json", metrics)
-    prediction_retained = bool(cfg["evaluation"]["save_predictions"])
-    if not prediction_retained:
-        prediction_path.unlink(missing_ok=True)
+    prediction_path.unlink(missing_ok=True)
+    if prediction_path.parent.name == "predictions" and prediction_path.parent.is_dir() and not any(prediction_path.parent.iterdir()):
+        prediction_path.parent.rmdir()
     return {
         **prediction_result,
-        "prediction_retained": prediction_retained,
+        "prediction_path": None,
+        "prediction_retained": False,
         "metrics": metrics,
         "metrics_path": str(metrics_path),
     }

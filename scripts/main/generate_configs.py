@@ -1647,7 +1647,7 @@ def rm_payload(
             "save_every": 0, "log_every": 100, "seed": 42, "device": "cuda",
         },
         "evaluation": {
-            "batch_size": 16000, "save_mean": True, "save_variance": True,
+            "batch_size": 16000, "save_mean": False, "save_variance": False,
             "run_after_training": False, "default_model": "checkpoint",
             "uncertainty_sample_size": 1000000, "topk_fractions": [0.01, 0.05],
             "seed": 42,

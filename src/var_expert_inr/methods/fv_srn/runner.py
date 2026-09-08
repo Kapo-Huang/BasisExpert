@@ -52,7 +52,9 @@ def _dirs(run_dir: Path, *, create: bool = True) -> dict[str, Path]:
         "logs": run_dir / "logs",
     }
     if create:
-        for value in result.values():
+        for key, value in result.items():
+            if key == "predictions":
+                continue
             value.mkdir(parents=True, exist_ok=True)
     return result
 
@@ -183,6 +185,7 @@ def _predict(
     output_path: Path,
     time_indices: tuple[int, ...] | None = None,
 ) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     selected = time_indices or tuple(range(volume.shape["T"]))
     prediction = open_memmap(
         output_path,
@@ -413,4 +416,8 @@ def run_evaluate(
         volume, Path(prediction_result["prediction_path"]), Path(prediction_result["model_path"])
     )
     metrics_path = save_metrics(dirs["metrics"] / f"{cfg['exp_id']}.json", metrics)
-    return {**prediction_result, "metrics_path": str(metrics_path), "metrics": metrics}
+    prediction_path = Path(prediction_result["prediction_path"])
+    prediction_path.unlink(missing_ok=True)
+    if prediction_path.parent.name == "predictions" and prediction_path.parent.is_dir() and not any(prediction_path.parent.iterdir()):
+        prediction_path.parent.rmdir()
+    return {**prediction_result, "prediction_path": None, "metrics_path": str(metrics_path), "metrics": metrics}

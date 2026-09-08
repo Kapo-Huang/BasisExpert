@@ -96,7 +96,6 @@ def _ensure_run_dirs(run_dir: Path) -> dict[str, Path | str]:
         dirs["run_dir"],
         dirs["checkpoint_dir"],
         dirs["config_dir"],
-        dirs["prediction_dir"],
         dirs["metrics_dir"],
         dirs["logs_dir"],
     ):
@@ -1646,9 +1645,15 @@ def run_evaluate(config_path: str | Path, *, checkpoint_path: str | Path | None 
             compute_metrics=True,
         )
         metrics_path = save_metrics(Path(dirs["metrics_dir"]) / f"{config.exp_id}.json", prediction_result["metrics"])
+        prediction_paths = [Path(path) for path in prediction_result["prediction_paths"].values()]
+        for prediction_path in prediction_paths:
+            prediction_path.unlink(missing_ok=True)
+        prediction_dir = Path(dirs["prediction_dir"])
+        if prediction_dir.is_dir() and not any(prediction_dir.iterdir()):
+            prediction_dir.rmdir()
         return {
             "checkpoint_path": str(resolved_checkpoint),
-            "prediction_paths": prediction_result["prediction_paths"],
+            "prediction_paths": {},
             "metrics": prediction_result["metrics"],
             "metrics_path": str(metrics_path),
         }

@@ -153,7 +153,7 @@ class PretrainConfig:
 @dataclass(frozen=True)
 class EvaluationConfig:
     batch_size: int = 16384
-    save_predictions: bool = True
+    save_predictions: bool = False
     metrics: tuple[str, ...] = ("psnr",)
     timesteps: str = "all"
     targets: tuple[str, ...] | str = "all"

@@ -94,7 +94,9 @@ def _build_run_dirs(run_dir: Path) -> dict[str, Path | str]:
 
 def _ensure_run_layout(run_dir: Path) -> dict[str, Path | str]:
     dirs = _build_run_dirs(run_dir)
-    for path in dirs.values():
+    for key, path in dirs.items():
+        if key == "prediction_dir":
+            continue
         if isinstance(path, Path):
             path.mkdir(parents=True, exist_ok=True)
     return dirs
@@ -456,6 +458,7 @@ def _build_aggregate_outputs(
     time_indices = [int(value) for value in cfg["TRAINING"]["time_indices"]]
     spatial_shape = reader.spatial_shape
     prediction_path = run_dir / "predictions" / f"{cfg['exp_id']}.npy"
+    prediction_path.parent.mkdir(parents=True, exist_ok=True)
     prediction_memmap = np.lib.format.open_memmap(
         prediction_path,
         mode="w+",

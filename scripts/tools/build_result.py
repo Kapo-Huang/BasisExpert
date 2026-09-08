@@ -804,7 +804,14 @@ def copy_run_without_checkpoints(source: Path, destination: Path) -> None:
         relative = root_path.relative_to(source)
         dirnames[:] = [
             name for name in dirnames
-            if name not in {"checkpoints", "trained_models", "__pycache__"}
+            if name not in {
+                "checkpoints",
+                "trained_models",
+                "predictions",
+                "prediction",
+                "evaluations",
+                "__pycache__",
+            }
         ]
         target_root = destination / relative
         target_root.mkdir(parents=True, exist_ok=True)

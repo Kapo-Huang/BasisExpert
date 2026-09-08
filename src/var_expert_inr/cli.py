@@ -81,7 +81,6 @@ def _ensure_run_dirs(run_dir: Path) -> dict[str, Path | str]:
         dirs["run_dir"],
         dirs["checkpoint_dir"],
         dirs["config_dir"],
-        dirs["prediction_dir"],
         dirs["metrics_dir"],
         dirs["logs_dir"],
     ):
@@ -188,7 +187,15 @@ def _prepare_runtime(
     return config, dirs, dataset, device, effective_payload
 
 
-def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoint_path: str | Path | None = None) -> dict:
+def _predict_from_runtime(
+    config,
+    dirs,
+    dataset,
+    device: torch.device,
+    checkpoint_path: str | Path | None = None,
+    *,
+    persist_predictions: bool = True,
+) -> dict:
     model = build_model(config.model, dataset.meta).to(device)
     if checkpoint_path is None:
         checkpoint_path = dirs["checkpoint_dir"] / f"{config.exp_id}.pth"
@@ -204,7 +211,11 @@ def _predict_from_runtime(config, dirs, dataset, device: torch.device, checkpoin
         device=device,
         hard_topk=True,
     )
-    prediction_paths = save_predictions(dataset, predictions, dirs["prediction_dir"], config.exp_id)
+    prediction_paths = (
+        save_predictions(dataset, predictions, dirs["prediction_dir"], config.exp_id)
+        if persist_predictions
+        else {}
+    )
     return {"checkpoint_path": checkpoint_path, "predictions": predictions, "prediction_paths": prediction_paths}
 
 
@@ -320,7 +331,12 @@ def run_evaluate(
             checkpoint_path=checkpoint_path,
         )
         predict_result = _predict_from_runtime(
-            config, dirs, dataset, device, checkpoint_path=checkpoint_path
+            config,
+            dirs,
+            dataset,
+            device,
+            checkpoint_path=checkpoint_path,
+            persist_predictions=False,
         )
         source_path = predict_result["checkpoint_path"]
         metrics = evaluate_predictions(

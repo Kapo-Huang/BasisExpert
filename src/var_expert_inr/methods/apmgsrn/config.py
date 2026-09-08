@@ -302,7 +302,7 @@ def _normalize_training_section(training_cfg: dict[str, Any], *, time_count: int
 def _normalize_evaluation_section(evaluation_cfg: dict[str, Any]) -> dict[str, Any]:
     _reject_unknown_keys(evaluation_cfg, EVALUATION_KEYS, label="EVALUATION")
     return {
-        "run_after_training": bool(evaluation_cfg.get("run_after_training", True)),
+        "run_after_training": bool(evaluation_cfg.get("run_after_training", False)),
     }
 
 

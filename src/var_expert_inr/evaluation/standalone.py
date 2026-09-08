@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import tempfile
 from contextlib import contextmanager, nullcontext
@@ -434,7 +435,29 @@ def _portable_standalone_config(
         yield path
 
 
+@contextmanager
+def _temporary_prediction_output():
+    key = "VAR_EXPERT_EVALUATION_OUTPUT_DIR"
+    previous = os.environ.get(key)
+    with tempfile.TemporaryDirectory(prefix="var_expert_prediction_") as temp_dir:
+        os.environ[key] = temp_dir
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+
+
 def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, config_path: Path) -> dict[str, Any]:
+    # Standalone decoders stream through NumPy files. Keep those files in an
+    # automatically removed scratch directory instead of the archived run.
+    with _temporary_prediction_output():
+        return _run_standalone_evaluation(request, raw, subsystem, config_path)
+
+
+def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, config_path: Path) -> dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[3]
     artifacts = ArtifactStore(repo_root=repo_root, result_root=request.result_root)
     artifacts.initialize()

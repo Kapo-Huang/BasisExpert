@@ -67,8 +67,8 @@ training:
   device: cuda
 evaluation:
   batch_size: 16000
-  save_mean: true
-  save_variance: true
+  save_mean: false
+  save_variance: false
   run_after_training: false
   default_model: checkpoint
   uncertainty_sample_size: 1000000

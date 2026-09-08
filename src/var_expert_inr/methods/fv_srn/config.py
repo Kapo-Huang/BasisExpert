@@ -52,8 +52,8 @@ DEFAULT_TRAINING = {
 }
 DEFAULT_EVALUATION = {
     "batch_size": 65536,
-    "save_predictions": True,
-    "run_after_training": True,
+    "save_predictions": False,
+    "run_after_training": False,
     "default_model": "checkpoint",
 }
 DEFAULT_LOG = {

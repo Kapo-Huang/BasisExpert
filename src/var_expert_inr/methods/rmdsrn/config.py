@@ -64,9 +64,9 @@ TRAINING_OPTIONAL_KEYS = {
 }
 EVALUATION_DEFAULTS = {
     "batch_size": 65_536,
-    "save_mean": True,
-    "save_variance": True,
-    "run_after_training": True,
+    "save_mean": False,
+    "save_variance": False,
+    "run_after_training": False,
     "default_model": "checkpoint",
     "uncertainty_sample_size": 1_000_000,
     "topk_fractions": [0.01, 0.05],
@@ -257,8 +257,6 @@ def _normalize_evaluation(payload: dict[str, Any]) -> dict[str, Any]:
     )
     evaluation["save_mean"] = bool(evaluation["save_mean"])
     evaluation["save_variance"] = bool(evaluation["save_variance"])
-    if not evaluation["save_mean"] or not evaluation["save_variance"]:
-        raise ValueError("RMDSRN evaluation requires save_mean=true and save_variance=true")
     evaluation["run_after_training"] = bool(evaluation["run_after_training"])
     evaluation["default_model"] = str(evaluation["default_model"]).strip().lower()
     if evaluation["default_model"] != "checkpoint":

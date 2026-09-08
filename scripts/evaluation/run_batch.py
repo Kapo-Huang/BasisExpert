@@ -7,6 +7,7 @@ import csv
 import importlib
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -71,6 +72,30 @@ def _load_mapping(path: Path) -> dict[str, Any]:
 def _resolve_repo_path(value: str | Path) -> Path:
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
+
+
+def _server_environment(value: str | None = None) -> str:
+    selected = str(value or os.environ.get("SERVER_ENV", "original")).strip().lower()
+    if selected not in {"original", "autodl"}:
+        raise ValueError(
+            f"Unsupported server environment {selected!r}; expected original or autodl"
+        )
+    return selected
+
+
+def _resolve_run_source_path(value: str | Path, *, server_env: str) -> Path:
+    """Resolve Result inputs using the repository's selected server profile."""
+    raw = str(value).strip().replace("\\", "/")
+    relative_parts = tuple(part for part in raw.split("/") if part not in {"", "."})
+    if (
+        server_env == "autodl"
+        and relative_parts
+        and relative_parts[0].lower() == "result"
+        and not Path(value).expanduser().is_absolute()
+    ):
+        autodl_root = Path(os.environ.get("AUTODL_DATA_ROOT", "/root/autodl-tmp"))
+        return autodl_root / "Result" / Path(*relative_parts[1:])
+    return _resolve_repo_path(value)
 
 
 def _read_run_list(path: Path) -> list[Path]:
@@ -773,7 +798,13 @@ def _worker_main(request_path: Path, result_path: Path) -> int:
     return return_code
 
 
-def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
+def run_batch(
+    config_path: str | Path,
+    *,
+    server_env: str | None = None,
+) -> tuple[Path, list[dict[str, Any]]]:
+    selected_env = _server_environment(server_env)
+    os.environ["SERVER_ENV"] = selected_env
     resolved_config = _resolve_repo_path(config_path)
     batch = _load_mapping(resolved_config)
     evaluation = batch.get("evaluation")
@@ -805,13 +836,20 @@ def run_batch(config_path: str | Path) -> tuple[Path, list[dict[str, Any]]]:
         if manifest_path_value is None
         else _resolve_repo_path(manifest_path_value)
     )
-    run_root = None if run_root_value is None else _resolve_repo_path(run_root_value)
+    run_root = (
+        None
+        if run_root_value is None
+        else _resolve_run_source_path(run_root_value, server_env=selected_env)
+    )
     if run_roots_value is None:
         run_roots: tuple[Path, ...] = ()
     else:
         if not isinstance(run_roots_value, (list, tuple)) or not run_roots_value:
             raise ValueError("run_roots must be a non-empty list of directories")
-        run_roots = tuple(_resolve_repo_path(value) for value in run_roots_value)
+        run_roots = tuple(
+            _resolve_run_source_path(value, server_env=selected_env)
+            for value in run_roots_value
+        )
     result_root = _resolve_repo_path(batch.get("result_root", "EvalResult"))
     evaluation_id = str(batch.get("evaluation_id") or "").strip()
     if not evaluation_id:
@@ -1147,6 +1185,15 @@ def parse_args() -> argparse.Namespace:
         default="configs/evaluation/evaluation_exploration.yaml",
         help="Repository-relative or absolute batch evaluation YAML.",
     )
+    parser.add_argument(
+        "--env",
+        choices=("original", "autodl"),
+        default=None,
+        help=(
+            "Server environment (defaults to SERVER_ENV or original); autodl maps "
+            "relative Result paths to /root/autodl-tmp/Result."
+        ),
+    )
     parser.add_argument("--worker-request", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--worker-result", default=None, help=argparse.SUPPRESS)
     return parser.parse_args()
@@ -1160,7 +1207,7 @@ def main() -> None:
         raise SystemExit(
             _worker_main(Path(args.worker_request), Path(args.worker_result))
         )
-    output_dir, records = run_batch(args.config)
+    output_dir, records = run_batch(args.config, server_env=args.env)
     print(f"Evaluation batch summary: {output_dir / 'summary.json'}")
     if any(record["status"] not in COMPLETED_STATUSES for record in records):
         raise SystemExit(1)
