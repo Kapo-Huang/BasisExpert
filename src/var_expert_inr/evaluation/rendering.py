@@ -19,18 +19,6 @@ _LPIPS_MODELS: dict[tuple[str, str], Any] = {}
 
 
 @lru_cache(maxsize=1)
-def _yellow_biased_viridis():
-    try:
-        from matplotlib import cm
-        from matplotlib.colors import ListedColormap
-    except ImportError:
-        return "viridis"
-    samples = np.linspace(0.0, 1.0, 256, dtype=np.float64)
-    remapped = 1.0 - np.power(1.0 - samples, 1.18)
-    return ListedColormap(cm.get_cmap("viridis", 256)(remapped), name="viridis_yellow_biased")
-
-
-@lru_cache(maxsize=1)
 def _white_to_red_colormap():
     try:
         from matplotlib.colors import LinearSegmentedColormap
@@ -46,9 +34,56 @@ def _resolved_colormap(name: str):
     normalized = str(name).strip().lower()
     if normalized in {"error_white_to_red", "white_to_red"}:
         return _white_to_red_colormap()
-    if normalized in {"yellow_biased_viridis", "viridis_yellow_biased"}:
-        return _yellow_biased_viridis()
     return name
+
+def _finalize_node_render_image(
+    output: Path,
+    *,
+    profile: dict[str, Any],
+    original_size: tuple[int, int],
+) -> dict[str, Any]:
+    """Optionally crop a mesh render to its non-background bounding box."""
+    base_info: dict[str, Any] = {
+        "crop_bbox": None,
+        "original_size": [int(original_size[0]), int(original_size[1])],
+        "output_size": [int(original_size[0]), int(original_size[1])],
+    }
+    if not bool(profile.get("crop_to_nonwhite_bbox", False)):
+        return base_info
+
+    try:
+        from PIL import Image, ImageColor
+    except ImportError as exc:
+        raise RuntimeError(
+            "Cropping rendered images requires Pillow; install .[evaluation]"
+        ) from exc
+
+    background = str(profile.get("background", "white"))
+    background_rgb = np.asarray(ImageColor.getrgb(background), dtype=np.uint8).reshape(-1)[:3]
+    with Image.open(output) as image:
+        rgb = image.convert("RGB")
+        pixels = np.asarray(rgb)
+        content = np.any(pixels != background_rgb, axis=-1)
+        rows, columns = np.nonzero(content)
+        if rows.size == 0:
+            raise ValueError(
+                f"Cannot crop all-background node render {output}: background={background!r}"
+            )
+        left = int(columns.min())
+        top = int(rows.min())
+        right = int(columns.max()) + 1
+        bottom = int(rows.max()) + 1
+        cropped = rgb.crop((left, top, right, bottom))
+        actual_original_size = [int(rgb.width), int(rgb.height)]
+        output_size = [int(cropped.width), int(cropped.height)]
+
+    cropped.save(output, format="PNG")
+    return {
+        "crop_bbox": [left, top, right, bottom],
+        "original_size": actual_original_size,
+        "output_size": output_size,
+    }
+
 
 
 def error_transfer_function() -> dict[str, list[dict[str, Any]]]:
@@ -88,6 +123,7 @@ def _error_render_profile(
         **profile,
         "cmap": "error_white_to_red",
         "clim": [lo, hi],
+        "crop_to_nonwhite_bbox": False,
         "target_clims": {},
         "clip_to_clim": True,
         "values_are_scalar": True,
@@ -692,9 +728,7 @@ def render_node_frame(
     plotter = pv.Plotter(off_screen=True, window_size=size)
     try:
         plotter.set_background(str(profile.get("background", "white")))
-        cmap = _resolved_colormap(
-            str(profile.get("cmap", "yellow_biased_viridis"))
-        )
+        cmap = _resolved_colormap(str(profile.get("cmap", "viridis")))
         plotter.add_mesh(
             mesh,
             scalars="evaluation_scalar",
@@ -722,6 +756,7 @@ def render_node_frame(
         "clim": list(clim),
         "selected_value_count": selected_value_count,
         "mesh_mask_value_count": mask_value_count,
+        **image_info,
     }
 
 

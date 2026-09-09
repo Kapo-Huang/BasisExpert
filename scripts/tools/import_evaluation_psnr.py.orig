@@ -52,16 +52,6 @@ class EvaluationPSNR:
     psnr_db: float
 
 
-@dataclass(frozen=True)
-class EvaluationPerceptual:
-    result_relative: str
-    root_name: str
-    evaluation_dir: Path
-    timesteps: tuple[int, ...]
-    ssim: float
-    lpips: float
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])

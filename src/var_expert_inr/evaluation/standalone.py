@@ -25,7 +25,7 @@ from .metrics import (
     psnr,
     summarize_selected_quality,
 )
-from .performance import DecodeMeasurement
+from .performance import DecodeMeasurement, synchronize_cuda
 from .rendering import (
     VolumeRenderSession,
     compare_rendered_images,
@@ -162,6 +162,7 @@ def _decode_apmgsrn_frames(
     targets: tuple[str, ...],
     shape_tzyx: tuple[int, int, int, int],
     device: torch.device,
+    timing: dict[str, Any] | None = None,
 ) -> dict[tuple[str, int], np.ndarray]:
     from ..methods.apmgsrn.model import APMGSRN
     from ..utils.temporal_checkpoint import TemporalCheckpointReader
@@ -169,14 +170,25 @@ def _decode_apmgsrn_frames(
     if len(targets) != 1:
         raise ValueError("APMGSRN checkpoints contain one target per run")
     training = dict(raw.get("TRAINING") or raw.get("training") or {})
-    batch_size = max(1, int(training.get("prediction_points_per_batch", training.get("pred_batch_size", 16_000))))
+    batch_size = max(
+        1,
+        int(
+            training.get(
+                "prediction_points_per_batch",
+                training.get("pred_batch_size", 16_000),
+            )
+        ),
+    )
     _, z_size, y_size, x_size = shape_tzyx
     spatial_size = int(z_size * y_size * x_size)
     decoded: dict[tuple[str, int], np.ndarray] = {}
+    timestep_seconds = 0.0
     with TemporalCheckpointReader(
         source_root, expected_format="apmgsrn_temporal_inference_v1"
     ) as checkpoint_reader:
         for timestep in timesteps:
+            synchronize_cuda(device)
+            timestep_started = time.perf_counter()
             payload = checkpoint_reader.load_timestep(timestep, map_location=device)
             if payload.get("format") != "apmgsrn_timestep_inference_v1":
                 raise ValueError(
@@ -191,7 +203,9 @@ def _decode_apmgsrn_frames(
                 )
             model_cfg = dict(payload.get("model_config") or raw.get("MODEL") or {})
             state = payload["model_state"]
-            uses_tcnn_state = any(str(key).startswith("decoder.params") for key in state)
+            uses_tcnn_state = any(
+                str(key).startswith("decoder.params") for key in state
+            )
             model = APMGSRN(
                 model_cfg,
                 data_min=float(payload["data_min"]),
@@ -200,7 +214,9 @@ def _decode_apmgsrn_frames(
             ).to(device)
             model.load_state_dict(state, strict=True)
             model.eval()
-            flat_output = np.empty((spatial_size, int(model.n_outputs)), dtype=np.float32)
+            flat_output = np.empty(
+                (spatial_size, int(model.n_outputs)), dtype=np.float32
+            )
             with torch.inference_mode():
                 for start in range(0, spatial_size, batch_size):
                     stop = min(spatial_size, start + batch_size)
@@ -210,14 +226,37 @@ def _decode_apmgsrn_frames(
                     y = remaining % y_size
                     z = remaining // y_size
                     coords = np.stack(
-                        [_normalized_axis(x, x_size), _normalized_axis(y, y_size), _normalized_axis(z, z_size)],
+                        [
+                            _normalized_axis(x, x_size),
+                            _normalized_axis(y, y_size),
+                            _normalized_axis(z, z_size),
+                        ],
                         axis=1,
                     )
                     batch = torch.from_numpy(coords).to(device, non_blocking=True)
-                    flat_output[start:stop] = model(batch).detach().cpu().numpy().astype(np.float32, copy=False)
-            frame = flat_output.reshape(z_size, y_size, x_size, int(model.n_outputs))
-            decoded[(targets[0], int(timestep))] = frame[..., 0] if int(model.n_outputs) == 1 else frame
+                    flat_output[start:stop] = (
+                        model(batch)
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32, copy=False)
+                    )
+            frame = flat_output.reshape(
+                z_size, y_size, x_size, int(model.n_outputs)
+            )
+            decoded[(targets[0], int(timestep))] = (
+                frame[..., 0] if int(model.n_outputs) == 1 else frame
+            )
+            synchronize_cuda(device)
+            timestep_seconds += float(time.perf_counter() - timestep_started)
             del model
+    if timing is not None:
+        timing.update(
+            {
+                "load_seconds": 0.0,
+                "reconstruction_seconds": timestep_seconds,
+            }
+        )
     return decoded
 
 
@@ -593,6 +632,8 @@ def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, con
     device = torch.device(device_text if not device_text.startswith("cuda") or torch.cuda.is_available() else "cpu")
     measurement = DecodeMeasurement(device=device)
     load_seconds = reconstruction_seconds = 0.0
+    load_timing_source: str | None = None
+    decode_timing_scope: str | None = None
     decoded_frames: dict[tuple[str, int], np.ndarray] | None = None
     decoded_positions: dict[int, int | slice] | None = None
     if source_kind == "prediction":
@@ -602,10 +643,16 @@ def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, con
         with measurement:
             started = time.perf_counter()
             if subsystem == "apmgsrn":
+                apmgsrn_timing: dict[str, Any] = {}
                 decoded_frames = _decode_apmgsrn_frames(
                     source_path, raw, timesteps=timesteps, targets=tuple(targets),
                     shape_tzyx=shape_tzyx, device=device,
+                    timing=apmgsrn_timing,
                 )
+                load_seconds = float(apmgsrn_timing["load_seconds"])
+                reconstruction_seconds = float(apmgsrn_timing["reconstruction_seconds"])
+                load_timing_source = "outer_container_ignored"
+                decode_timing_scope = "per_timestep_payload_load_plus_inference"
             elif subsystem == "miner":
                 decoded_frames = _decode_miner_frames(
                     source_path,
@@ -620,7 +667,8 @@ def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, con
                     indexers=indexers, shape_tzyx=shape_tzyx, coords=coords,
                     repo_root=repo_root, config_path=config_path, device=device,
                 )
-            reconstruction_seconds = float(time.perf_counter() - started)
+            if subsystem != "apmgsrn":
+                reconstruction_seconds = float(time.perf_counter() - started)
         prediction_paths = {}
     else:
         with measurement:
@@ -869,6 +917,10 @@ def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, con
             "values_per_second": float(selected_values / reconstruction_seconds) if reconstruction_seconds > 0 else None,
             "decode_selection_mode": "selected" if subsystem in {"mc_inr", "apmgsrn", "miner", "neural_expert", "fv_srn", "rmdsrn", "ecnr"} or source_kind == "prediction" else "full_required",
         })
+        if load_timing_source is not None:
+            performance["load_timing_source"] = load_timing_source
+        if decode_timing_scope is not None:
+            performance["timing_scope"] = decode_timing_scope
     if "memory" in request.metrics:
         performance.update(measurement.as_dict())
     manifest = {

@@ -563,8 +563,11 @@ def benchmark_inference(
 
     load_seconds = float(measured.get("load_seconds", 0.0))
     reconstruction_seconds = float(measured["reconstruction_seconds"])
-    load_timing_source = "adapter_split"
-    if load_seconds <= 0.0 and source_path.is_file():
+    load_timing_source = str(
+        measured.get("load_timing_source") or "adapter_split"
+    )
+    separate_load_required = load_timing_source != "outer_container_ignored"
+    if load_seconds <= 0.0 and source_path.is_file() and separate_load_required:
         separately_measured_load = _checkpoint_load_seconds(source_path)
         load_seconds = separately_measured_load
         reconstruction_seconds = max(
@@ -585,6 +588,9 @@ def benchmark_inference(
         selected_values=selected_values,
         total_values=total_values,
     )
+    measured_timing_scope = measured.get("timing_scope")
+    if measured_timing_scope:
+        result["timing_scope"] = str(measured_timing_scope)
     result.update({
         "fraction_requested": float(request.inference_fraction),
         "fraction_measured": float(selected_values / max(total_values, 1)),

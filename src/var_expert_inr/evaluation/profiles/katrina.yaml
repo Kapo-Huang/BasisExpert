@@ -3,10 +3,16 @@ renderer: mesh
 mesh_path: data/Mesh/Katrina/fort.14
 association: point
 planarize_z: true
-cmap: yellow_biased_viridis
+cmap: viridis
 background: white
 window_size: [1800, 1400]
 camera_position: xy
 clim: [-1.0, 1.0]
+clip_to_clim: true
+crop_to_nonwhite_bbox: true
 target_clims:
-  v: [0.0, 1.7320508075688772]
+  fort63: [-0.45, 0.10]
+  fort64: [0.05, 0.24]
+  fort73: [0.59, 1.00]
+  speed: [-1.00, 0.03]
+  v: [0.00, 0.53]
