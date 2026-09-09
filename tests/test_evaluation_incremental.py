@@ -17,6 +17,7 @@ def _existing_state(
     timesteps: str = "uniform:10",
     stored_evaluation_id: str = "incremental",
     requested_evaluation_id: str = "incremental",
+    total_timesteps: int | None = None,
 ):
     run_dir = tmp_path / "Result" / "Main" / "Model" / "Dataset" / "Run"
     checkpoint = run_dir / "checkpoints" / "model.pth"
@@ -54,9 +55,12 @@ def _existing_state(
         encoding="utf-8",
     )
     (output_dir / "metrics.csv").write_text("target,timestep,psnr\n", encoding="utf-8")
+    data = {"targets": {"field": "unused"}}
+    if total_timesteps is not None:
+        data["volume_shape"] = {"T": total_timesteps}
     return exploration._existing_evaluation_state(
         run_dir,
-        raw={"data": {"targets": {"field": "unused"}}},
+        raw={"data": data},
         target="all",
         timesteps=timesteps,
         requested_metrics=("psnr",),
@@ -151,11 +155,31 @@ def test_equal_uniform_evaluation_is_reused(tmp_path: Path) -> None:
 def test_uniform_request_larger_than_sequence_reuses_all_frames(tmp_path: Path) -> None:
     stored = parse_timestep_selection("uniform:200", 7)
 
-    state = _existing_state(tmp_path, stored, timesteps="uniform:200")
+    state = _existing_state(
+        tmp_path,
+        stored,
+        timesteps="uniform:200",
+        total_timesteps=7,
+    )
 
     assert state is not None
     assert state["reuse_reason"] == "exact-timestep-match"
     assert state["completed_metrics"] == {"psnr"}
+
+
+def test_single_frame_cache_does_not_satisfy_uniform_volume_request(
+    tmp_path: Path,
+) -> None:
+    state = _existing_state(
+        tmp_path,
+        (0,),
+        timesteps="uniform:10",
+        stored_evaluation_id="legacy_metrics",
+        requested_evaluation_id="result_perceptual_sampled",
+        total_timesteps=100,
+    )
+
+    assert state is None
 
 
 def test_non_uniform_selection_still_requires_exact_timesteps() -> None:

@@ -48,3 +48,33 @@ def test_evaluation_id_isolates_schema_v2_outputs(tmp_path: Path) -> None:
     expected = Path("Main/Model/Dataset/Run")
     assert default_output == repo_root / "EvalResult" / "evaluations" / "default" / expected
     assert figure_output == repo_root / "EvalResult" / "evaluations" / "figures" / expected
+
+
+def test_external_result_paths_preserve_full_result_hierarchy(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    external_result = tmp_path / "autodl-tmp" / "Result"
+    main_run = external_result / "Main" / "CoordNet" / "Ionization" / "GT"
+    rd_run = external_result / "RD Curve" / "CoordNet" / "Ionization" / "0.41" / "GT"
+
+    main_output = evaluation_output_dir(main_run, repo_root=repo_root)
+    rd_output = evaluation_output_dir(rd_run, repo_root=repo_root)
+
+    evaluation_root = repo_root / "EvalResult" / "evaluations" / "default"
+    assert main_output == evaluation_root / "Main" / "CoordNet" / "Ionization" / "GT"
+    assert rd_output == evaluation_root / "RD Curve" / "CoordNet" / "Ionization" / "0.41" / "GT"
+    assert main_output != rd_output
+
+
+def test_unrelated_external_runs_with_same_leaf_are_hashed(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    first = tmp_path / "external-a" / "Run"
+    second = tmp_path / "external-b" / "Run"
+
+    first_output = evaluation_output_dir(first, repo_root=repo_root)
+    second_output = evaluation_output_dir(second, repo_root=repo_root)
+
+    assert first_output.parent.name == "_external"
+    assert second_output.parent.name == "_external"
+    assert first_output.name.startswith("Run-")
+    assert second_output.name.startswith("Run-")
+    assert first_output != second_output

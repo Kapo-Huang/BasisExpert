@@ -1,12 +1,27 @@
-# Estimate end-to-end training and inference time for every archived experiment.
-# Training probes use 72M samples (three VarExpert-style 1,500 x 16,000 rounds)
-# and extrapolate every experiment to the Main VarExpert budget of 14.4B samples.
-# Inference uniformly decodes ceil(10% * T) frames and projects to all values.
+# Estimate end-to-end training and inference time for each logical Result group.
+# Joint runs are evaluated directly. Per-target methods evaluate one canonical
+# target and multiply its time by the full dataset variable count.
 run_root: Result
 result_root: EvalResult
-evaluation_id: result_runtime
+evaluation_id: result_runtime_dataset_total_v2
 continue_on_error: true
 item_timeout_seconds: 86400
+
+runtime_aggregation:
+  mode: dataset_total
+  datasets:
+    Ionization:
+      representative_target: GT
+      variable_count: 5
+    Combustion:
+      representative_target: Absolute_Pressure
+      variable_count: 13
+    Katrina:
+      representative_target: fort63
+      variable_count: 5
+    RedSea:
+      representative_target: SALT
+      variable_count: 4
 
 evaluation:
   metrics:

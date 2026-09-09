@@ -73,6 +73,15 @@ def parse_args() -> argparse.Namespace:
         help="Evaluation root, in priority order for equal timestep counts. Repeat as needed.",
     )
     parser.add_argument(
+        "--perceptual-evaluation-root",
+        action="append",
+        default=None,
+        help=(
+            "Optional SSIM/LPIPS root, in priority order for equal timestep "
+            "counts. Repeat as needed; PSNR continues to use --evaluation-root."
+        ),
+    )
+    parser.add_argument(
         "--ignore-unmatched",
         action="store_true",
         help=(
@@ -104,6 +113,18 @@ def manifest_row_label(row: dict[str, str]) -> str:
 def default_evaluation_roots(repo: Path) -> list[str]:
     root = repo / "EvalResult" / "evaluations"
     return [root.relative_to(repo).as_posix()] if root.is_dir() else []
+
+
+def evaluation_root_priority(repo: Path, roots: list[str]) -> dict[str, int]:
+    priority: dict[str, int] = {}
+    for index, root in enumerate(roots):
+        priority[root] = index
+        root_path = (repo / root).resolve()
+        if root_path.name == "evaluations" and root_path.is_dir():
+            recipes = sorted(path for path in root_path.iterdir() if path.is_dir())
+            for recipe_index, recipe in enumerate(recipes):
+                priority[f"{root}/{recipe.name}"] = index * 10000 + recipe_index
+    return priority
 
 
 def is_uniform_timestep_selection(timesteps: tuple[int, ...]) -> bool:
@@ -566,13 +587,9 @@ def main() -> int:
     repo = args.repo.resolve()
     result_root = (args.result or repo / "Result").resolve()
     roots = args.evaluation_root or default_evaluation_roots(repo)
-    root_priority: dict[str, int] = {}
-    for index, root in enumerate(roots):
-        root_priority[root] = index
-        root_path = (repo / root).resolve()
-        if root_path.name == "evaluations" and root_path.is_dir():
-            for recipe_index, recipe in enumerate(sorted(path for path in root_path.iterdir() if path.is_dir())):
-                root_priority[f"{root}/{recipe.name}"] = index * 10000 + recipe_index
+    perceptual_roots = args.perceptual_evaluation_root or roots
+    root_priority = evaluation_root_priority(repo, roots)
+    perceptual_root_priority = evaluation_root_priority(repo, perceptual_roots)
     manifest_path = result_root / "MANIFEST.tsv"
     fields, rows = read_manifest(manifest_path)
     row_by_relative = {
@@ -580,11 +597,15 @@ def main() -> int:
         for row in rows if row.get("result_path")
     }
 
-    psnr_candidates, perceptual_candidates = scan_evaluations(repo, roots)
+    psnr_candidates, shared_perceptual_candidates = scan_evaluations(repo, roots)
+    if perceptual_roots == roots:
+        perceptual_candidates = shared_perceptual_candidates
+    else:
+        _, perceptual_candidates = scan_evaluations(repo, perceptual_roots)
     selected_all_psnr = choose_psnr_candidates(psnr_candidates, root_priority)
     selected_all_perceptual = choose_perceptual_candidates(
         perceptual_candidates,
-        root_priority,
+        perceptual_root_priority,
     )
     selected_psnr = {
         relative: item

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,16 @@ SUMMARY_FIELDS = (
     "model",
     "dataset",
     "target",
+    "category",
+    "method",
+    "dataset_label",
+    "variant",
+    "group_id",
+    "runtime_aggregation",
+    "aggregation_mode",
+    "representative_target",
+    "variable_count",
+    "group_member_count",
     "run_dir",
     "output_dir",
     "metrics_path",
@@ -60,6 +71,33 @@ SUMMARY_FIELDS = (
     "error_type",
     "error",
 )
+
+
+@dataclass(frozen=True)
+class RuntimeGroup:
+    category: str
+    method: str
+    dataset_label: str
+    variant: str
+    group_id: str
+    aggregation_mode: str
+    representative_target: str
+    variable_count: int
+    member_count: int
+
+    def record_fields(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "method": self.method,
+            "dataset_label": self.dataset_label,
+            "variant": self.variant,
+            "runtime_aggregation": "dataset_total",
+            "aggregation_mode": self.aggregation_mode,
+            "representative_target": self.representative_target,
+            "variable_count": self.variable_count,
+            "group_member_count": self.member_count,
+            "group_id": self.group_id,
+        }
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -169,6 +207,155 @@ def _discover_checkpoint_runs(root: Path) -> list[Path]:
     return sorted(runs)
 
 
+def _runtime_aggregation_settings(value: Any) -> dict[str, tuple[str, int]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("runtime_aggregation must be a mapping when provided")
+    mode = str(value.get("mode", "")).strip().lower()
+    if mode != "dataset_total":
+        raise ValueError("runtime_aggregation.mode must be dataset_total")
+    datasets = value.get("datasets")
+    if not isinstance(datasets, dict) or not datasets:
+        raise ValueError("runtime_aggregation.datasets must be a non-empty mapping")
+
+    settings: dict[str, tuple[str, int]] = {}
+    for dataset, raw_spec in datasets.items():
+        if not isinstance(raw_spec, dict):
+            raise ValueError(
+                f"runtime_aggregation.datasets.{dataset} must be a mapping"
+            )
+        representative = str(raw_spec.get("representative_target", "")).strip()
+        try:
+            variable_count = int(raw_spec.get("variable_count"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"runtime_aggregation.datasets.{dataset}.variable_count must be an integer"
+            ) from exc
+        if not representative:
+            raise ValueError(
+                f"runtime_aggregation.datasets.{dataset}.representative_target is required"
+            )
+        if variable_count <= 0:
+            raise ValueError(
+                f"runtime_aggregation.datasets.{dataset}.variable_count must be positive"
+            )
+        settings[str(dataset).strip().casefold()] = (
+            representative,
+            variable_count,
+        )
+    return settings
+
+
+def _runtime_group_key(
+    run_dir: Path,
+    *,
+    run_root: Path,
+) -> tuple[tuple[str, str, str, str], str]:
+    try:
+        relative = run_dir.resolve().relative_to(run_root.resolve())
+    except ValueError as exc:
+        raise ValueError(
+            f"Runtime dataset-total run is outside configured run_root: {run_dir}"
+        ) from exc
+    parts = relative.parts
+    if len(parts) < 4:
+        raise ValueError(
+            f"Runtime dataset-total run does not match Result hierarchy: {relative}"
+        )
+    category, method, dataset_label = parts[:3]
+    item_parts = parts[3:]
+    target = item_parts[-1]
+    category_key = category.casefold()
+    if category_key == "main":
+        variant = "/".join(item_parts[:-1])
+    elif category_key == "rd curve":
+        if len(item_parts) < 2:
+            raise ValueError(f"RD Curve runtime run has no rate/target pair: {relative}")
+        variant = "/".join(item_parts[:-1])
+    else:
+        variant = "/".join(item_parts)
+    return (category, method, dataset_label, variant), target
+
+
+def _select_runtime_dataset_total_runs(
+    run_dirs: list[Path],
+    *,
+    run_root: Path,
+    dataset_settings: dict[str, tuple[str, int]],
+) -> tuple[list[Path], dict[Path, RuntimeGroup]]:
+    grouped: dict[
+        tuple[str, str, str, str],
+        list[tuple[Path, str]],
+    ] = {}
+    for run_dir in run_dirs:
+        key, target = _runtime_group_key(run_dir, run_root=run_root)
+        grouped.setdefault(key, []).append((run_dir.resolve(), target))
+
+    selected: list[Path] = []
+    metadata: dict[Path, RuntimeGroup] = {}
+    for key in sorted(grouped, key=lambda item: tuple(part.casefold() for part in item)):
+        category, method, dataset_label, variant = key
+        members = sorted(grouped[key], key=lambda item: str(item[0]).casefold())
+        is_main_or_rd = category.casefold() in {"main", "rd curve"}
+        joint_members = [
+            item for item in members if item[1].casefold() == "joint"
+        ]
+        if is_main_or_rd and joint_members:
+            if len(members) != 1:
+                raise ValueError(
+                    f"Runtime group mixes Joint and per-target runs: {'/'.join(key)}"
+                )
+            run_dir, representative = joint_members[0]
+            aggregation_mode = "direct"
+            variable_count = 1
+        elif is_main_or_rd:
+            setting = dataset_settings.get(dataset_label.casefold())
+            if setting is None:
+                raise ValueError(
+                    f"No runtime aggregation dataset configured for {dataset_label}"
+                )
+            representative, variable_count = setting
+            candidates = [
+                item for item in members
+                if item[1].casefold() == representative.casefold()
+            ]
+            if len(candidates) != 1:
+                available = [target for _, target in members]
+                raise ValueError(
+                    f"Runtime representative {representative!r} for "
+                    f"{'/'.join(key)} must match exactly one run; available={available}"
+                )
+            run_dir, _ = candidates[0]
+            aggregation_mode = "representative_scaled"
+        else:
+            if len(members) != 1:
+                raise ValueError(
+                    f"Direct runtime group contains multiple runs: {'/'.join(key)}"
+                )
+            run_dir, representative = members[0]
+            aggregation_mode = "direct"
+            variable_count = 1
+
+        group_parts = [category, method, dataset_label]
+        if variant:
+            group_parts.append(variant)
+        group = RuntimeGroup(
+            category=category,
+            method=method,
+            dataset_label=dataset_label,
+            variant=variant,
+            group_id="/".join(group_parts),
+            aggregation_mode=aggregation_mode,
+            representative_target=representative,
+            variable_count=variable_count,
+            member_count=len(members),
+        )
+        selected.append(run_dir)
+        metadata[run_dir] = group
+    return selected, metadata
+
+
 def _section(payload: dict[str, Any], lower: str, upper: str) -> dict[str, Any]:
     value = payload.get(lower)
     if not isinstance(value, dict):
@@ -237,8 +424,16 @@ def _write_runtime_summaries(output_dir: Path, records: list[dict[str, Any]]) ->
         if not training and not inference:
             continue
         entries.append({
+            "category": record.get("category", ""),
+            "method": record.get("method", ""),
             "model": record.get("model", ""),
-            "dataset": record.get("dataset", ""),
+            "dataset": record.get("dataset_label") or record.get("dataset", ""),
+            "variant": record.get("variant", ""),
+            "group_id": record.get("group_id", ""),
+            "aggregation_mode": record.get("aggregation_mode", ""),
+            "representative_target": record.get("representative_target", ""),
+            "variable_count": int(record.get("variable_count") or 1),
+            "group_member_count": int(record.get("group_member_count") or 1),
             "target": record.get("target", ""),
             "run_dir": record.get("run_dir", ""),
             "estimated_training_seconds": training.get("estimated_training_seconds"),
@@ -251,40 +446,98 @@ def _write_runtime_summaries(output_dir: Path, records: list[dict[str, Any]]) ->
     if not entries:
         return
 
-    grouped: dict[tuple[str, str], dict[str, Any]] = {}
-    for entry in entries:
-        key = (str(entry["model"]), str(entry["dataset"]))
-        group = grouped.setdefault(
-            key,
-            {
-                "model": key[0],
-                "dataset": key[1],
-                "experiment_count": 0,
-                "estimated_training_seconds": 0.0,
-                "estimated_total_inference_seconds": 0.0,
-            },
-        )
-        group["experiment_count"] += 1
-        for field in ("estimated_training_seconds", "estimated_total_inference_seconds"):
-            value = entry.get(field)
-            if value is not None:
-                group[field] += float(value)
-    groups = list(grouped.values())
-    for group in groups:
-        group["estimated_training_hours"] = group["estimated_training_seconds"] / 3600.0
-        group["estimated_total_inference_hours"] = group["estimated_total_inference_seconds"] / 3600.0
+    dataset_total_mode = any(
+        record.get("runtime_aggregation") == "dataset_total"
+        for record in records
+    )
+    if dataset_total_mode:
+        groups: list[dict[str, Any]] = []
+        for entry in entries:
+            multiplier = int(entry["variable_count"])
+            training_seconds = entry.get("estimated_training_seconds")
+            inference_seconds = entry.get("estimated_total_inference_seconds")
+            dataset_training_seconds = (
+                None if training_seconds is None
+                else float(training_seconds) * multiplier
+            )
+            dataset_inference_seconds = (
+                None if inference_seconds is None
+                else float(inference_seconds) * multiplier
+            )
+            groups.append({
+                "category": entry["category"],
+                "method": entry["method"],
+                "dataset": entry["dataset"],
+                "variant": entry["variant"],
+                "group_id": entry["group_id"],
+                "aggregation_mode": entry["aggregation_mode"],
+                "representative_target": entry["representative_target"],
+                "variable_count": multiplier,
+                "group_member_count": entry["group_member_count"],
+                "estimated_training_seconds": dataset_training_seconds,
+                "estimated_training_hours": (
+                    None if dataset_training_seconds is None
+                    else dataset_training_seconds / 3600.0
+                ),
+                "estimated_total_inference_seconds": dataset_inference_seconds,
+                "estimated_total_inference_hours": (
+                    None if dataset_inference_seconds is None
+                    else dataset_inference_seconds / 3600.0
+                ),
+            })
+        grouping = ["category", "method", "dataset", "variant"]
+    else:
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for entry in entries:
+            key = (str(entry["model"]), str(entry["dataset"]))
+            group = grouped.setdefault(
+                key,
+                {
+                    "model": key[0],
+                    "dataset": key[1],
+                    "experiment_count": 0,
+                    "estimated_training_seconds": 0.0,
+                    "estimated_total_inference_seconds": 0.0,
+                },
+            )
+            group["experiment_count"] += 1
+            for field in (
+                "estimated_training_seconds",
+                "estimated_total_inference_seconds",
+            ):
+                value = entry.get(field)
+                if value is not None:
+                    group[field] += float(value)
+        groups = list(grouped.values())
+        for group in groups:
+            group["estimated_training_hours"] = (
+                group["estimated_training_seconds"] / 3600.0
+            )
+            group["estimated_total_inference_hours"] = (
+                group["estimated_total_inference_seconds"] / 3600.0
+            )
+        grouping = ["model", "dataset"]
 
     write_json(output_dir / "runtime_summary.json", {
         "schema_version": LAYOUT_SCHEMA_VERSION,
-        "grouping": ["model", "dataset"],
+        "aggregation_mode": (
+            "dataset_total" if dataset_total_mode else "legacy_model_dataset_sum"
+        ),
+        "grouping": grouping,
         "experiment_count": len(entries),
+        "group_count": len(groups),
         "entries": entries,
         "groups": groups,
     })
     for name, rows in (("runtime_entries.tsv", entries), ("runtime_groups.tsv", groups)):
         fields = list(dict.fromkeys(key for row in rows for key in row))
         with (output_dir / name).open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", extrasaction="ignore")
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=fields,
+                delimiter="\t",
+                extrasaction="ignore",
+            )
             writer.writeheader()
             writer.writerows(rows)
 
@@ -324,15 +577,19 @@ def _explicit_timesteps(
     value: str,
     *,
     stored_timesteps: tuple[int, ...] = (),
+    total_timesteps: int | None = None,
 ) -> tuple[int, ...] | None:
     tokens = [token.strip() for token in value.split(",") if token.strip()]
     if not tokens or any(token.lower() == "all" for token in tokens):
         return None
     if len(tokens) == 1 and tokens[0].lower().startswith("uniform:"):
-        if not stored_timesteps:
+        selection_total = total_timesteps
+        if selection_total is None and stored_timesteps:
+            selection_total = stored_timesteps[-1] + 1
+        if selection_total is None:
             return None
         try:
-            return parse_timestep_selection(value, stored_timesteps[-1] + 1)
+            return parse_timestep_selection(value, selection_total)
         except (IndexError, ValueError):
             return None
     if any(":" in token for token in tokens):
@@ -348,10 +605,25 @@ def _is_uniform_timestep_request(value: str) -> bool:
     return len(tokens) == 1 and tokens[0].lower().startswith("uniform:")
 
 
+def _configured_total_timesteps(raw: dict[str, Any]) -> int | None:
+    """Return the configured temporal extent when it is available cheaply."""
+    data = _section(raw, "data", "DATA")
+    volume_shape = data.get("volume_shape")
+    if not isinstance(volume_shape, dict):
+        return None
+    value = volume_shape.get("T", volume_shape.get("t"))
+    try:
+        total = int(value)
+    except (TypeError, ValueError):
+        return None
+    return total if total > 0 else None
+
+
 def _matching_stored_timesteps(
     value: str,
     *,
     stored_timesteps: tuple[int, ...],
+    total_timesteps: int | None = None,
 ) -> tuple[tuple[int, ...], str] | None:
     """Return the completed coverage and its reuse reason, if reusable.
 
@@ -362,6 +634,7 @@ def _matching_stored_timesteps(
     requested_timesteps = _explicit_timesteps(
         value,
         stored_timesteps=stored_timesteps,
+        total_timesteps=total_timesteps,
     )
     if requested_timesteps is None:
         return None
@@ -482,6 +755,7 @@ def _existing_evaluation_state_at(
     timestep_match = _matching_stored_timesteps(
         timesteps,
         stored_timesteps=stored_timesteps,
+        total_timesteps=_configured_total_timesteps(raw),
     )
     if timestep_match is None:
         return None
@@ -872,6 +1146,16 @@ def run_batch(
         metrics = tuple(str(metric).strip().lower() for metric in metrics_value)
     else:
         raise ValueError("evaluation.metrics must be a string or a list of metric names")
+    runtime_aggregation = _runtime_aggregation_settings(
+        batch.get("runtime_aggregation")
+    )
+    runtime_metrics = {"training_time", "inference_time"}
+    if runtime_aggregation is not None and (
+        not metrics or not set(metrics).issubset(runtime_metrics)
+    ):
+        raise ValueError(
+            "runtime_aggregation requires only training_time/inference_time metrics"
+        )
     timesteps = str(evaluation.get("timesteps", "all"))
     render = bool(evaluation.get("render", False))
     incremental = bool(evaluation.get("incremental", False))
@@ -944,6 +1228,17 @@ def run_batch(
         )
         run_source = run_roots
     discovered_run_count = len(run_dirs)
+    runtime_group_by_run: dict[Path, RuntimeGroup] = {}
+    if runtime_aggregation is not None:
+        if run_root is None:
+            raise ValueError(
+                "runtime_aggregation.mode=dataset_total requires run_root"
+            )
+        run_dirs, runtime_group_by_run = _select_runtime_dataset_total_runs(
+            run_dirs,
+            run_root=run_root,
+            dataset_settings=runtime_aggregation,
+        )
     dependency_metrics = {"pearson_error", "mi_error"}
     if metrics and set(metrics).issubset(dependency_metrics):
         dependency_configuration = load_dependency_configuration(resolved_config)
@@ -966,12 +1261,13 @@ def run_batch(
     records: list[dict[str, Any]] = []
     if len(run_dirs) != discovered_run_count:
         LOGGER.info(
-            "Collapsed %d discovered dependency runs to %d canonical groups",
+            "Collapsed %d discovered runs to %d evaluation tasks",
             discovered_run_count,
             len(run_dirs),
         )
     LOGGER.info("Loaded %d evaluation runs from %s", len(run_dirs), run_source)
     for index, run_dir in enumerate(run_dirs, start=1):
+        runtime_group = runtime_group_by_run.get(run_dir.resolve())
         worker_log = worker_dir / f"{index:03d}.log"
         request_path = worker_dir / f"{index:03d}.request.json"
         result_path = worker_dir / f"{index:03d}.result.json"
@@ -991,6 +1287,7 @@ def run_batch(
             "reuse_reason": "",
             "error_type": "",
             "error": "",
+            **({} if runtime_group is None else runtime_group.record_fields()),
         }
         started = time.perf_counter()
         existing_state: dict[str, Any] | None = None

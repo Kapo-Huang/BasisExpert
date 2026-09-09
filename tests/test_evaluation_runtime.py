@@ -135,6 +135,149 @@ def test_runtime_batch_summary_sums_model_dataset_groups(tmp_path: Path) -> None
     assert summary["groups"][0]["estimated_total_inference_seconds"] == pytest.approx(12.5)
 
 
+def test_runtime_dataset_total_selects_representatives_and_preserves_variants(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "Result"
+    runs = [
+        run_root / "Main" / "CoordNet" / "Ionization" / target
+        for target in ("GT", "H2", "H_plus", "He", "PD")
+    ]
+    runs.extend([
+        run_root / "Main" / "Ours" / "Ionization" / "Joint",
+        run_root / "RD Curve" / "CoordNet" / "Ionization" / "0.41" / "GT",
+        run_root / "RD Curve" / "CoordNet" / "Ionization" / "0.41" / "H2",
+        run_root / "RD Curve" / "CoordNet" / "Ionization" / "0.82" / "GT",
+        run_root / "RD Curve" / "CoordNet" / "Ionization" / "0.82" / "H2",
+        run_root / "Scaling" / "Ours" / "Combustion" / "V2",
+    ])
+    settings = {"ionization": ("GT", 5), "combustion": ("Absolute_Pressure", 13)}
+
+    selected, metadata = batch_runner._select_runtime_dataset_total_runs(
+        runs,
+        run_root=run_root,
+        dataset_settings=settings,
+    )
+
+    assert len(selected) == 5
+    assert run_root / "Main" / "CoordNet" / "Ionization" / "GT" in selected
+    assert run_root / "Main" / "CoordNet" / "Ionization" / "H2" not in selected
+    coordnet = metadata[
+        (run_root / "Main" / "CoordNet" / "Ionization" / "GT").resolve()
+    ]
+    assert coordnet.aggregation_mode == "representative_scaled"
+    assert coordnet.variable_count == 5
+    assert coordnet.member_count == 5
+    ours = metadata[
+        (run_root / "Main" / "Ours" / "Ionization" / "Joint").resolve()
+    ]
+    assert ours.aggregation_mode == "direct"
+    assert ours.variable_count == 1
+    assert {
+        group.variant for group in metadata.values()
+        if group.category == "RD Curve"
+    } == {"0.41", "0.82"}
+
+
+def test_runtime_dataset_total_requires_configured_representative(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "Result"
+    runs = [
+        run_root / "Main" / "CoordNet" / "Ionization" / target
+        for target in ("H2", "PD")
+    ]
+
+    with pytest.raises(ValueError, match="must match exactly one run"):
+        batch_runner._select_runtime_dataset_total_runs(
+            runs,
+            run_root=run_root,
+            dataset_settings={"ionization": ("GT", 5)},
+        )
+
+
+def test_runtime_dataset_total_summary_scales_representative_time(
+    tmp_path: Path,
+) -> None:
+    metrics_path = tmp_path / "metrics.json"
+    metrics_path.write_text(
+        json.dumps({
+            "performance": {
+                "training_time": {"estimated_training_seconds": 10.0},
+                "inference_time": {"estimated_total_inference_seconds": 4.0},
+            }
+        }),
+        encoding="utf-8",
+    )
+    direct_metrics_path = tmp_path / "direct_metrics.json"
+    direct_metrics_path.write_text(
+        json.dumps({
+            "performance": {
+                "training_time": {"estimated_training_seconds": 7.0},
+                "inference_time": {"estimated_total_inference_seconds": 3.0},
+            }
+        }),
+        encoding="utf-8",
+    )
+    records = [
+        {
+            "status": "success",
+            "category": "Main",
+            "method": "CoordNet",
+            "model": "coordnet",
+            "dataset": "ionization",
+            "dataset_label": "Ionization",
+            "variant": "",
+            "group_id": "Main/CoordNet/Ionization",
+            "runtime_aggregation": "dataset_total",
+            "aggregation_mode": "representative_scaled",
+            "representative_target": "GT",
+            "variable_count": 5,
+            "group_member_count": 5,
+            "target": "all",
+            "run_dir": str(
+                tmp_path / "Result" / "Main" / "CoordNet" / "Ionization" / "GT"
+            ),
+            "metrics_path": str(metrics_path),
+        },
+        {
+            "status": "success",
+            "category": "Main",
+            "method": "Ours",
+            "model": "var_expert",
+            "dataset": "ionization",
+            "dataset_label": "Ionization",
+            "variant": "",
+            "group_id": "Main/Ours/Ionization",
+            "runtime_aggregation": "dataset_total",
+            "aggregation_mode": "direct",
+            "representative_target": "Joint",
+            "variable_count": 1,
+            "group_member_count": 1,
+            "target": "all",
+            "run_dir": str(
+                tmp_path / "Result" / "Main" / "Ours" / "Ionization" / "Joint"
+            ),
+            "metrics_path": str(direct_metrics_path),
+        },
+    ]
+
+    batch_runner._write_summary(tmp_path, records, tmp_path / "config.yaml")
+    summary = json.loads((tmp_path / "runtime_summary.json").read_text(encoding="utf-8"))
+
+    assert summary["aggregation_mode"] == "dataset_total"
+    assert summary["grouping"] == ["category", "method", "dataset", "variant"]
+    assert summary["experiment_count"] == 2
+    assert summary["group_count"] == 2
+    entries = {entry["method"]: entry for entry in summary["entries"]}
+    groups = {group["method"]: group for group in summary["groups"]}
+    assert entries["CoordNet"]["estimated_training_seconds"] == pytest.approx(10.0)
+    assert groups["CoordNet"]["estimated_training_seconds"] == pytest.approx(50.0)
+    assert groups["CoordNet"]["estimated_total_inference_seconds"] == pytest.approx(20.0)
+    assert groups["Ours"]["estimated_training_seconds"] == pytest.approx(7.0)
+    assert groups["Ours"]["estimated_total_inference_seconds"] == pytest.approx(3.0)
+
+
 def test_batch_discovery_supports_both_config_layouts(tmp_path: Path) -> None:
     nested = tmp_path / "Result" / "Nested"
     root_config = tmp_path / "Result" / "RootConfig"

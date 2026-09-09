@@ -1,0 +1,27 @@
+# Re-evaluate the five Ionization TopK sensitivity runs whose legacy cache
+# contains only timestep 0 and cannot satisfy the sampled perceptual recipe.
+run_roots:
+  - Result/Sensitivity/Ours/Ionization/TopK/K3
+  - Result/Sensitivity/Ours/Ionization/TopK/K4
+  - Result/Sensitivity/Ours/Ionization/TopK/K5
+  - Result/Sensitivity/Ours/Ionization/TopK/K6
+  - Result/Sensitivity/Ours/Ionization/TopK/K7
+result_root: EvalResult
+evaluation_id: result_perceptual_sampled
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - ssim
+    - lpips
+  timesteps: uniform:10
+  timesteps_by_dataset:
+    Ionization: uniform:10
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

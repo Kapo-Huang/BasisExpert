@@ -3,6 +3,7 @@
 run_roots:
   - Result/Main/MINER/Ionization/H_plus
   - Result/RD Curve/STSR-INR/Combustion/0.82/Joint
+  - Result/RD Curve/STSR-INR/Combustion/3.26/Joint
 result_root: EvalResult
 evaluation_id: new_results_quality_render_20260909
 continue_on_error: true

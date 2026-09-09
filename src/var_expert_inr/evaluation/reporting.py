@@ -30,12 +30,25 @@ def evaluation_output_dir(
     try:
         return evaluation_root / resolved_run.relative_to(run_root)
     except ValueError:
-        # Keep non-Result runs separate while preserving their project-relative
-        # hierarchy whenever they are located inside this repository.
+        # AutoDL stores Result outside the repository. Preserve everything after
+        # the final Result component so distinct experiments cannot collide.
+        result_indices = [
+            index
+            for index, part in enumerate(resolved_run.parts)
+            if part.casefold() == "result"
+        ]
+        if result_indices:
+            suffix = resolved_run.parts[result_indices[-1] + 1:]
+            if suffix:
+                return evaluation_root / Path(*suffix)
+
+        # Keep arbitrary external runs unique even when their leaf names match.
         try:
             return evaluation_root / "_external" / resolved_run.relative_to(repo_root.resolve())
         except ValueError:
-            return evaluation_root / "_external" / resolved_run.name
+            digest = hashlib.sha256(str(resolved_run).encode("utf-8")).hexdigest()[:12]
+            leaf = _safe_path_component(resolved_run.name)
+            return evaluation_root / "_external" / f"{leaf}-{digest}"
 
 
 def path_fingerprint(path: str | Path) -> dict[str, Any]:
