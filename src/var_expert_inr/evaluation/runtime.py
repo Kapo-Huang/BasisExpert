@@ -16,6 +16,7 @@ import torch
 import yaml
 
 from .artifacts import LAYOUT_SCHEMA_VERSION
+from .data_paths import normalize_raw_data_paths
 from .reporting import (
     environment_manifest,
     evaluation_output_dir,
@@ -119,22 +120,22 @@ def _section(raw: dict[str, Any], lower: str, upper: str) -> tuple[str, dict[str
 
 
 def _total_timesteps(raw: dict[str, Any], config_path: Path) -> int:
-    _, data = _section(raw, "data", "DATA")
+    repo_root = Path(__file__).resolve().parents[3]
+    normalized = normalize_raw_data_paths(
+        raw,
+        repo_root=repo_root,
+        config_path=config_path,
+    )
+    _, data = _section(normalized, "data", "DATA")
     shape = data.get("volume_shape")
     if isinstance(shape, dict) and shape.get("T") is not None:
         return int(shape["T"])
     coords_value = data.get("coords_path") or data.get("source_path")
     if not coords_value:
         raise ValueError("Node runtime evaluation requires coords_path/source_path")
-    from .ground_truth import portable_data_path
-    from .standalone import _resolve_path
-    from .service import _node_time_indexers, _repo_root
+    from .service import _node_time_indexers
 
-    coords_path = portable_data_path(
-        _resolve_path(coords_value, repo_root=_repo_root(), config_path=config_path),
-        dataset_name=data.get("dataset_name"),
-        repo_root=_repo_root(),
-    )
+    coords_path = Path(str(coords_value))
     coords = np.load(coords_path, mmap_mode="r", allow_pickle=False)
     return len(_node_time_indexers(coords))
 
@@ -146,34 +147,12 @@ def _portable_training_payload(
     scratch_root: Path,
     device: str,
 ) -> dict[str, Any]:
-    from .ground_truth import portable_data_path
-    from .standalone import _resolve_path
-    from .service import _repo_root
-
-    payload = copy.deepcopy(raw)
+    payload = normalize_raw_data_paths(
+        raw,
+        repo_root=Path(__file__).resolve().parents[3],
+        config_path=config_path,
+    )
     data_key, data = _section(payload, "data", "DATA")
-    dataset_name = data.get("dataset_name")
-    for key in ("target_path", "coords_path", "source_path", "target_stats_path", "coordinate_stats_path"):
-        if data.get(key):
-            resolved = _resolve_path(
-                data[key], repo_root=_repo_root(), config_path=config_path
-            )
-            data[key] = str(
-                portable_data_path(
-                    resolved, dataset_name=dataset_name, repo_root=_repo_root()
-                )
-            )
-    if isinstance(data.get("targets"), dict):
-        data["targets"] = {
-            str(name): str(
-                portable_data_path(
-                    _resolve_path(path, repo_root=_repo_root(), config_path=config_path),
-                    dataset_name=dataset_name,
-                    repo_root=_repo_root(),
-                )
-            )
-            for name, path in data["targets"].items()
-        }
     payload[data_key] = data
     payload["experiment_root"] = str(scratch_root)
     payload["exp_id"] = "runtime-probe"

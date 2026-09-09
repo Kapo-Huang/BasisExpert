@@ -22,9 +22,9 @@ if str(SRC_ROOT) not in sys.path:
 
 from var_expert_inr.config.io import load_evaluation_experiment_config
 from var_expert_inr.evaluation.artifacts import ArtifactStore, LAYOUT_SCHEMA_VERSION
+from var_expert_inr.evaluation.data_paths import normalize_experiment_data_paths
 from var_expert_inr.evaluation.ground_truth import target_paths_from_config
 from var_expert_inr.evaluation.rendering import load_render_profile, profile_fingerprint
-from var_expert_inr.evaluation.service import _with_portable_data_paths
 from var_expert_inr.evaluation.standalone import _target_paths
 
 
@@ -79,7 +79,10 @@ def _manifest_dirs(root: Path) -> list[Path]:
 def _current_target_paths(manifest: dict[str, Any], config_path: Path) -> dict[str, Path]:
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     try:
-        config = _with_portable_data_paths(load_evaluation_experiment_config(config_path))
+        config = normalize_experiment_data_paths(
+            load_evaluation_experiment_config(config_path),
+            repo_root=REPO_ROOT,
+        )
         return target_paths_from_config(config.data, repo_root=REPO_ROOT)
     except (KeyError, TypeError, ValueError):
         return _target_paths(raw, repo_root=REPO_ROOT, config_path=config_path)

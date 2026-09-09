@@ -753,6 +753,8 @@ def _worker_main(request_path: Path, result_path: Path) -> int:
     request = json.loads(request_path.read_text(encoding="utf-8"))
     response: dict[str, Any]
     try:
+        selected_env = _server_environment(request.get("server_env"))
+        os.environ["SERVER_ENV"] = selected_env
         result = evaluate_run(
             request["run_dir"],
             metrics=tuple(request["metrics"]),
@@ -1073,6 +1075,7 @@ def run_batch(
                 json.dumps(
                     {
                         "run_dir": str(run_dir),
+                        "server_env": selected_env,
                         "metrics": list(pending_metrics),
                         "timesteps": run_timesteps,
                         "target": target,

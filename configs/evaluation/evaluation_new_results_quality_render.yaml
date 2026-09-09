@@ -1,0 +1,26 @@
+# Evaluate the newly archived completed experiments with sampled quality
+# metrics and retain prediction, ground-truth, and error renders.
+run_roots:
+  - Result/Main/MINER/Ionization/H_plus
+  - Result/RD Curve/STSR-INR/Combustion/0.82/Joint
+result_root: EvalResult
+evaluation_id: new_results_quality_render_20260909
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - psnr
+    - lpips
+    - ssim
+  timesteps: uniform:10
+  timesteps_by_dataset:
+    Ionization: uniform:10
+    combustion_40NH3_1: uniform:200
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

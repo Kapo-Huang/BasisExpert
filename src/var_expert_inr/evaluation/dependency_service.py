@@ -29,6 +29,7 @@ from .dependency_cache import (
     load_dependency_configuration,
 )
 from .artifacts import ArtifactStore, LAYOUT_SCHEMA_VERSION
+from .data_paths import normalize_experiment_data_paths, normalize_raw_data_paths
 from .ground_truth import target_paths_from_config
 from .reporting import (
     cache_key,
@@ -235,12 +236,12 @@ class _StandardSampleDecoder:
             _load_prediction_arrays,
             _load_standard_model,
             _resolve_standard_source,
-            _with_portable_data_paths,
         )
 
         self.run_dir = run_dir
-        self.config = _with_portable_data_paths(
-            load_evaluation_experiment_config(_run_config(run_dir))
+        self.config = normalize_experiment_data_paths(
+            load_evaluation_experiment_config(_run_config(run_dir)),
+            repo_root=_repo_root(),
         )
         available = tuple(
             [self.config.data.target]
@@ -311,14 +312,16 @@ class _StandaloneSampleDecoder:
         from .standalone import (
             _data_section,
             _find_source,
-            _resolve_path,
             identify_subsystem,
         )
-        from .ground_truth import portable_data_path
 
         self.run_dir = run_dir
         self.config_path = _run_config(run_dir)
-        self.raw = _mapping(self.config_path)
+        self.raw = normalize_raw_data_paths(
+            _mapping(self.config_path),
+            repo_root=_repo_root(),
+            config_path=self.config_path,
+        )
         self.subsystem = identify_subsystem(self.raw)
         if self.subsystem is None:
             raise ValueError(f"Run is not a standalone subsystem: {run_dir}")
@@ -338,10 +341,7 @@ class _StandaloneSampleDecoder:
             self.indexers = [slice(t * per_frame, (t + 1) * per_frame) for t in range(self.shape_tzyx[0])]
         else:
             value = data.get("coords_path") or data.get("source_path")
-            self.coords_path = portable_data_path(
-                _resolve_path(value, repo_root=_repo_root(), config_path=self.config_path),
-                dataset_name=data.get("dataset_name"), repo_root=_repo_root(),
-            )
+            self.coords_path = Path(str(value))
             self.coords = np.load(self.coords_path, mmap_mode="r", allow_pickle=False)
             from .dependency_cache import _node_indexers
             self.indexers = _node_indexers(self.coords)
@@ -362,7 +362,6 @@ class _StandaloneSampleDecoder:
             _invoke_predict,
             _portable_standalone_config,
             _prediction_paths,
-            _target_paths,
         )
 
         decoded_positions = None
@@ -391,10 +390,7 @@ class _StandaloneSampleDecoder:
                 )
             frame = decoded[(self.target, timestep)]
         else:
-            gt_paths = _target_paths(self.raw, repo_root=_repo_root(), config_path=self.config_path)
-            with _portable_standalone_config(
-                self.raw, gt_paths=gt_paths, coords_path=self.coords_path, device=str(self.device)
-            ) as portable_config:
+            with _portable_standalone_config(self.raw, device=str(self.device)) as portable_config:
                 result = _invoke_predict(
                     self.subsystem, portable_config, self.source_kind, self.source_path,
                     self.target, (timestep,),

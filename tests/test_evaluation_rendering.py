@@ -9,6 +9,8 @@ import pytest
 from var_expert_inr.config.schema import VolumeShape
 from var_expert_inr.evaluation.ground_truth import portable_data_path
 from var_expert_inr.evaluation.rendering import (
+    _error_render_profile,
+    _finalize_node_render_image,
     _load_mesh,
     _mesh_scalar_values,
     compare_rendered_images,
@@ -269,3 +271,86 @@ def test_inference_dataset_uses_coordinate_axes_and_real_target_dims(tmp_path: P
     assert dataset.meta.target_dims == {"scalar": 1, "vector": 3}
     batch = dataset.fetch_batch([0, shape.N - 1], include_targets=False)
     assert tuple(batch.coords.shape) == (2, 3)
+
+def test_node_render_crop_uses_nonwhite_bounding_box(tmp_path: Path) -> None:
+    pil = pytest.importorskip("PIL.Image")
+    pixels = np.full((8, 10, 3), 255, dtype=np.uint8)
+    pixels[2:6, 3:8] = np.array([20, 40, 60], dtype=np.uint8)
+    pixels[3, 4] = 255
+    output = tmp_path / "cropped.png"
+    pil.fromarray(pixels).save(output)
+
+    info = _finalize_node_render_image(
+        output,
+        profile={"background": "white", "crop_to_nonwhite_bbox": True},
+        original_size=(10, 8),
+    )
+
+    assert info == {
+        "crop_bbox": [3, 2, 8, 6],
+        "original_size": [10, 8],
+        "output_size": [5, 4],
+    }
+    with pil.open(output) as image:
+        cropped = np.asarray(image.convert("RGB"))
+    assert cropped.shape == (4, 5, 3)
+    np.testing.assert_array_equal(cropped[1, 1], [255, 255, 255])
+
+
+def test_node_render_crop_rejects_all_background_image(tmp_path: Path) -> None:
+    pil = pytest.importorskip("PIL.Image")
+    output = tmp_path / "white.png"
+    pil.fromarray(np.full((8, 10, 3), 255, dtype=np.uint8)).save(output)
+
+    with pytest.raises(ValueError, match="all-background node render"):
+        _finalize_node_render_image(
+            output,
+            profile={"background": "white", "crop_to_nonwhite_bbox": True},
+            original_size=(10, 8),
+        )
+
+
+def test_node_render_crop_disabled_preserves_image(tmp_path: Path) -> None:
+    pil = pytest.importorskip("PIL.Image")
+    output = tmp_path / "uncropped.png"
+    pil.fromarray(np.full((8, 10, 3), 255, dtype=np.uint8)).save(output)
+    before = output.read_bytes()
+
+    info = _finalize_node_render_image(
+        output,
+        profile={"background": "white", "crop_to_nonwhite_bbox": False},
+        original_size=(10, 8),
+    )
+
+    assert output.read_bytes() == before
+    assert info == {
+        "crop_bbox": None,
+        "original_size": [10, 8],
+        "output_size": [10, 8],
+    }
+
+
+def test_katrina_profile_uses_fixed_target_clims_and_crop() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    profile = load_render_profile("katrina", None, repo_root=repo_root)
+
+    assert profile["cmap"] == "viridis"
+    assert profile["clip_to_clim"] is True
+    assert profile["crop_to_nonwhite_bbox"] is True
+    assert profile["target_clims"] == {
+        "fort63": [-0.45, 0.10],
+        "fort64": [0.05, 0.24],
+        "fort73": [0.59, 1.00],
+        "speed": [-1.00, 0.03],
+        "v": [0.00, 0.53],
+    }
+
+
+def test_error_render_profile_disables_nonwhite_crop() -> None:
+    profile = _error_render_profile(
+        {"crop_to_nonwhite_bbox": True},
+        error_vmin=0.0,
+        error_vmax=5.0,
+    )
+
+    assert profile["crop_to_nonwhite_bbox"] is False

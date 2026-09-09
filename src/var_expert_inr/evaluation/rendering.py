@@ -748,6 +748,11 @@ def render_node_frame(
         plotter.screenshot(filename=str(output), return_img=False)
     finally:
         plotter.close()
+    image_info = _finalize_node_render_image(
+        output,
+        profile=profile,
+        original_size=size,
+    )
     return {
         "path": str(output.resolve()),
         "renderer": "mesh",

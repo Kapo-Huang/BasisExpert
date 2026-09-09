@@ -19,7 +19,8 @@ from ..utils.checkpoint import (
     read_checkpoint_payload,
     validate_checkpoint_target_layout,
 )
-from .ground_truth import portable_data_path, target_paths_from_config, validate_ground_truth_paths
+from .data_paths import normalize_experiment_data_paths, normalize_raw_data_paths
+from .ground_truth import target_paths_from_config, validate_ground_truth_paths
 from .artifacts import ArtifactStore, LAYOUT_SCHEMA_VERSION
 from .metrics import (
     ErrorAccumulator,
@@ -231,25 +232,6 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _with_portable_data_paths(config):
-    data = config.data
-    root = _repo_root()
-    target_path = None if data.target_path is None else str(
-        portable_data_path(data.target_path, dataset_name=data.dataset_name, repo_root=root)
-    )
-    targets = None if data.targets is None else {
-        name: str(portable_data_path(path, dataset_name=data.dataset_name, repo_root=root))
-        for name, path in data.targets.items()
-    }
-    coords_path = None if data.coords_path is None else str(
-        portable_data_path(data.coords_path, dataset_name=data.dataset_name, repo_root=root)
-    )
-    return replace(
-        config,
-        data=replace(data, target_path=target_path, targets=targets, coords_path=coords_path),
-    )
-
-
 def _select_targets(available: tuple[str, ...], selected: tuple[str, ...] | None) -> tuple[str, ...]:
     if selected is None:
         return available
@@ -444,7 +426,10 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     needs_gt = metrics_require_ground_truth(metrics)
     needs_render = bool(request.render or metrics_require_rendering(metrics))
     config_path = resolve_run_config(request.run_dir)
-    config = _with_portable_data_paths(load_evaluation_experiment_config(config_path))
+    config = normalize_experiment_data_paths(
+        load_evaluation_experiment_config(config_path),
+        repo_root=repo_root,
+    )
     available_targets = tuple(
         [config.data.target] if config.data.target else
         list(config.data.targets.keys()) if config.data.targets else ["target"]
@@ -461,9 +446,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
         )
         total_timesteps = int(config.data.volume_shape.T)
     else:
-        coords_path = portable_data_path(
-            config.data.coords_path, dataset_name=config.data.dataset_name, repo_root=repo_root
-        )
+        coords_path = Path(str(config.data.coords_path))
         coords = np.load(coords_path, mmap_mode="r", allow_pickle=False)
         node_count = int(coords.shape[0])
         total_timesteps = len(_node_time_indexers(coords))
@@ -897,7 +880,11 @@ def evaluate_run(
 ) -> dict[str, Any]:
     resolved_run = Path(run_dir).expanduser().resolve()
     config_path = resolve_run_config(resolved_run)
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw = normalize_raw_data_paths(
+        yaml.safe_load(config_path.read_text(encoding="utf-8")) or {},
+        repo_root=_repo_root(),
+        config_path=config_path,
+    )
     configured_evaluation = dict(raw.get("evaluation") or raw.get("EVALUATION") or {})
     if metrics is not None:
         selected_metrics = metrics

@@ -184,3 +184,25 @@ def test_two_evaluations_reference_one_gt_without_local_copies(tmp_path: Path) -
         assert persisted["per_timestep"][0]["gt_render_path"].startswith("artifacts/")
 
     assert gt_references[0] == gt_references[1]
+
+def test_nonwhite_crop_profile_change_invalidates_artifact_key(tmp_path: Path) -> None:
+    source = tmp_path / "gt.npy"
+    source.write_bytes(b"ground-truth")
+    store = ArtifactStore(repo_root=tmp_path, result_root="EvalResult")
+    uncropped = store.ground_truth_spec(
+        dataset="dataset",
+        target="field",
+        timestep=0,
+        ground_truth_path=source,
+        profile={**PROFILE, "crop_to_nonwhite_bbox": False},
+    )
+    cropped = store.ground_truth_spec(
+        dataset="dataset",
+        target="field",
+        timestep=0,
+        ground_truth_path=source,
+        profile={**PROFILE, "crop_to_nonwhite_bbox": True},
+    )
+
+    assert uncropped.key != cropped.key
+    assert uncropped.path != cropped.path

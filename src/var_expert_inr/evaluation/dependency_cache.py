@@ -23,7 +23,8 @@ from .dependency import (
     sampled_channel,
     stable_sample_indices,
 )
-from .ground_truth import portable_data_path, target_paths_from_config
+from .data_paths import normalize_experiment_data_paths
+from .ground_truth import target_paths_from_config
 
 
 def _path_fingerprint(path: str | Path) -> dict[str, Any]:
@@ -215,7 +216,10 @@ def build_dataset_dependency_cache(
     experiment_config_path = Path(dataset_spec["config"])
     if not experiment_config_path.is_absolute():
         experiment_config_path = repo_root / experiment_config_path
-    experiment = load_evaluation_experiment_config(experiment_config_path)
+    experiment = normalize_experiment_data_paths(
+        load_evaluation_experiment_config(experiment_config_path),
+        repo_root=repo_root,
+    )
     print(f"[{key}] loaded dataset configuration", flush=True)
     targets = dependency_targets(dataset_spec)
     target_names = tuple(target.name for target in targets)
@@ -255,11 +259,7 @@ def build_dataset_dependency_cache(
                 )
     else:
         volume = False
-        coords_path = portable_data_path(
-            experiment.data.coords_path,
-            dataset_name=experiment.data.dataset_name,
-            repo_root=repo_root,
-        )
+        coords_path = Path(str(experiment.data.coords_path))
         coords = np.load(coords_path, mmap_mode="r", allow_pickle=False)
         indexers = _node_indexers(coords)
         for name, array_shape in array_shapes.items():

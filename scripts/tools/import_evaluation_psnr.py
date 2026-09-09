@@ -119,8 +119,15 @@ def is_uniform_timestep_selection(timesteps: tuple[int, ...]) -> bool:
     return timesteps == expected
 
 
-def scan_evaluations(repo: Path, roots: list[str]) -> dict[str, list[EvaluationPSNR]]:
-    candidates: dict[str, list[EvaluationPSNR]] = defaultdict(list)
+def scan_evaluations(
+    repo: Path,
+    roots: list[str],
+) -> tuple[
+    dict[str, list[EvaluationPSNR]],
+    dict[str, list[EvaluationPerceptual]],
+]:
+    psnr_candidates: dict[str, list[EvaluationPSNR]] = defaultdict(list)
+    perceptual_candidates: dict[str, list[EvaluationPerceptual]] = defaultdict(list)
     for root_name in roots:
         root = (repo / root_name).resolve()
         if not root.is_dir():
@@ -135,10 +142,9 @@ def scan_evaluations(repo: Path, roots: list[str]) -> dict[str, list[EvaluationP
                 continue
             try:
                 timesteps = tuple(int(value) for value in manifest.get("timesteps") or ())
-                psnr_db = float((metrics.get("aggregate") or {})["psnr"])
-            except (KeyError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 continue
-            if not is_uniform_timestep_selection(timesteps) or not math.isfinite(psnr_db):
+            if not is_uniform_timestep_selection(timesteps):
                 continue
             relative_parts = manifest_path.parent.relative_to(root).parts
             # Schema v2 inserts the evaluation recipe id before the original
@@ -159,17 +165,40 @@ def scan_evaluations(repo: Path, roots: list[str]) -> dict[str, list[EvaluationP
             result_relative = normalized_relative(Path(*result_parts))
             if result_relative.split("/", 1)[0] not in RESULT_CATEGORIES:
                 continue
-            candidates[result_relative].append(EvaluationPSNR(
-                result_relative=result_relative,
-                root_name=recipe,
-                evaluation_dir=manifest_path.parent,
-                timesteps=timesteps,
-                psnr_db=psnr_db,
-            ))
-    return candidates
+
+            aggregate = metrics.get("aggregate") or {}
+            try:
+                psnr_db = float(aggregate["psnr"])
+            except (KeyError, TypeError, ValueError):
+                psnr_db = math.nan
+            if math.isfinite(psnr_db):
+                psnr_candidates[result_relative].append(EvaluationPSNR(
+                    result_relative=result_relative,
+                    root_name=recipe,
+                    evaluation_dir=manifest_path.parent,
+                    timesteps=timesteps,
+                    psnr_db=psnr_db,
+                ))
+
+            try:
+                ssim = float(aggregate["ssim"])
+                lpips = float(aggregate["lpips"])
+            except (KeyError, TypeError, ValueError):
+                ssim = math.nan
+                lpips = math.nan
+            if math.isfinite(ssim) and math.isfinite(lpips):
+                perceptual_candidates[result_relative].append(EvaluationPerceptual(
+                    result_relative=result_relative,
+                    root_name=recipe,
+                    evaluation_dir=manifest_path.parent,
+                    timesteps=timesteps,
+                    ssim=ssim,
+                    lpips=lpips,
+                ))
+    return psnr_candidates, perceptual_candidates
 
 
-def choose_candidates(
+def choose_psnr_candidates(
     candidates: dict[str, list[EvaluationPSNR]],
     root_priority: dict[str, int],
 ) -> dict[str, EvaluationPSNR]:
@@ -183,6 +212,21 @@ def choose_candidates(
                 f"{option.root_name}:{option.psnr_db:.12g}" for option in most_complete
             )
             raise ValueError(f"Conflicting evaluation PSNR for {relative}: {details}")
+        selected[relative] = min(
+            most_complete,
+            key=lambda option: root_priority[option.root_name],
+        )
+    return selected
+
+
+def choose_perceptual_candidates(
+    candidates: dict[str, list[EvaluationPerceptual]],
+    root_priority: dict[str, int],
+) -> dict[str, EvaluationPerceptual]:
+    selected: dict[str, EvaluationPerceptual] = {}
+    for relative, options in candidates.items():
+        max_timesteps = max(len(option.timesteps) for option in options)
+        most_complete = [option for option in options if len(option.timesteps) == max_timesteps]
         selected[relative] = min(
             most_complete,
             key=lambda option: root_priority[option.root_name],
@@ -213,7 +257,11 @@ def markdown_table(headers: list[str], rows: list[tuple[str, ...]]) -> str:
     return "\n".join(lines)
 
 
-def update_summary(path: Path, psnr_by_key: dict[tuple[str, str, str, str], float]) -> int:
+def update_summary(
+    path: Path,
+    psnr_by_key: dict[tuple[str, str, str, str], float],
+    perceptual_by_key: dict[tuple[str, str, str, str], EvaluationPerceptual],
+) -> int:
     lines = path.read_text(encoding="utf-8").splitlines()
     category = ""
     updates = 0
@@ -221,19 +269,38 @@ def update_summary(path: Path, psnr_by_key: dict[tuple[str, str, str, str], floa
     for line in lines:
         if line.startswith("## "):
             category = line[3:].strip()
-        if line.startswith("| ") and line.endswith(" |"):
+        if (
+            category in RESULT_CATEGORIES
+            and line.startswith("| ")
+            and line.endswith(" |")
+        ):
             cells = [cell.strip() for cell in line[1:-1].split("|")]
-            if len(cells) == 5:
-                key = (category, cells[0], cells[1], cells[2])
-                psnr_db = psnr_by_key.get(key)
-                if psnr_db is not None:
-                    cells[-1] = f"{psnr_db:.4f}"
-                    line = "| " + " | ".join(cells) + " |"
+            if len(cells) in (5, 7):
+                if "PSNR(dB)" in cells:
+                    cells = [*cells[:5], "SSIM", "LPIPS"]
+                elif all(cell and set(cell) <= {"-", ":"} for cell in cells):
+                    cells = ["---"] * 7
+                else:
+                    key = (category, cells[0], cells[1], cells[2])
+                    psnr_db = psnr_by_key.get(key)
+                    perceptual = perceptual_by_key.get(key)
+                    cells = [
+                        *cells[:4],
+                        f"{psnr_db:.4f}" if psnr_db is not None else "-",
+                        f"{perceptual.ssim:.4f}" if perceptual is not None else "-",
+                        f"{perceptual.lpips:.4f}" if perceptual is not None else "-",
+                    ]
                     updates += 1
+                line = "| " + " | ".join(cells) + " |"
         result.append(line)
-    result = [line for line in result if line != SUMMARY_MARKER]
+    result = [
+        line for line in result
+        if not line.startswith(SUMMARY_MARKER_PREFIX)
+    ]
     insertion = next((index + 1 for index, line in enumerate(result) if line.startswith("# ")), 1)
-    result[insertion:insertion] = ["", SUMMARY_MARKER]
+    while insertion < len(result) and not result[insertion].strip():
+        del result[insertion]
+    result[insertion:insertion] = ["", SUMMARY_MARKER, ""]
     path.write_text("\n".join(result) + "\n", encoding="utf-8")
     return updates
 
@@ -370,7 +437,7 @@ def update_substitutions(path: Path, psnr_by_label: dict[str, float]) -> int:
     return updates
 
 
-def write_evaluation_audit(
+def write_psnr_evaluation_audit(
     path: Path,
     selected: dict[str, EvaluationPSNR],
     *,
@@ -397,6 +464,73 @@ def write_evaluation_audit(
         f"- Selected sources: {', '.join(f'{root}={count}' for root, count in sorted(root_counts.items()))}.",
         "",
         markdown_table(["Result entry", "PSNR(dB)", "Timesteps", "Source", "Evaluation directory"], rows),
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_evaluation_audit(
+    path: Path,
+    selected_psnr: dict[str, EvaluationPSNR],
+    selected_perceptual: dict[str, EvaluationPerceptual],
+    *,
+    fills: int,
+    replacements: int,
+    manifest_entries: int,
+) -> None:
+    psnr_root_counts = Counter(item.root_name for item in selected_psnr.values())
+    perceptual_root_counts = Counter(
+        item.root_name for item in selected_perceptual.values()
+    )
+    relatives = sorted(set(selected_psnr) | set(selected_perceptual))
+    rows: list[tuple[str, ...]] = []
+    for relative in relatives:
+        psnr = selected_psnr.get(relative)
+        perceptual = selected_perceptual.get(relative)
+        rows.append((
+            f"Result/{relative}",
+            f"{psnr.psnr_db:.4f}" if psnr is not None else "-",
+            f"{perceptual.ssim:.4f}" if perceptual is not None else "-",
+            f"{perceptual.lpips:.4f}" if perceptual is not None else "-",
+            str(len(psnr.timesteps)) if psnr is not None else "-",
+            str(len(perceptual.timesteps)) if perceptual is not None else "-",
+            psnr.root_name if psnr is not None else "-",
+            perceptual.root_name if perceptual is not None else "-",
+            normalized_relative(psnr.evaluation_dir) if psnr is not None else "-",
+            (
+                normalized_relative(perceptual.evaluation_dir)
+                if perceptual is not None else "-"
+            ),
+        ))
+
+    overlap = len(set(selected_psnr) & set(selected_perceptual))
+    missing_perceptual = manifest_entries - len(selected_perceptual)
+    psnr_sources = ", ".join(
+        f"{root}={count}" for root, count in sorted(psnr_root_counts.items())
+    ) or "none"
+    perceptual_sources = ", ".join(
+        f"{root}={count}" for root, count in sorted(perceptual_root_counts.items())
+    ) or "none"
+    lines = [
+        "# Imported evaluation metrics",
+        "",
+        f"- Validity rule: completed evaluations with a uniform selection of at least {MIN_TIMESTEPS} timesteps; a single timestep `0` is excluded.",
+        f"- Result manifest entries: {manifest_entries}; qualified PSNR: {len(selected_psnr)}; qualified SSIM/LPIPS: {len(selected_perceptual)}; overlap: {overlap}; missing SSIM/LPIPS: {missing_perceptual}.",
+        f"- PSNR synchronization changes in this invocation -- filled blanks: {fills}; replaced existing archived PSNR: {replacements}.",
+        "- Source selection: most sampled timesteps first; ties use evaluation recipe order. SSIM and LPIPS are selected as a pair.",
+        f"- Selected PSNR sources: {psnr_sources}.",
+        f"- Selected SSIM/LPIPS sources: {perceptual_sources}.",
+        "- Missing metrics are shown as `-`.",
+        "",
+        markdown_table(
+            [
+                "Result entry", "PSNR(dB)", "SSIM", "LPIPS",
+                "PSNR timesteps", "Perceptual timesteps",
+                "PSNR source", "Perceptual source",
+                "PSNR evaluation directory", "Perceptual evaluation directory",
+            ],
+            rows,
+        ),
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -445,9 +579,27 @@ def main() -> int:
         str(row.get("result_path", "")).replace("\\", "/").removeprefix("Result/"): row
         for row in rows if row.get("result_path")
     }
-    selected_all = choose_candidates(scan_evaluations(repo, roots), root_priority)
-    selected = {relative: item for relative, item in selected_all.items() if relative in row_by_relative}
-    unmatched = sorted(set(selected_all).difference(row_by_relative))
+
+    psnr_candidates, perceptual_candidates = scan_evaluations(repo, roots)
+    selected_all_psnr = choose_psnr_candidates(psnr_candidates, root_priority)
+    selected_all_perceptual = choose_perceptual_candidates(
+        perceptual_candidates,
+        root_priority,
+    )
+    selected_psnr = {
+        relative: item
+        for relative, item in selected_all_psnr.items()
+        if relative in row_by_relative
+    }
+    selected_perceptual = {
+        relative: item
+        for relative, item in selected_all_perceptual.items()
+        if relative in row_by_relative
+    }
+    unmatched = sorted(
+        (set(selected_all_psnr) | set(selected_all_perceptual))
+        .difference(row_by_relative)
+    )
     if unmatched and not args.ignore_unmatched:
         raise ValueError(f"Evaluation results not found in Result manifest: {unmatched[:10]}")
     if unmatched:
@@ -458,7 +610,7 @@ def main() -> int:
 
     fills = 0
     replacements = 0
-    for relative, item in selected.items():
+    for relative, item in selected_psnr.items():
         row = row_by_relative[relative]
         previous = str(row.get("psnr_db", "")).strip()
         if not previous:
@@ -468,12 +620,18 @@ def main() -> int:
         row["psnr_db"] = f"{item.psnr_db:.10g}"
 
     substitution_fills, substitution_replacements = propagate_substitution_psnr(
-        rows, set(selected),
+        rows, set(selected_psnr),
     )
 
+    overlap = len(set(selected_psnr) & set(selected_perceptual))
     print(
-        f"valid={len(selected)} filled={fills} replaced={replacements} "
-        f"sources={dict(Counter(item.root_name for item in selected.values()))} "
+        f"valid_psnr={len(selected_psnr)} "
+        f"valid_perceptual={len(selected_perceptual)} "
+        f"overlap={overlap} "
+        f"missing_perceptual={len(rows) - len(selected_perceptual)} "
+        f"filled={fills} replaced={replacements} "
+        f"psnr_sources={dict(Counter(item.root_name for item in selected_psnr.values()))} "
+        f"perceptual_sources={dict(Counter(item.root_name for item in selected_perceptual.values()))} "
         f"substitution_filled={substitution_fills} "
         f"substitution_replaced={substitution_replacements}"
     )
@@ -485,21 +643,36 @@ def main() -> int:
         (row["category"], row["method"], row["dataset"], row["item"]): float(row["psnr_db"])
         for row in rows if row.get("psnr_db")
     }
+    perceptual_by_key = {
+        (
+            row_by_relative[relative]["category"],
+            row_by_relative[relative]["method"],
+            row_by_relative[relative]["dataset"],
+            row_by_relative[relative]["item"],
+        ): item
+        for relative, item in selected_perceptual.items()
+    }
     labels = {relative: manifest_row_label(row) for relative, row in row_by_relative.items()}
     psnr_by_label = {
         manifest_row_label(row): float(row["psnr_db"])
         for row in rows if row.get("psnr_db")
     }
-    summary_updates = update_summary(result_root / "EXPERIMENT_SUMMARY.md", psnr_by_key)
+    summary_updates = update_summary(
+        result_root / "EXPERIMENT_SUMMARY.md",
+        psnr_by_key,
+        perceptual_by_key,
+    )
     update_aggregated_summary(result_root / "EXPERIMENT_SUMMARY.md", rows)
     substitution_updates = update_substitutions(result_root / "SUBSTITUTIONS.md", psnr_by_label)
     write_evaluation_audit(
         result_root / "EVALUATION_PSNR.md",
-        selected,
+        selected_psnr,
+        selected_perceptual,
         fills=fills,
         replacements=replacements,
+        manifest_entries=len(rows),
     )
-    append_anomaly_audit(result_root / "ANOMALIES.md", selected, labels)
+    append_anomaly_audit(result_root / "ANOMALIES.md", selected_psnr, labels)
     print(f"summary_updates={summary_updates} substitution_updates={substitution_updates}")
     return 0
 

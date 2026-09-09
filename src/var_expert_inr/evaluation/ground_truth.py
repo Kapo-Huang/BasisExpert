@@ -1,56 +1,18 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from ..utils.io import resolve_path
+from .data_paths import resolve_evaluation_data_path
 
 
-DATASET_PATH_ALIASES = {"bathymetry": "redsea"}
-DATASET_LOCAL_FOLDERS = {
-    "redsea": "RedSea",
-    "katrina": "Katrina",
-    "ionization": "Ionization",
-    "combustion_40nh3_1": "Combustion",
-}
+portable_data_path = resolve_evaluation_data_path
 
 
-def portable_data_path(
-    path: str | Path,
-    *,
-    dataset_name: str | None,
-    repo_root: Path | None,
-) -> Path:
-    original = Path(path).expanduser()
-    if original.is_file() or repo_root is None:
-        return original
-    dataset_name = str(dataset_name or "").strip()
-    canonical_name = DATASET_PATH_ALIASES.get(dataset_name.lower(), dataset_name)
-    display_name = DATASET_LOCAL_FOLDERS.get(canonical_name.lower(), canonical_name.capitalize())
-    candidates: list[Path] = []
-    root_override = f"{display_name.upper()}_ROOT"
-    server_env = os.environ.get("SERVER_ENV", "original").strip().lower()
-    if canonical_name.lower() in DATASET_LOCAL_FOLDERS and (
-        server_env == "autodl" or os.environ.get(root_override)
-    ):
-        placeholder = f"${{{root_override}}}"
-        environment_root = resolve_path(placeholder, base_dir=repo_root)
-        if environment_root is not None:
-            candidates.append(Path(environment_root) / original.name)
-    candidates.extend([
-        repo_root.parent.parent / "Datasets" / canonical_name / original.name,
-        repo_root / "data" / "Volume" / display_name / original.name,
-        repo_root / "data" / "Mesh" / display_name / original.name,
-    ])
-    existing = [candidate for candidate in candidates if candidate.is_file()]
-    return existing[0] if existing else original
-
-
-def _portable_data_path(path: str | Path, data_config: Any, repo_root: Path | None) -> Path:
-    return portable_data_path(
+def _configured_data_path(path: str | Path, data_config: Any, repo_root: Path | None) -> Path:
+    return resolve_evaluation_data_path(
         path,
         dataset_name=getattr(data_config, "dataset_name", None),
         repo_root=repo_root,
@@ -62,9 +24,9 @@ def target_paths_from_config(data_config: Any, *, repo_root: Path | None = None)
     targets = getattr(data_config, "targets", None)
     selected = getattr(data_config, "target", None)
     if target_path:
-        return {str(selected or "target"): _portable_data_path(target_path, data_config, repo_root)}
+        return {str(selected or "target"): _configured_data_path(target_path, data_config, repo_root)}
     result = {
-        str(name): _portable_data_path(path, data_config, repo_root)
+        str(name): _configured_data_path(path, data_config, repo_root)
         for name, path in (targets or {}).items()
     }
     if selected is not None:

@@ -12,7 +12,11 @@ import numpy as np
 import torch
 import yaml
 
-from .ground_truth import portable_data_path, validate_ground_truth_paths
+from .data_paths import (
+    normalize_raw_data_paths,
+    resolve_evaluation_data_path,
+)
+from .ground_truth import validate_ground_truth_paths
 from .artifacts import ArtifactStore, LAYOUT_SCHEMA_VERSION
 from .metrics import (
     ErrorAccumulator,
@@ -47,7 +51,6 @@ from .reporting import (
     write_metrics_csv,
 )
 from .selection import metrics_require_ground_truth, metrics_require_rendering, parse_timestep_selection
-from ..utils.io import resolve_path as resolve_config_path
 
 
 def identify_subsystem(raw: dict[str, Any]) -> str | None:
@@ -61,14 +64,6 @@ def identify_subsystem(raw: dict[str, Any]) -> str | None:
     return name if name in {"mc_inr", "fv_srn", "rmdsrn", "ecnr", "miner"} else None
 
 
-def _resolve_path(value: str | Path, *, repo_root: Path, config_path: Path) -> Path:
-    text = str(value).replace("${REPO_ROOT}", str(repo_root))
-    resolved = resolve_config_path(text, base_dir=config_path.parent)
-    if resolved is None:
-        raise ValueError(f"Path value cannot be null: {value!r}")
-    return Path(resolved)
-
-
 def _data_section(raw: dict[str, Any]) -> dict[str, Any]:
     return dict(raw.get("data") or raw.get("DATA") or {})
 
@@ -77,13 +72,19 @@ def _target_paths(raw: dict[str, Any], *, repo_root: Path, config_path: Path) ->
     data = _data_section(raw)
     dataset_name = data.get("dataset_name")
     if data.get("target_path"):
-        resolved = _resolve_path(data["target_path"], repo_root=repo_root, config_path=config_path)
-        return {str(data.get("target") or "target"): portable_data_path(resolved, dataset_name=dataset_name, repo_root=repo_root)}
-    result = {
-        str(name): portable_data_path(
-            _resolve_path(path, repo_root=repo_root, config_path=config_path),
+        resolved = resolve_evaluation_data_path(
+            data["target_path"],
             dataset_name=dataset_name,
             repo_root=repo_root,
+            config_path=config_path,
+        )
+        return {str(data.get("target") or "target"): resolved}
+    result = {
+        str(name): resolve_evaluation_data_path(
+            path,
+            dataset_name=dataset_name,
+            repo_root=repo_root,
+            config_path=config_path,
         )
         for name, path in (data.get("targets") or {}).items()
     }
@@ -442,28 +443,9 @@ def _array_frame(
 def _portable_standalone_config(
     raw: dict[str, Any],
     *,
-    gt_paths: dict[str, Path],
-    coords_path: Path | None,
     device: str,
 ):
     payload = deepcopy(raw)
-    key = "DATA" if "DATA" in payload else "data"
-    data = dict(payload.get(key) or {})
-    if data.get("target_path"):
-        selected = str(data.get("target") or next(iter(gt_paths), "target"))
-        if selected in gt_paths:
-            data["target_path"] = str(gt_paths[selected])
-    if data.get("targets"):
-        data["targets"] = {
-            name: str(gt_paths.get(str(name), Path(path)))
-            for name, path in data["targets"].items()
-        }
-    if coords_path is not None:
-        if data.get("coords_path") is not None:
-            data["coords_path"] = str(coords_path)
-        if data.get("source_path") is not None:
-            data["source_path"] = str(coords_path)
-    payload[key] = data
     training_key = "TRAINING" if "TRAINING" in payload else "training"
     training = dict(payload.get(training_key) or {})
     training["device"] = device
@@ -498,6 +480,11 @@ def run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, conf
 
 def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, config_path: Path) -> dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[3]
+    raw = normalize_raw_data_paths(
+        raw,
+        repo_root=repo_root,
+        config_path=config_path,
+    )
     artifacts = ArtifactStore(repo_root=repo_root, result_root=request.result_root)
     artifacts.initialize()
     data = _data_section(raw)
@@ -525,11 +512,7 @@ def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, con
         indexers = [slice(t * int(np.prod(shape_tzyx[1:])), (t + 1) * int(np.prod(shape_tzyx[1:]))) for t in range(total_timesteps)]
     else:
         coords_value = data.get("coords_path") or data.get("source_path")
-        coords_path = portable_data_path(
-            _resolve_path(coords_value, repo_root=repo_root, config_path=config_path),
-            dataset_name=data.get("dataset_name"),
-            repo_root=repo_root,
-        )
+        coords_path = Path(str(coords_value))
         coords = np.load(coords_path, mmap_mode="r", allow_pickle=False)
         times = coords[:, -1]
         boundaries: list[int] = []
@@ -675,9 +658,7 @@ def _run_standalone_evaluation(request, raw: dict[str, Any], subsystem: str, con
             started = time.perf_counter()
             # Standalone runners combine loading and reconstruction; record the
             # observable total under reconstruction and retain zero load split.
-            with _portable_standalone_config(
-                raw, gt_paths=gt_paths_all, coords_path=coords_path, device=str(device)
-            ) as decode_config_path:
+            with _portable_standalone_config(raw, device=str(device)) as decode_config_path:
                 prediction_result = _invoke_predict(
                     subsystem,
                     decode_config_path,

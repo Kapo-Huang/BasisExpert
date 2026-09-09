@@ -12,12 +12,31 @@ import yaml
 REPO_ROOT_PLACEHOLDER = "${REPO_ROOT}"
 DATASETS_ROOT_PLACEHOLDER = "${DATASETS_ROOT}"
 RUNS_ROOT_PLACEHOLDER = "${RUNS_ROOT}"
-DATASET_ROOT_PLACEHOLDERS = {
-    "${REDSEA_ROOT}": ("RedSea", Path("data/Mesh/RedSea")),
-    "${KATRINA_ROOT}": ("Katrina", Path("data/Mesh/Katrina")),
-    "${IONIZATION_ROOT}": ("Ionization", Path("data/Volume/Ionization")),
-    "${COMBUSTION_ROOT}": ("Combustion", Path("data/Volume/Combustion")),
+DATASET_NAME_ALIASES = {
+    "bathymetry": "redsea",
 }
+DATASET_ROOT_DEFINITIONS = {
+    "redsea": ("RedSea", Path("data/Mesh/RedSea")),
+    "katrina": ("Katrina", Path("data/Mesh/Katrina")),
+    "ionization": ("Ionization", Path("data/Volume/Ionization")),
+    "combustion_40nh3_1": ("Combustion", Path("data/Volume/Combustion")),
+}
+DATASET_ROOT_PLACEHOLDERS = {
+    f"${{{display_name.upper()}_ROOT}}": (display_name, relative_path)
+    for display_name, relative_path in DATASET_ROOT_DEFINITIONS.values()
+}
+
+
+def canonical_dataset_name(dataset_name: str | None) -> str:
+    normalized = str(dataset_name or "").strip().lower()
+    return DATASET_NAME_ALIASES.get(normalized, normalized)
+
+
+def dataset_root_placeholder(dataset_name: str | None) -> str | None:
+    definition = DATASET_ROOT_DEFINITIONS.get(canonical_dataset_name(dataset_name))
+    if definition is None:
+        return None
+    return f"${{{definition[0].upper()}_ROOT}}"
 
 
 def _dataset_root(
@@ -25,15 +44,15 @@ def _dataset_root(
     *,
     base_dir: str | Path | None,
 ) -> Path:
-    dataset_name, original_relative = DATASET_ROOT_PLACEHOLDERS[placeholder]
-    override = os.environ.get(f"{dataset_name.upper()}_ROOT")
+    display_name, original_relative = DATASET_ROOT_PLACEHOLDERS[placeholder]
+    override = os.environ.get(f"{display_name.upper()}_ROOT")
     if override:
         return Path(override).expanduser()
 
     server_env = os.environ.get("SERVER_ENV", "original").strip().lower()
     if server_env == "autodl":
         autodl_root = Path(os.environ.get("AUTODL_DATA_ROOT", "/root/autodl-tmp"))
-        return autodl_root / dataset_name
+        return autodl_root / display_name
     if server_env != "original":
         raise ValueError(
             f"Unsupported SERVER_ENV={server_env!r}; expected 'original' or 'autodl'"
