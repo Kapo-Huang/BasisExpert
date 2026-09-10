@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,6 +121,24 @@ def test_schema_config_normalizes_coordinate_statistics(
     }
 
 
+def test_autodl_scratch_root_uses_configured_data_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    autodl_root = tmp_path / "autodl-tmp"
+    monkeypatch.setenv("AUTODL_DATA_ROOT", str(autodl_root))
+
+    resolved = batch_runner._resolve_scratch_root(
+        {
+            "original": "${REPO_ROOT}/.evaluation-scratch",
+            "autodl": "${AUTODL_DATA_ROOT}/EvaluationScratch",
+        },
+        server_env="autodl",
+    )
+
+    assert resolved == autodl_root / "EvaluationScratch"
+
+
 def test_worker_restores_explicit_server_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -127,9 +146,13 @@ def test_worker_restores_explicit_server_environment(
     request_path = tmp_path / "request.json"
     result_path = tmp_path / "result.json"
     observed: dict[str, str] = {}
+    scratch_root = tmp_path / "scratch"
+    previous_tempdir = tempfile.tempdir
 
     def fake_evaluate_run(*args, **kwargs):
         observed["server_env"] = os.environ["SERVER_ENV"]
+        observed["tempdir"] = tempfile.gettempdir()
+        observed["tmpdir"] = os.environ["TMPDIR"]
         return {
             "output_dir": tmp_path / "output",
             "metrics_path": tmp_path / "metrics.json",
@@ -149,6 +172,7 @@ def test_worker_restores_explicit_server_environment(
                 "source": "checkpoint",
                 "render": False,
                 "overwrite": False,
+                "scratch_root": str(scratch_root),
             }
         ),
         encoding="utf-8",
@@ -158,5 +182,8 @@ def test_worker_restores_explicit_server_environment(
 
     assert return_code == 0
     assert observed["server_env"] == "autodl"
+    assert Path(observed["tempdir"]) == scratch_root
+    assert Path(observed["tmpdir"]) == scratch_root
+    assert tempfile.tempdir == previous_tempdir
     assert json.loads(result_path.read_text(encoding="utf-8"))["status"] == "success"
 

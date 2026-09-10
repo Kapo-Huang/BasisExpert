@@ -3,6 +3,10 @@
 # target and multiply its time by the full dataset variable count.
 run_root: Result
 result_root: EvalResult
+# Parent-owned per-worker scratch directories are removed after success, failure, or timeout.
+scratch_root:
+  original: ${REPO_ROOT}/.evaluation-scratch
+  autodl: ${AUTODL_DATA_ROOT}/EvaluationScratch
 evaluation_id: result_runtime_dataset_total_v2
 continue_on_error: true
 item_timeout_seconds: 86400

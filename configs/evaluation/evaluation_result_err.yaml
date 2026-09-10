@@ -1,8 +1,14 @@
-# Evaluate archived Main and RD Curve runs with the standard quality metrics
-# and fixed-range point-wise error analysis. Error percentages use the
-# normalized ground-truth range [-1, 1], so error = abs_error / 2 * 100.
+# Evaluate archived Katrina runs from the Main experiment group with
+# fixed-range point-wise error analysis. Error percentages use the normalized
+# ground-truth range [-1, 1], so error = abs_error / 2 * 100.
 run_roots:
-  - Result/RD Curve/MINER
+  - Result/Main/Ours/Katrina
+  - Result/Main/CoordNet/Katrina
+  - Result/Main/SIREN/Katrina
+  - Result/Main/Neural Experts/Katrina
+  - Result/Main/MoE-INR/Katrina
+  - Result/Main/STSR-INR/Katrina
+  - Result/Main/MVNet/Katrina
 result_root: EvalResult
 evaluation_id: result_error
 continue_on_error: true
@@ -13,7 +19,7 @@ evaluation:
     - error
   error_vmin: 0.0
   error_vmax: 5.0
-  timesteps: uniform:10
+  timesteps: uniform:16
   targets_by_dataset: null
   render: true
   incremental: true

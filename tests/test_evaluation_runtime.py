@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,52 @@ def test_training_estimate_uses_common_total_budget() -> None:
     assert result["estimated_training_seconds"] == pytest.approx(7200.0)
 
 
+def test_training_estimate_adds_fixed_construction_once() -> None:
+    result = estimate_training_time(
+        measured_samples=100,
+        measured_seconds=20.0,
+        total_samples=1000,
+        fixed_overhead_seconds=7.0,
+    )
+
+    assert result["estimated_optimization_seconds"] == pytest.approx(200.0)
+    assert result["estimated_training_seconds"] == pytest.approx(207.0)
+    assert result["probe_seconds"] == pytest.approx(27.0)
+    assert result["timing_scope"] == "full_construction_plus_extrapolated_training"
+
+
+def test_ecnr_measurement_keeps_full_pipeline_as_fixed_cost(tmp_path: Path) -> None:
+    cost_path = tmp_path / "training_cost.json"
+    cost_path.write_text(
+        json.dumps({
+            "total_seconds": 40.0,
+            "scales": [{
+                "level": 2,
+                "actual_scalar_predictions": 80,
+                "quantization_finetune_actual_predictions": 20,
+                "primary_training_seconds": 4.0,
+                "quantization_setup_seconds": 3.0,
+                "quantization_finetune_training_seconds": 2.0,
+                "quantization_and_finetune_seconds": 5.0,
+            }],
+            "cnn": {"core_voxel_visits": 50, "seconds": 5.0},
+        }),
+        encoding="utf-8",
+    )
+
+    measurement = runtime_module._extract_training_measurement(
+        {"training_cost_path": cost_path},
+        adapter_name="ecnr",
+        requested_samples=150,
+        wall_seconds=50.0,
+    )
+
+    assert measurement.samples == 150
+    assert measurement.training_seconds == pytest.approx(11.0)
+    assert measurement.fixed_overhead_seconds == pytest.approx(29.0)
+    assert measurement.timing_source == "native_loops_plus_full_construction"
+
+
 def test_inference_estimate_loads_checkpoint_once() -> None:
     result = estimate_inference_time(
         load_seconds=2.0,
@@ -63,6 +110,50 @@ def test_inference_estimate_loads_checkpoint_once() -> None:
 def test_request_validates_runtime_fraction(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="inference_fraction"):
         EvaluationRequest(run_dir=tmp_path, inference_fraction=0.0)
+
+
+def test_batch_cleans_worker_scratch_after_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "Result" / "Main" / "ECNR" / "Ionization" / "GT"
+    scratch_root = tmp_path / "autodl-tmp" / "EvaluationScratch"
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text(
+        json.dumps({
+            "run_root": str(tmp_path / "Result"),
+            "result_root": str(tmp_path / "EvalResult"),
+            "scratch_root": str(scratch_root),
+            "evaluation_id": "scratch-timeout",
+            "item_timeout_seconds": 1,
+            "evaluation": {
+                "metrics": ["training_time"],
+                "render": False,
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(batch_runner, "_discover_checkpoint_runs", lambda root: [run_dir])
+    monkeypatch.setattr(
+        batch_runner,
+        "_run_identity",
+        lambda path: ("ecnr", "ionization", path / "config.yaml", {}),
+    )
+
+    def fake_run(command, **kwargs):
+        request_path = Path(command[command.index("--worker-request") + 1])
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        worker_scratch = Path(request["scratch_root"])
+        (worker_scratch / "large-intermediate.bin").write_bytes(b"temporary")
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(batch_runner.subprocess, "run", fake_run)
+
+    _, records = batch_runner.run_batch(config_path, server_env="autodl")
+
+    assert records[0]["status"] == "timeout"
+    assert scratch_root.is_dir()
+    assert list(scratch_root.iterdir()) == []
 
 
 def test_runtime_cache_is_experiment_scoped(tmp_path: Path) -> None:

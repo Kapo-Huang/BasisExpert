@@ -438,6 +438,8 @@ def _train_scale(
         bits=int(cfg["quantization"]["mlp_weight_bits"]),
         seed=int(training["seed"]) + int(level) * 10_000,
     )
+    quantization_setup_seconds = float(time.perf_counter() - quantization_started)
+    finetune_started = time.perf_counter()
     finetune_epochs = int(training["quantization_finetune_epochs"])
     finetune_passes = int(training["quantization_finetune_passes_per_epoch"])
     if sampling_mode == "budgeted_random":
@@ -510,7 +512,7 @@ def _train_scale(
                 now = time.perf_counter()
                 if progress_log_seconds and now - last_progress_log >= progress_log_seconds:
                     qat_planned_steps = finetune_epochs * finetune_batches_per_epoch
-                    qat_elapsed = now - quantization_started
+                    qat_elapsed = now - finetune_started
                     qat_eta = qat_elapsed * (
                         qat_planned_steps - finetune_optimizer_steps
                     ) / max(finetune_optimizer_steps, 1)
@@ -545,7 +547,10 @@ def _train_scale(
         cost["quantization_finetune_actual_predictions"] += finetune_actual_predictions
         cost["quantization_finetune_optimizer_steps"] += finetune_optimizer_steps
     quantization.materialize(model)
-    quantization_seconds = float(time.perf_counter() - quantization_started)
+    finetune_seconds = float(time.perf_counter() - finetune_started)
+    quantization_seconds = quantization_setup_seconds + finetune_seconds
+    cost["quantization_setup_seconds"] += quantization_setup_seconds
+    cost["quantization_finetune_training_seconds"] += finetune_seconds
     cost["quantization_and_finetune_seconds"] += quantization_seconds
     cost["scales"].append(
         {
@@ -584,6 +589,8 @@ def _train_scale(
             "quantization_finetune_optimizer_steps": finetune_optimizer_steps,
             "seconds": float(time.perf_counter() - scale_started),
             "primary_training_seconds": primary_seconds,
+            "quantization_setup_seconds": quantization_setup_seconds,
+            "quantization_finetune_training_seconds": finetune_seconds,
             "quantization_and_finetune_seconds": quantization_seconds,
             "weight_sparsity": family_sparsity(masks, WEIGHT_CANDIDATES),
             "bias_sparsity": family_sparsity(masks, BIAS_CANDIDATES),
@@ -1140,6 +1147,8 @@ def run_train(
         cost.setdefault("quantization_finetune_logical_samples", 0)
         cost.setdefault("quantization_finetune_actual_predictions", 0)
         cost.setdefault("quantization_finetune_optimizer_steps", 0)
+        cost.setdefault("quantization_setup_seconds", 0.0)
+        cost.setdefault("quantization_finetune_training_seconds", 0.0)
         cost.setdefault("quantization_and_finetune_seconds", 0.0)
         cost.setdefault("cnn", {})
         cost["pyramid_seconds"] = float(cost.get("pyramid_seconds", 0.0)) + pyramid_seconds

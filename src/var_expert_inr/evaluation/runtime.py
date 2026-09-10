@@ -7,7 +7,7 @@ import os
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -31,6 +31,15 @@ RUNTIME_SCHEMA_VERSION = 1
 DEFAULT_TRAINING_PROBE_SAMPLES = 72_000_000
 DEFAULT_TRAINING_TOTAL_SAMPLES = 14_400_000_000
 DEFAULT_INFERENCE_FRACTION = 0.1
+
+
+@dataclass(frozen=True)
+class TrainingMeasurement:
+    samples: int
+    training_seconds: float
+    fixed_overhead_seconds: float
+    strata: tuple[dict[str, Any], ...]
+    timing_source: str
 
 
 def uniform_fraction_timesteps(total: int, fraction: float) -> tuple[int, ...]:
@@ -58,26 +67,37 @@ def estimate_training_time(
     measured_samples: int,
     measured_seconds: float,
     total_samples: int,
+    fixed_overhead_seconds: float = 0.0,
 ) -> dict[str, Any]:
     measured_samples = int(measured_samples)
     measured_seconds = float(measured_seconds)
     total_samples = int(total_samples)
+    fixed_overhead_seconds = float(fixed_overhead_seconds)
     if measured_samples <= 0 or measured_seconds <= 0.0 or total_samples <= 0:
         raise ValueError("training time estimation requires positive samples and seconds")
+    if fixed_overhead_seconds < 0.0:
+        raise ValueError("fixed training overhead must be non-negative")
     rate = measured_samples / measured_seconds
-    estimated = total_samples / rate
+    estimated_optimization = total_samples / rate
+    estimated_total = fixed_overhead_seconds + estimated_optimization
     return {
         "schema_version": RUNTIME_SCHEMA_VERSION,
         "probe_samples_actual": measured_samples,
-        "probe_seconds": measured_seconds,
+        "probe_training_seconds": measured_seconds,
+        "probe_seconds": fixed_overhead_seconds + measured_seconds,
+        "fixed_overhead_seconds": fixed_overhead_seconds,
         "samples_per_second": rate,
         "seconds_per_sample": 1.0 / rate,
         "total_samples_assumed": total_samples,
-        "estimated_training_seconds": estimated,
-        "estimated_training_hours": estimated / 3600.0,
-        "timing_scope": "training_loop_only",
+        "estimated_optimization_seconds": estimated_optimization,
+        "estimated_training_seconds": estimated_total,
+        "estimated_training_hours": estimated_total / 3600.0,
+        "timing_scope": (
+            "full_construction_plus_extrapolated_training"
+            if fixed_overhead_seconds > 0.0
+            else "training_loop_only"
+        ),
     }
-
 
 def estimate_inference_time(
     *,
@@ -376,39 +396,46 @@ def _extract_training_measurement(
     adapter_name: str,
     requested_samples: int,
     wall_seconds: float,
-) -> tuple[int, float, list[dict[str, Any]], str]:
+) -> TrainingMeasurement:
     direct = result.get("runtime_training")
     if isinstance(direct, dict):
-        return (
-            int(direct["samples"]),
-            float(direct["seconds"]),
-            list(direct.get("strata") or []),
-            "native_loop",
+        return TrainingMeasurement(
+            samples=int(direct["samples"]),
+            training_seconds=float(direct["seconds"]),
+            fixed_overhead_seconds=0.0,
+            strata=tuple(direct.get("strata") or ()),
+            timing_source="native_loop",
         )
     if adapter_name == "rmdsrn" and result.get("elapsed_seconds") is not None:
         steps = int(result.get("steps", 0))
         batch = int(result.get("batch_size", 0))
         samples = steps * batch or requested_samples
-        return samples, float(result["elapsed_seconds"]), [], "native_loop"
+        return TrainingMeasurement(
+            samples=samples,
+            training_seconds=float(result["elapsed_seconds"]),
+            fixed_overhead_seconds=0.0,
+            strata=(),
+            timing_source="native_loop",
+        )
     manifest_value = result.get("manifest_path")
     if adapter_name in {"apmgsrn", "miner"} and manifest_value:
         manifest = _json(manifest_value)
         strata = []
         for name, entry in (manifest.get("timesteps") or {}).items():
-            if adapter_name == "apmgsrn":
-                seconds = float(entry.get("training_loop_seconds", entry.get("elapsed_seconds", 0.0)))
-                samples = int(entry.get("training_samples", 0))
-            else:
-                seconds = float(entry.get("training_loop_seconds", entry.get("elapsed_seconds", 0.0)))
-                samples = int(entry.get("logical_samples", 0))
+            seconds = float(
+                entry.get("training_loop_seconds", entry.get("elapsed_seconds", 0.0))
+            )
+            sample_key = "training_samples" if adapter_name == "apmgsrn" else "logical_samples"
+            samples = int(entry.get(sample_key, 0))
             if seconds > 0.0 and samples > 0:
                 strata.append({"name": name, "samples": samples, "seconds": seconds})
         if strata:
-            return (
-                sum(int(item["samples"]) for item in strata),
-                sum(float(item["seconds"]) for item in strata),
-                strata,
-                "native_loop",
+            return TrainingMeasurement(
+                samples=sum(int(item["samples"]) for item in strata),
+                training_seconds=sum(float(item["seconds"]) for item in strata),
+                fixed_overhead_seconds=0.0,
+                strata=tuple(strata),
+                timing_source="native_loop",
             )
     if adapter_name == "ecnr" and result.get("training_cost_path"):
         cost = _json(result["training_cost_path"])
@@ -417,8 +444,11 @@ def _extract_training_measurement(
             samples = int(scale.get("actual_scalar_predictions", 0)) + int(
                 scale.get("quantization_finetune_actual_predictions", 0)
             )
+            finetune_seconds = scale.get("quantization_finetune_training_seconds")
+            if finetune_seconds is None:
+                finetune_seconds = scale.get("quantization_and_finetune_seconds", 0.0)
             seconds = float(scale.get("primary_training_seconds", 0.0)) + float(
-                scale.get("quantization_and_finetune_seconds", 0.0)
+                finetune_seconds
             )
             if samples > 0 and seconds > 0.0:
                 strata.append({
@@ -427,21 +457,32 @@ def _extract_training_measurement(
                     "seconds": seconds,
                 })
         cnn = cost.get("cnn") or {}
-        if int(cnn.get("core_voxel_visits", 0)) > 0 and float(cnn.get("seconds", 0.0)) > 0.0:
+        if (
+            int(cnn.get("core_voxel_visits", 0)) > 0
+            and float(cnn.get("seconds", 0.0)) > 0.0
+        ):
             strata.append({
                 "name": "boundary_cnn",
                 "samples": int(cnn["core_voxel_visits"]),
                 "seconds": float(cnn["seconds"]),
             })
         if strata:
-            return (
-                sum(int(item["samples"]) for item in strata),
-                sum(float(item["seconds"]) for item in strata),
-                strata,
-                "native_loop",
+            training_seconds = sum(float(item["seconds"]) for item in strata)
+            total_seconds = float(cost.get("total_seconds", wall_seconds))
+            return TrainingMeasurement(
+                samples=sum(int(item["samples"]) for item in strata),
+                training_seconds=training_seconds,
+                fixed_overhead_seconds=max(total_seconds - training_seconds, 0.0),
+                strata=tuple(strata),
+                timing_source="native_loops_plus_full_construction",
             )
-    return int(requested_samples), float(wall_seconds), [], "process_wall_fallback"
-
+    return TrainingMeasurement(
+        samples=int(requested_samples),
+        training_seconds=float(wall_seconds),
+        fixed_overhead_seconds=0.0,
+        strata=(),
+        timing_source="process_wall_fallback",
+    )
 
 def benchmark_training(
     request,
@@ -477,25 +518,37 @@ def benchmark_training(
             result = _invoke_training(probe_config, adapter_name, device_text)
         synchronize_cuda(device_text)
         wall_seconds = float(time.perf_counter() - started)
-        samples, seconds, strata, timing_source = _extract_training_measurement(
+        measurement = _extract_training_measurement(
             result,
             adapter_name=adapter_name,
             requested_samples=int(request.training_probe_samples),
             wall_seconds=wall_seconds,
         )
     payload = estimate_training_time(
-        measured_samples=samples,
-        measured_seconds=seconds,
+        measured_samples=measurement.samples,
+        measured_seconds=measurement.training_seconds,
         total_samples=int(request.training_total_samples),
+        fixed_overhead_seconds=measurement.fixed_overhead_seconds,
     )
     payload.update({
         "probe_samples_requested": int(request.training_probe_samples),
-        "probe_samples_overshoot": int(samples - int(request.training_probe_samples)),
+        "probe_samples_overshoot": int(
+            measurement.samples - int(request.training_probe_samples)
+        ),
+        "probe_wall_seconds": wall_seconds,
         "adapter": adapter_name,
         "device": device_text,
-        "timing_source": timing_source,
-        "strata": strata,
+        "timing_source": measurement.timing_source,
+        "strata": list(measurement.strata),
     })
+    if adapter_name == "ecnr":
+        payload.update({
+            "full_construction_seconds": measurement.fixed_overhead_seconds,
+            "fixed_overhead_scope": (
+                "full data load, pyramid construction, block preparation, clustering, "
+                "residual reconstruction, quantization, and cache cleanup"
+            ),
+        })
     return payload
 
 

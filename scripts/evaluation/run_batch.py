@@ -10,8 +10,10 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -119,6 +121,52 @@ def _server_environment(value: str | None = None) -> str:
             f"Unsupported server environment {selected!r}; expected original or autodl"
         )
     return selected
+
+
+def _resolve_scratch_root(value: Any, *, server_env: str) -> Path:
+    """Resolve the parent-owned scratch directory for evaluation workers."""
+    selected = value
+    if isinstance(value, dict):
+        selected = value.get(server_env)
+        if selected in (None, ""):
+            raise ValueError(
+                f"scratch_root has no path configured for environment {server_env!r}"
+            )
+    if selected in (None, ""):
+        selected = Path(tempfile.gettempdir()) / "var-expert-evaluation"
+    text = str(selected).strip()
+    substitutions = {
+        "${REPO_ROOT}": str(REPO_ROOT),
+        "${AUTODL_DATA_ROOT}": os.environ.get(
+            "AUTODL_DATA_ROOT", "/root/autodl-tmp"
+        ),
+    }
+    for token, replacement in substitutions.items():
+        text = text.replace(token, replacement)
+    path = Path(text).expanduser()
+    return path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
+
+
+@contextmanager
+def _worker_scratch_environment(path: Path):
+    """Route every Python/system temporary file created by one worker to path."""
+    path.mkdir(parents=True, exist_ok=True)
+    previous_tempdir = tempfile.tempdir
+    previous_environment = {
+        name: os.environ.get(name) for name in ("TMPDIR", "TMP", "TEMP")
+    }
+    tempfile.tempdir = str(path)
+    for name in previous_environment:
+        os.environ[name] = str(path)
+    try:
+        yield
+    finally:
+        tempfile.tempdir = previous_tempdir
+        for name, previous in previous_environment.items():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
 
 
 def _resolve_run_source_path(value: str | Path, *, server_env: str) -> Path:
@@ -1029,24 +1077,31 @@ def _worker_main(request_path: Path, result_path: Path) -> int:
     try:
         selected_env = _server_environment(request.get("server_env"))
         os.environ["SERVER_ENV"] = selected_env
-        result = evaluate_run(
-            request["run_dir"],
-            metrics=tuple(request["metrics"]),
-            timesteps=request["timesteps"],
-            targets=request["target"],
-            source=request["source"],
-            render=bool(request["render"]),
-            render_profile=request.get("render_profile"),
-            overwrite=bool(request["overwrite"]),
-            device=request.get("device"),
-            result_root=request.get("result_root", "EvalResult"),
-            evaluation_id=request.get("evaluation_id", "default"),
-            error_vmin=request.get("error_vmin"),
-            error_vmax=request.get("error_vmax"),
-            training_probe_samples=int(request.get("training_probe_samples", 72_000_000)),
-            training_total_samples=int(request.get("training_total_samples", 14_400_000_000)),
-            inference_fraction=float(request.get("inference_fraction", 0.1)),
+        scratch_value = request.get("scratch_root")
+        scratch_context = (
+            _worker_scratch_environment(Path(scratch_value))
+            if scratch_value
+            else nullcontext()
         )
+        with scratch_context:
+            result = evaluate_run(
+                request["run_dir"],
+                metrics=tuple(request["metrics"]),
+                timesteps=request["timesteps"],
+                targets=request["target"],
+                source=request["source"],
+                render=bool(request["render"]),
+                render_profile=request.get("render_profile"),
+                overwrite=bool(request["overwrite"]),
+                device=request.get("device"),
+                result_root=request.get("result_root", "EvalResult"),
+                evaluation_id=request.get("evaluation_id", "default"),
+                error_vmin=request.get("error_vmin"),
+                error_vmax=request.get("error_vmax"),
+                training_probe_samples=int(request.get("training_probe_samples", 72_000_000)),
+                training_total_samples=int(request.get("training_total_samples", 14_400_000_000)),
+                inference_fraction=float(request.get("inference_fraction", 0.1)),
+            )
         response = {
             "status": "success",
             "output_dir": str(Path(result["output_dir"]).resolve()),
@@ -1127,6 +1182,11 @@ def run_batch(
             for value in run_roots_value
         )
     result_root = _resolve_repo_path(batch.get("result_root", "EvalResult"))
+    scratch_root = _resolve_scratch_root(
+        batch.get("scratch_root"),
+        server_env=selected_env,
+    )
+    scratch_root.mkdir(parents=True, exist_ok=True)
     evaluation_id = str(batch.get("evaluation_id") or "").strip()
     if not evaluation_id:
         raise ValueError("evaluation_id is required")
@@ -1291,6 +1351,7 @@ def run_batch(
         }
         started = time.perf_counter()
         existing_state: dict[str, Any] | None = None
+        worker_scratch: tempfile.TemporaryDirectory[str] | None = None
         try:
             model_name, dataset, _, raw = _run_identity(run_dir)
             target = targets_by_dataset.get(dataset.lower(), "all")
@@ -1357,6 +1418,10 @@ def run_batch(
                 pending_render
                 or {"ssim", "lpips"}.intersection(pending_metrics)
             )
+            worker_scratch = tempfile.TemporaryDirectory(
+                prefix=f"worker-{index:03d}-",
+                dir=scratch_root,
+            )
             LOGGER.info(
                 "[%d/%d] Evaluating model=%s dataset=%s target=%s metrics=%s render=%s run=%s",
                 index,
@@ -1388,6 +1453,7 @@ def run_batch(
                         "training_probe_samples": training_probe_samples,
                         "training_total_samples": training_total_samples,
                         "inference_fraction": inference_fraction,
+                        "scratch_root": worker_scratch.name,
                     },
                     indent=2,
                     ensure_ascii=False,
@@ -1458,6 +1524,25 @@ def run_batch(
                 _restore_existing_result(existing_state)
             record.update(status="failed", error_type=type(exc).__name__, error=str(exc))
             LOGGER.exception("[%d/%d] Failed run=%s: %s", index, len(run_dirs), run_dir, exc)
+        finally:
+            if worker_scratch is not None:
+                scratch_path = Path(worker_scratch.name)
+                try:
+                    worker_scratch.cleanup()
+                except Exception as cleanup_exc:
+                    if existing_state is not None:
+                        _restore_existing_result(existing_state)
+                    record.update(
+                        status="failed",
+                        error_type=type(cleanup_exc).__name__,
+                        error=f"Failed to clean evaluation scratch: {cleanup_exc}",
+                    )
+                    LOGGER.exception(
+                        "[%d/%d] Failed to clean worker scratch %s",
+                        index,
+                        len(run_dirs),
+                        scratch_path,
+                    )
         record["elapsed_seconds"] = round(time.perf_counter() - started, 6)
         records.append(record)
         _write_summary(output_dir, records, resolved_config)
