@@ -37,7 +37,7 @@ from .metrics import (
 from .performance import DecodeMeasurement, combine_memory_samples, synchronize_cuda
 from .rendering import (
     VolumeRenderSession,
-    compare_rendered_images,
+    compare_rendered_image_pairs,
     load_render_profile,
     preflight_rendering,
     profile_fingerprint,
@@ -556,6 +556,18 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     if device.type == "cuda" and not torch.cuda.is_available():
         device = torch.device("cpu")
     output_dir.mkdir(parents=True, exist_ok=True)
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "schema_version": LAYOUT_SCHEMA_VERSION,
+            "status": "running",
+            "targets": {},
+            "aggregate": {},
+            "performance": {},
+            "per_timestep": [],
+        },
+    )
+    write_json(output_dir / "progress.json", {"status": "running", "completed_rows": 0})
 
     load_seconds = reconstruction_seconds = 0.0
     memory_samples: list[dict[str, Any]] = []
@@ -573,6 +585,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
     memory_samples.append(load_measurement.as_dict())
 
     rows: list[dict[str, Any]] = []
+    rendered_comparisons: list[tuple[dict[str, Any], Path, Path]] = []
     selected_values = 0
     target_accumulators = {name: QualityAccumulator() for name in targets}
     error_accumulators = {name: ErrorAccumulator() for name in targets}
@@ -634,6 +647,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                             timestep=timestep,
                             ground_truth_path=gt_paths[target],
                             profile=profile,
+                            ground_truth_fingerprint=ground_truth_fingerprints[target],
                         )
 
                         def produce_gt(path: Path) -> dict[str, Any]:
@@ -658,6 +672,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                         source_path=source_path,
                         profile=profile,
                         ground_truth_fingerprint=ground_truth_fingerprints.get(target),
+                        source_fingerprint=source_fingerprint,
                     )
 
                     def produce_pred(path: Path) -> dict[str, Any]:
@@ -693,6 +708,7 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                             profile=profile,
                             error_vmin=request.error_vmin,
                             error_vmax=request.error_vmax,
+                            source_fingerprint=source_fingerprint,
                         )
 
                         def produce_error(path: Path) -> dict[str, Any]:
@@ -736,36 +752,31 @@ def run_standard_evaluation(request: EvaluationRequest) -> dict[str, Any]:
                     if metrics_require_rendering(metrics):
                         if gt_record is None:
                             raise RuntimeError("Rendered image metrics require a ground-truth artifact")
-                        row.update(
-                            compare_rendered_images(
-                                gt_record.path, pred_record.path, metrics, device=str(device)
-                            )
-                        )
+                        rendered_comparisons.append((row, gt_record.path, pred_record.path))
                 rows.append(row)
-                partial_targets, partial_aggregate = summarize_selected_quality(
-                    rows,
-                    target_accumulators,
-                    targets,
-                    metrics,
-                    error_accumulators,
-                )
-                write_json(
-                    output_dir / "metrics.json",
-                    {
-                        "schema_version": LAYOUT_SCHEMA_VERSION,
-                        "status": "running",
-                        "targets": partial_targets,
-                        "aggregate": partial_aggregate,
-                        "performance": {},
-                        "per_timestep": rows,
-                    },
-                )
-                write_metrics_csv(output_dir / "metrics.csv", rows)
-                write_json(
-                    output_dir / "progress.json",
-                    {"status": "running", "completed_rows": len(rows), "per_timestep": rows},
-                )
+                if len(rows) == 1 or len(rows) % 50 == 0:
+                    write_json(
+                        output_dir / "progress.json",
+                        {
+                            "status": "running",
+                            "phase": "decode_and_render",
+                            "completed_rows": len(rows),
+                        },
+                    )
             del decoded_frame
+
+    if rendered_comparisons:
+        write_json(
+            output_dir / "progress.json",
+            {"status": "running", "phase": "perceptual_metrics", "completed_rows": len(rows)},
+        )
+        comparison_results = compare_rendered_image_pairs(
+            [(gt_path, pred_path) for _, gt_path, pred_path in rendered_comparisons],
+            metrics,
+            device=str(device),
+        )
+        for (row, _, _), comparison in zip(rendered_comparisons, comparison_results):
+            row.update(comparison)
 
     per_target, aggregate = summarize_selected_quality(
         rows,

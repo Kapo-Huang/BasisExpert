@@ -1,0 +1,21 @@
+# Render prediction and Ground Truth frames for every archived Main and
+# RD Curve experiment. uniform:100 selects all timesteps when fewer than
+# 100 are available. No quality or runtime metrics are computed.
+run_roots:
+  - Result/Main
+  - Result/RD Curve
+result_root: EvalResult
+evaluation_id: main_rdcurve_render_uniform100
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics: []
+  timesteps: uniform:100
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

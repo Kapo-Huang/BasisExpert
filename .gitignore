@@ -21,6 +21,7 @@ ENV/
 /Result/
 /Result.*/
 /EvalResult/
+/Metric_Fig_Result/
 /runs/
 /runs_summary/
 /log/

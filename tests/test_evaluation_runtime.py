@@ -95,6 +95,72 @@ def test_ecnr_measurement_keeps_full_pipeline_as_fixed_cost(tmp_path: Path) -> N
     assert measurement.timing_source == "native_loops_plus_full_construction"
 
 
+def test_ecnr_training_uses_historical_cost_without_retraining(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "Result" / "Main" / "ECNR" / "Ionization" / "GT"
+    cost_path = run_dir / "metrics" / "training_cost.json"
+    cost_path.parent.mkdir(parents=True)
+    cost_path.write_text(
+        json.dumps({
+            "total_seconds": 40.0,
+            "scales": [{
+                "level": 0,
+                "actual_scalar_predictions": 80,
+                "quantization_finetune_actual_predictions": 20,
+                "primary_training_seconds": 4.0,
+                "quantization_and_finetune_seconds": 2.0,
+            }],
+            "cnn": {"voxel_visits": 50, "seconds": 5.0},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "_invoke_training",
+        lambda *args, **kwargs: pytest.fail("ECNR must not launch a training probe"),
+    )
+    request = EvaluationRequest(
+        run_dir=run_dir,
+        metrics=("training_time",),
+        training_total_samples=300,
+        device="cpu",
+    )
+
+    result = runtime_module.benchmark_training(
+        request,
+        {},
+        run_dir / "configs" / "config.yaml",
+        adapter_name="ecnr",
+    )
+
+    assert result["training_probe_executed"] is False
+    assert result["timing_source"] == "historical_training_cost"
+    assert result["historical_samples_actual"] == 150
+    assert result["fixed_overhead_seconds"] == pytest.approx(29.0)
+    assert result["estimated_training_seconds"] == pytest.approx(51.0)
+
+
+def test_ecnr_training_without_history_is_unavailable_and_skipped(tmp_path: Path) -> None:
+    request = EvaluationRequest(
+        run_dir=tmp_path,
+        metrics=("training_time",),
+        device="cpu",
+    )
+
+    result = runtime_module.benchmark_training(
+        request,
+        {},
+        tmp_path / "config.yaml",
+        adapter_name="ecnr",
+    )
+
+    assert result["status"] == "unavailable"
+    assert result["training_probe_executed"] is False
+    assert result["estimated_training_seconds"] is None
+
+
 def test_inference_estimate_loads_checkpoint_once() -> None:
     result = estimate_inference_time(
         load_seconds=2.0,

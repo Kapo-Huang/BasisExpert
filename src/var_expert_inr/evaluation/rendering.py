@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +17,10 @@ TARGET_PRESET_ALIASES = {"h_plus": "H+", "h+": "H+"}
 DATASET_PROFILE_ALIASES = {"bathymetry": "redsea"}
 COORDINATE_AXES = {"x": 0, "y": 1, "z": 2}
 _LPIPS_MODELS: dict[tuple[str, str], Any] = {}
+_MESH_CACHE: dict[tuple[Any, ...], tuple[Any, Path]] = {}
+LPIPS_MAX_BATCH_SIZE = 8
+LPIPS_MAX_BATCH_PIXELS = 4 * 1024 * 1024
+
 
 
 @lru_cache(maxsize=1)
@@ -344,6 +349,86 @@ def compare_rendered_images(
     return result
 
 
+def compare_rendered_image_pairs(
+    pairs: Sequence[tuple[Path, Path]],
+    metrics: tuple[str, ...],
+    *,
+    device: str = "auto",
+) -> list[dict[str, float | None]]:
+    """Compare rendered pairs while batching LPIPS work by image shape."""
+    requested = tuple(name for name in metrics if name in {"ssim", "lpips"})
+    if not requested:
+        return [{} for _ in pairs]
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("Rendered-image metrics require Pillow; install .[evaluation]") from exc
+
+    def load_rgb(path: Path) -> np.ndarray:
+        with Image.open(path) as image:
+            return np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+
+    structural_similarity = None
+    if "ssim" in requested:
+        from skimage.metrics import structural_similarity
+
+    results: list[dict[str, float | None]] = [{} for _ in pairs]
+    lpips_batches: dict[tuple[int, int], list[tuple[int, np.ndarray, np.ndarray]]] = {}
+    for index, (gt_path, pred_path) in enumerate(pairs):
+        gt = load_rgb(gt_path)
+        pred = load_rgb(pred_path)
+        if pred.shape != gt.shape:
+            resampling = getattr(Image, "Resampling", Image)
+            resized = Image.fromarray(np.clip(pred * 255.0, 0, 255).astype(np.uint8)).resize(
+                (gt.shape[1], gt.shape[0]), resampling.BILINEAR
+            )
+            pred = np.asarray(resized, dtype=np.float32) / 255.0
+        if structural_similarity is not None:
+            results[index]["ssim"] = float(
+                structural_similarity(gt, pred, data_range=1.0, channel_axis=2)
+            )
+        if "lpips" in requested:
+            shape = (int(gt.shape[0]), int(gt.shape[1]))
+            batch = lpips_batches.setdefault(shape, [])
+            batch.append((index, gt, pred))
+            pixel_limit = max(1, LPIPS_MAX_BATCH_PIXELS // max(shape[0] * shape[1], 1))
+            if len(batch) >= min(LPIPS_MAX_BATCH_SIZE, pixel_limit):
+                _evaluate_lpips_batch(batch, results, device=device)
+                batch.clear()
+
+    for batch in lpips_batches.values():
+        if batch:
+            _evaluate_lpips_batch(batch, results, device=device)
+    return results
+
+
+def _evaluate_lpips_batch(
+    batch: list[tuple[int, np.ndarray, np.ndarray]],
+    results: list[dict[str, float | None]],
+    *,
+    device: str,
+) -> None:
+    import lpips
+    import torch
+
+    resolved_device = device
+    if device == "auto":
+        resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+    key = ("alex", resolved_device)
+    model = _LPIPS_MODELS.get(key)
+    if model is None:
+        model = lpips.LPIPS(net="alex", verbose=False).to(resolved_device).eval()
+        _LPIPS_MODELS[key] = model
+    gt_array = np.stack([item[1].transpose(2, 0, 1) for item in batch])
+    pred_array = np.stack([item[2].transpose(2, 0, 1) for item in batch])
+    gt_tensor = torch.from_numpy(gt_array).to(resolved_device) * 2 - 1
+    pred_tensor = torch.from_numpy(pred_array).to(resolved_device) * 2 - 1
+    with torch.inference_mode():
+        values = model(gt_tensor, pred_tensor).reshape(-1).detach().cpu().numpy()
+    for (index, _, _), value in zip(batch, values):
+        results[index]["lpips"] = float(value)
+
+
 def _coordinate_slice_mask(coordinates: np.ndarray, profile: dict[str, Any]) -> np.ndarray:
     coords = np.asarray(coordinates)
     if coords.ndim != 2:
@@ -551,6 +636,16 @@ def _load_mesh(profile: dict[str, Any], *, time_index: int):
             raise FileNotFoundError(
                 f"Node mesh arrays do not exist: vertices={vertices_path}, cells={cells_path}"
             )
+        cache_key = (
+            "arrays",
+            str(vertices_path),
+            str(cells_path),
+            str(profile.get("cell_type", "")),
+            bool(profile.get("planarize_z", False)),
+        )
+        cached = _MESH_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
         points = np.asarray(np.load(vertices_path, allow_pickle=False), dtype=np.float64)
         cells = np.asarray(np.load(cells_path, allow_pickle=False), dtype=np.int64)
         if points.ndim != 2 or points.shape[1] not in {2, 3}:
@@ -573,17 +668,30 @@ def _load_mesh(profile: dict[str, Any], *, time_index: int):
         ).reshape(-1)
         types = np.full((cells.shape[0],), cell_types[requested_type], dtype=np.uint8)
         mesh = pv.UnstructuredGrid(connectivity, types, points)
-        return _apply_mesh_render_transforms(mesh, profile), vertices_path
+        result = (_apply_mesh_render_transforms(mesh, profile), vertices_path)
+        _MESH_CACHE[cache_key] = result
+        return result
     path = Path(str(raw).format(time_index=int(time_index), timestep=int(time_index), t=int(time_index))).expanduser().resolve()
     if not path.is_file():
         source_hint = profile.get("mesh_source_hint")
         copy_hint = f" Copy it from: {source_hint}" if source_hint else ""
         raise FileNotFoundError(f"Node mesh does not exist: {path}.{copy_hint}")
+    cache_key = (
+        "mesh",
+        str(path),
+        bool(profile.get("planarize_z", False)),
+    )
+    cached = _MESH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     if path.name.lower() == "fort.14":
         mesh = _read_fort14(path)
     else:
         mesh = pv.read(str(path))
-    return _apply_mesh_render_transforms(mesh, profile), path
+    result = (_apply_mesh_render_transforms(mesh, profile), path)
+    _MESH_CACHE[cache_key] = result
+    return result
 
 
 def _apply_mesh_render_transforms(mesh: Any, profile: dict[str, Any]) -> Any:

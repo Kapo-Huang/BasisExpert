@@ -457,13 +457,16 @@ def _extract_training_measurement(
                     "seconds": seconds,
                 })
         cnn = cost.get("cnn") or {}
+        cnn_samples = int(
+            cnn.get("core_voxel_visits", cnn.get("voxel_visits", 0))
+        )
         if (
-            int(cnn.get("core_voxel_visits", 0)) > 0
+            cnn_samples > 0
             and float(cnn.get("seconds", 0.0)) > 0.0
         ):
             strata.append({
                 "name": "boundary_cnn",
-                "samples": int(cnn["core_voxel_visits"]),
+                "samples": cnn_samples,
                 "seconds": float(cnn["seconds"]),
             })
         if strata:
@@ -484,6 +487,55 @@ def _extract_training_measurement(
         timing_source="process_wall_fallback",
     )
 
+
+def _historical_ecnr_training_time(request) -> dict[str, Any]:
+    """Estimate ECNR from its archived native cost record without retraining."""
+    cost_path = Path(request.run_dir) / "metrics" / "training_cost.json"
+    if not cost_path.is_file():
+        return {
+            "schema_version": RUNTIME_SCHEMA_VERSION,
+            "status": "unavailable",
+            "training_probe_executed": False,
+            "timing_source": "historical_training_cost_missing",
+            "timing_scope": "training_probe_skipped",
+            "historical_cost_path": str(cost_path),
+            "total_samples_assumed": int(request.training_total_samples),
+            "estimated_training_seconds": None,
+            "estimated_training_hours": None,
+            "reason": (
+                "ECNR training probe is disabled because full clustering is not "
+                "tractable; no archived metrics/training_cost.json was found"
+            ),
+        }
+
+    cost = _json(cost_path)
+    historical_total_seconds = float(cost["total_seconds"])
+    measurement = _extract_training_measurement(
+        {"training_cost_path": cost_path},
+        adapter_name="ecnr",
+        requested_samples=int(request.training_total_samples),
+        wall_seconds=historical_total_seconds,
+    )
+    payload = estimate_training_time(
+        measured_samples=measurement.samples,
+        measured_seconds=measurement.training_seconds,
+        total_samples=int(request.training_total_samples),
+        fixed_overhead_seconds=measurement.fixed_overhead_seconds,
+    )
+    payload.update({
+        "status": "estimated_from_history",
+        "training_probe_executed": False,
+        "timing_source": "historical_training_cost",
+        "historical_cost_path": str(cost_path),
+        "historical_total_seconds": historical_total_seconds,
+        "historical_samples_actual": measurement.samples,
+        "full_construction_seconds": measurement.fixed_overhead_seconds,
+        "estimation_method": "fixed_cost_plus_sample_scaled_historical_loops",
+        "strata": list(measurement.strata),
+    })
+    return payload
+
+
 def benchmark_training(
     request,
     raw: dict[str, Any],
@@ -491,6 +543,9 @@ def benchmark_training(
     *,
     adapter_name: str,
 ) -> dict[str, Any]:
+    if adapter_name == "ecnr":
+        return _historical_ecnr_training_time(request)
+
     device_text = request.device or "cuda"
     if device_text.startswith("cuda") and not torch.cuda.is_available():
         device_text = "cpu"

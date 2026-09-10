@@ -1,0 +1,24 @@
+# Evaluate all archived MINER and ECNR Ionization scalar reconstructions with
+# fixed-range point-wise error statistics and error renders.  Error percentages
+# are measured against the normalized ground-truth range [-1, 1].
+run_roots:
+  - Result/Main/MINER/Ionization
+  - Result/Main/ECNR/Ionization
+result_root: EvalResult
+evaluation_id: miner_ecnr_ionization_error
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - error
+  error_vmin: 0.0
+  error_vmax: 5.0
+  timesteps: uniform:16
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

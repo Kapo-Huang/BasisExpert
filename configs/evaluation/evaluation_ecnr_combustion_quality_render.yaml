@@ -1,0 +1,25 @@
+# Evaluate every archived ECNR Combustion scalar reconstruction with numeric
+# quality, point-wise error analysis, shared GT/prediction renders, SSIM, and
+# LPIPS.  The uniform:200 protocol covers all 2,001 Combustion frames.
+run_root: Result/Main/ECNR/Combustion
+result_root: EvalResult
+evaluation_id: ecnr_combustion_quality_render
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - psnr
+    - ssim
+    - lpips
+    - error
+  error_vmin: 0.0
+  error_vmax: 5.0
+  timesteps: uniform:200
+  targets_by_dataset: null
+  render: true
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  render_profile: auto

@@ -14,6 +14,7 @@ from var_expert_inr.evaluation.rendering import (
     _load_mesh,
     _mesh_scalar_values,
     compare_rendered_images,
+    compare_rendered_image_pairs,
     load_render_profile,
     preflight_rendering,
     render_image_frame,
@@ -231,7 +232,12 @@ def test_image_metrics_do_not_require_volume_vis(tmp_path: Path) -> None:
     Image.fromarray(pixels).save(first)
     Image.fromarray(pixels).save(second)
     result = compare_rendered_images(first, second, ("ssim",), device="cpu")
+    batched = compare_rendered_image_pairs(
+        ((first, second), (second, first)), ("ssim",), device="cpu"
+    )
     assert result["ssim"] == pytest.approx(1.0)
+
+    assert [item["ssim"] for item in batched] == pytest.approx([1.0, 1.0])
 
 
 def test_combustion_preflight_accepts_singleton_z() -> None:

@@ -1,0 +1,29 @@
+# Estimate ECNR Combustion dataset-total training and inference time.  ECNR
+# has 12 supported scalar outputs; Velocity is represented by its magnitude.
+run_root: Result/Main/ECNR/Combustion
+result_root: EvalResult
+evaluation_id: ecnr_combustion_runtime_dataset_total
+continue_on_error: true
+item_timeout_seconds: 86400
+
+runtime_aggregation:
+  mode: dataset_total
+  datasets:
+    Combustion:
+      representative_target: Absolute_Pressure
+      variable_count: 12
+
+evaluation:
+  metrics:
+    - training_time
+    - inference_time
+  timesteps: all
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  training_probe_samples: 72000000
+  training_total_samples: 14400000000
+  inference_fraction: 0.1

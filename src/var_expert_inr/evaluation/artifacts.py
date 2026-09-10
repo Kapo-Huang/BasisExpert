@@ -254,8 +254,12 @@ class ArtifactStore:
         timestep: int,
         ground_truth_path: str | Path,
         profile: dict[str, Any],
+        ground_truth_fingerprint: dict[str, Any] | None = None,
     ) -> ArtifactSpec:
-        gt = self.content_fingerprint(ground_truth_path)
+        gt = (
+            self.content_fingerprint(ground_truth_path)
+            if ground_truth_fingerprint is None else dict(ground_truth_fingerprint)
+        )
         render = self._render_spec(profile, target=target, timestep=timestep)
         key = _sha256_payload({"ground_truth": gt, "render": render})
         path = (
@@ -278,8 +282,12 @@ class ArtifactStore:
         source_path: str | Path,
         profile: dict[str, Any],
         ground_truth_fingerprint: dict[str, Any] | None,
+        source_fingerprint: dict[str, Any] | None = None,
     ) -> ArtifactSpec:
-        source = self.content_fingerprint(source_path)
+        source = (
+            self.content_fingerprint(source_path)
+            if source_fingerprint is None else dict(source_fingerprint)
+        )
         source_key = _sha256_payload(source)
         render = self._render_spec(profile, target=target, timestep=timestep)
         render_key = _sha256_payload({"render": render, "ground_truth": ground_truth_fingerprint})
@@ -307,8 +315,12 @@ class ArtifactStore:
         profile: dict[str, Any],
         error_vmin: float,
         error_vmax: float,
+        source_fingerprint: dict[str, Any] | None = None,
     ) -> ArtifactSpec:
-        source = self.content_fingerprint(source_path)
+        source = (
+            self.content_fingerprint(source_path)
+            if source_fingerprint is None else dict(source_fingerprint)
+        )
         comparison_key = _sha256_payload({"source": source, "ground_truth": ground_truth_fingerprint})
         render = self._render_spec(profile, target=target, timestep=timestep)
         render_key = _sha256_payload({"render": render, "error_vmin": error_vmin, "error_vmax": error_vmax})

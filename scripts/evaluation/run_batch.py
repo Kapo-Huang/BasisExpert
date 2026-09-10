@@ -1032,7 +1032,6 @@ def _preflight_dependencies(
     if not needs_render:
         return
     _require_module("PIL", "Rendering")
-    _require_module("matplotlib", "Rendering")
     if "ssim" in metrics:
         _require_module("skimage", "SSIM")
     if "lpips" in metrics:
@@ -1064,6 +1063,8 @@ def _preflight_dependencies(
             repo_root=REPO_ROOT,
         )
         required_renderers.add(renderer_name(profile, dataset_kind=dataset_kind))
+    if "image2d" in required_renderers or ("mesh" in required_renderers and "error" in metrics):
+        _require_module("matplotlib", "Rendering")
     if "volume" in required_renderers:
         _require_module("volume_vis", "Volume rendering")
     if "mesh" in required_renderers:
