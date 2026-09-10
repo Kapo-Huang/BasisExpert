@@ -230,6 +230,10 @@ MINER_COMBUSTION_RD_PROFILES = {
     "Size163": {"hidden_features": 13},
     "Size326": {"hidden_features": 19},
 }
+ECNR_COMBUSTION_SIZE041_PROFILE = {
+    "block_shape_xyz": [64, 64, 1],
+    "target_blocks_per_mlp": [8, 16, 20],
+}
 NEURAL_SIZE_DIMS = {"Size082": 17, "Size163": 24, "Size326": 34, "Size652": 48}
 MC_SIZE_DIMS = {"Size082": 30, "Size163": 43, "Size326": 62, "Size652": 88}
 APMG_MAIN_MODEL = {
@@ -1420,6 +1424,13 @@ def fv_payload(
 
 
 def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
+    if dataset == COMBUSTION_DATASET["name"]:
+        model_profile = ECNR_COMBUSTION_SIZE041_PROFILE
+    else:
+        model_profile = {
+            "block_shape_xyz": [25, 31, 31],
+            "target_blocks_per_mlp": [8, 16, 32],
+        }
     return {
         "experiment": f"ecnr_{dataset}_{target}",
         "exp_id": f"ecnr-{dataset}-{target}",
@@ -1427,16 +1438,14 @@ def ecnr_payload(target: str, dataset: str = "ionization") -> dict:
         "data": volume_data(target, False, dataset=dataset),
         "model": {
             "name": "ecnr", "scales": 3,
-            "block_shape_xyz": (
-                [16, 16, 1]
-                if dataset == COMBUSTION_DATASET["name"]
-                else [25, 31, 31]
-            ),
+            "block_shape_xyz": list(model_profile["block_shape_xyz"]),
             "residual_threshold": 1.0e-4,
             "gaussian_kernel_size": 5, "gaussian_sigma": 1.0,
             "gaussian_padding": "reflect", "latent_dim": 8,
             "hidden_features": 24, "hidden_layers": 3, "omega_0": 30.0,
-            "target_blocks_per_mlp": [8, 16, 32],
+            "target_blocks_per_mlp": list(
+                model_profile["target_blocks_per_mlp"]
+            ),
         },
         "clustering": {
             "distance": "squared_euclidean",

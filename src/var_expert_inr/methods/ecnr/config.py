@@ -196,7 +196,7 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
         (
             "name", "scales", "residual_threshold", "gaussian_kernel_size",
             "gaussian_padding", "latent_dim", "hidden_features", "hidden_layers",
-            "omega_0", "target_blocks_per_mlp",
+            "omega_0",
         ),
         "model",
     )
@@ -204,6 +204,19 @@ def load_config(path: str | Path, *, target_override: str | None = None) -> dict
     if len(block_shape) != 3 or any(value <= 0 for value in block_shape):
         raise ValueError("model.block_shape_xyz must contain three positive integers")
     model["block_shape_xyz"] = block_shape
+    target_blocks_per_mlp = model["target_blocks_per_mlp"]
+    if (
+        not isinstance(target_blocks_per_mlp, (list, tuple))
+        or len(target_blocks_per_mlp) != 3
+        or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in target_blocks_per_mlp
+        )
+    ):
+        raise ValueError(
+            "model.target_blocks_per_mlp must contain three positive integers"
+        )
+    model["target_blocks_per_mlp"] = list(target_blocks_per_mlp)
     model["gaussian_sigma"] = float(model["gaussian_sigma"])
     if model["gaussian_sigma"] <= 0:
         raise ValueError("model.gaussian_sigma must be positive")

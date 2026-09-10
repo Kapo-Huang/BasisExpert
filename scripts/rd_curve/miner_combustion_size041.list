@@ -1,0 +1,15 @@
+# MINER Combustion RD-curve selection: Size041 (12 scalar targets).
+# Use with: bash scripts/rd_curve/run_miner_combustion_size041.sh
+
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Absolute_Pressure.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Chemistry_Heat_Release_Rate.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Mole_Fraction_of_CH4.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Mole_Fraction_of_CO.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Mole_Fraction_of_CO2.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Mole_Fraction_of_H2O.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Mole_Fraction_of_NH2.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Mole_Fraction_of_NH3.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Mole_Fraction_of_OH.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Pressure.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Temperature.yaml
+configs/rd_curve/MINER/Size041/combustion_40NH3_1__Velocity_Magnitude.yaml

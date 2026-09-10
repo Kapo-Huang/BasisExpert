@@ -326,9 +326,11 @@ def update_summary(
     return updates
 
 
-def aggregate_manifest_psnr(
+def aggregate_manifest_metric(
     rows: list[dict[str, str]],
+    perceptual_by_key: dict[tuple[str, str, str, str], EvaluationPerceptual],
     *,
+    metric: str,
     category: str,
     method: str,
     dataset: str,
@@ -342,20 +344,41 @@ def aggregate_manifest_psnr(
         and (size is None or str(row.get("item", "")).startswith(f"{size}/"))
     ]
     if not items:
-        return "—"
-    if any(row.get("status") == "missing" or not str(row.get("psnr_db", "")).strip() for row in items):
+        return "\u2014"
+    if any(row.get("status") == "missing" for row in items):
         return "-"
-    return f"{statistics.fmean(float(row['psnr_db']) for row in items):.4f}"
+    values: list[float] = []
+    for row in items:
+        if metric == "psnr":
+            value = str(row.get("psnr_db", "")).strip()
+            if not value:
+                return "-"
+            values.append(float(value))
+            continue
+        key = (
+            str(row.get("category", "")),
+            str(row.get("method", "")),
+            str(row.get("dataset", "")),
+            str(row.get("item", "")),
+        )
+        perceptual = perceptual_by_key.get(key)
+        if perceptual is None:
+            return "-"
+        values.append(float(getattr(perceptual, metric)))
+    return f"{statistics.fmean(values):.4f}"
 
 
-def aggregated_psnr_block(rows: list[dict[str, str]]) -> list[str]:
+def aggregated_metric_tables(
+    rows: list[dict[str, str]],
+    perceptual_by_key: dict[tuple[str, str, str, str], EvaluationPerceptual],
+    *,
+    metric: str,
+    label: str,
+) -> list[str]:
     lines = [
-        AGGREGATED_START,
-        "## Aggregated PSNR",
+        f"### {label}",
         "",
-        "多变量实验仅在全部变量均有 PSNR 时取算术平均；Joint 实验直接使用其 PSNR。`-` 表示结果或 PSNR 不完整，`—` 表示该方法未配置对应实验。",
-        "",
-        "### Main",
+        "#### Main",
         "",
         markdown_table(
             ["模型", *MAIN_DATASET_ORDER],
@@ -363,8 +386,13 @@ def aggregated_psnr_block(rows: list[dict[str, str]]) -> list[str]:
                 (
                     method,
                     *(
-                        aggregate_manifest_psnr(
-                            rows, category="Main", method=method, dataset=dataset,
+                        aggregate_manifest_metric(
+                            rows,
+                            perceptual_by_key,
+                            metric=metric,
+                            category="Main",
+                            method=method,
+                            dataset=dataset,
                         )
                         for dataset in MAIN_DATASET_ORDER
                     ),
@@ -376,7 +404,7 @@ def aggregated_psnr_block(rows: list[dict[str, str]]) -> list[str]:
     ]
     for dataset in RD_DATASET_ORDER:
         lines.extend([
-            f"### RD Curve — {dataset}",
+            f"#### RD Curve - {dataset}",
             "",
             markdown_table(
                 ["模型", *RD_SIZE_ORDER],
@@ -384,8 +412,10 @@ def aggregated_psnr_block(rows: list[dict[str, str]]) -> list[str]:
                     (
                         method,
                         *(
-                            aggregate_manifest_psnr(
+                            aggregate_manifest_metric(
                                 rows,
+                                perceptual_by_key,
+                                metric=metric,
                                 category="RD Curve",
                                 method=method,
                                 dataset=dataset,
@@ -399,18 +429,47 @@ def aggregated_psnr_block(rows: list[dict[str, str]]) -> list[str]:
             ),
             "",
         ])
+    return lines
+
+
+def aggregated_metrics_block(
+    rows: list[dict[str, str]],
+    perceptual_by_key: dict[tuple[str, str, str, str], EvaluationPerceptual],
+) -> list[str]:
+    lines = [
+        AGGREGATED_START,
+        "## Aggregated PSNR, LPIPS, SSIM",
+        "",
+        "多变量实验仅在全部变量均有对应指标时取算术平均；Joint 实验直接使用对应指标。- 表示结果或指标不完整，— 表示该方法未配置对应实验。",
+        "",
+    ]
+    for metric, label in (
+        ("psnr", "PSNR (dB)"),
+        ("lpips", "LPIPS"),
+        ("ssim", "SSIM"),
+    ):
+        lines.extend(aggregated_metric_tables(
+            rows,
+            perceptual_by_key,
+            metric=metric,
+            label=label,
+        ))
     lines.append(AGGREGATED_END)
     return lines
 
 
-def update_aggregated_summary(path: Path, rows: list[dict[str, str]]) -> None:
+def update_aggregated_summary(
+    path: Path,
+    rows: list[dict[str, str]],
+    perceptual_by_key: dict[tuple[str, str, str, str], EvaluationPerceptual],
+) -> None:
     lines = path.read_text(encoding="utf-8").splitlines()
     try:
         start = lines.index(AGGREGATED_START)
         end = lines.index(AGGREGATED_END, start) + 1
     except ValueError as error:
-        raise ValueError(f"Aggregated PSNR markers are missing from {path}") from error
-    lines[start:end] = aggregated_psnr_block(rows)
+        raise ValueError(f"Aggregated metric markers are missing from {path}") from error
+    lines[start:end] = aggregated_metrics_block(rows, perceptual_by_key)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -683,7 +742,11 @@ def main() -> int:
         psnr_by_key,
         perceptual_by_key,
     )
-    update_aggregated_summary(result_root / "EXPERIMENT_SUMMARY.md", rows)
+    update_aggregated_summary(
+        result_root / "EXPERIMENT_SUMMARY.md",
+        rows,
+        perceptual_by_key,
+    )
     substitution_updates = update_substitutions(result_root / "SUBSTITUTIONS.md", psnr_by_label)
     write_evaluation_audit(
         result_root / "EVALUATION_PSNR.md",

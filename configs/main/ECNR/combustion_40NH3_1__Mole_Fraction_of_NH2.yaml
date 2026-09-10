@@ -28,8 +28,8 @@ model:
   name: ecnr
   scales: 3
   block_shape_xyz:
-  - 16
-  - 16
+  - 64
+  - 64
   - 1
   residual_threshold: 0.0001
   gaussian_kernel_size: 5
@@ -42,7 +42,7 @@ model:
   target_blocks_per_mlp:
   - 8
   - 16
-  - 32
+  - 20
 clustering:
   distance: squared_euclidean
   input: normalized_block_values
