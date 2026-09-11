@@ -13,7 +13,7 @@ import argparse
 import csv
 import statistics
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -23,7 +23,7 @@ RUNTIME_END = "<!-- AGGREGATED_RUNTIME_END -->"
 RUNTIME_MARKER_PREFIX = "> Compression/inference runtime values"
 RUNTIME_MARKER = (
     "> Compression/inference runtime values are imported from the dataset-total "
-    "runtime evaluation. Representative and proxy estimates are explicitly "
+    "runtime evaluation. Representative and historical estimates are explicitly "
     "labelled; compression is reported in hours and inference in seconds."
 )
 RESULT_CATEGORIES = {"Main", "RD Curve", "Ablation", "Sensitivity", "Scaling"}
@@ -37,9 +37,56 @@ RD_DATASET_ORDER = ("Ionization", "Combustion")
 RD_SIZE_ORDER = ("0.41", "0.82", "1.63", "3.26")
 SENSITIVITY_FAMILY_ORDER = ("ExpertNum", "TopK", "Seed")
 
-# Runtime probes for these Result groups failed. Use the closest available
-# implementation family on the same dataset and keep the estimate auditable.
-PROXY_METHODS = {"MINER": "ECNR", "Neural Experts": "MoE-INR"}
+# These six runtime probes failed, but the repository contains method-specific
+# historical timing evidence. Compression is normalized to the same 14.4B
+# samples per independent variable used by runtime evaluation. Inference uses
+# the completed 10% MINER probe stage or paired Neural Experts/MoE-INR decode
+# observations to normalize older RTX 3070 logs to the RTX 4090 runtime batch.
+# Values are dataset totals, never aliases of another method's totals.
+HISTORICAL_ESTIMATES = {
+    ("MINER", "Ionization"): (
+        0.835097366157652,
+        341.85,
+        5,
+        "MINER manifests: per-timestep logical_samples/elapsed throughput; "
+        "inference: completed 10% RTX 4090 stage wall-time",
+    ),
+    ("MINER", "Combustion"): (
+        623.887972075626,
+        695.272835820895,
+        12,
+        "MINER manifests: per-timestep logical_samples/elapsed throughput; "
+        "inference: completed 201/2001 RTX 4090 stage wall-time",
+    ),
+    ("Neural Experts", "Ionization"): (
+        52.5343638888889,
+        2527.79900146785,
+        5,
+        "Neural Experts logs: main+manager stage throughput; inference: "
+        "paired 5-step decode calibration (RTX 3070 to RTX 4090)",
+    ),
+    ("Neural Experts", "Combustion"): (
+        120.202475,
+        107.119228540036,
+        13,
+        "Neural Experts logs: main+manager stage throughput; inference: "
+        "paired 5-step decode calibration (RTX 3070 to RTX 4090)",
+    ),
+    ("Neural Experts", "Katrina"): (
+        23.4753333333333,
+        33.9321702915554,
+        5,
+        "Neural Experts logs: main+manager stage throughput; inference: "
+        "paired 5-step decode calibration (RTX 3070 to RTX 4090)",
+    ),
+    ("Neural Experts", "RedSea"): (
+        19.8002222222222,
+        31.9457719036122,
+        4,
+        "Neural Experts logs: main+manager stage throughput; inference: "
+        "paired 5-step decode calibration (RTX 3070 to RTX 4090)",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -146,7 +193,7 @@ def sibling_candidates(
         if group.category == category
         and group.method == method
         and group.dataset == dataset
-        and group.source_kind != "proxy"
+        and group.source_kind not in {"historical_estimate", "sibling_estimate"}
     ]
     if category == "Sensitivity" and "/" in variant:
         family = variant.split("/", 1)[0]
@@ -168,15 +215,23 @@ def estimate_missing_groups(
 
     for key in list(pending):
         category, method, dataset, variant = key
-        proxy_method = PROXY_METHODS.get(method)
-        proxy = result.get((category, proxy_method or "", dataset, variant))
-        if proxy is None:
+        historical = HISTORICAL_ESTIMATES.get((method, dataset))
+        if category != "Main" or variant or historical is None:
             continue
-        result[key] = replace(
-            proxy,
+        compression_hours, inference_seconds, member_count, source = historical
+        result[key] = RuntimeGroup(
+            category=category,
             method=method,
-            source_kind="proxy",
-            source_label=f"estimated from {proxy_method}/{dataset}",
+            dataset=dataset,
+            variant=variant,
+            aggregation_mode="historical_normalized",
+            representative_target="",
+            variable_count=member_count,
+            group_member_count=member_count,
+            compression_hours=compression_hours,
+            inference_seconds=inference_seconds,
+            source_kind="historical_estimate",
+            source_label=source,
         )
         pending.remove(key)
 
@@ -220,7 +275,7 @@ def estimate_missing_groups(
 
 
 def detail_runtime(group: RuntimeGroup) -> tuple[float, float, str]:
-    if group.source_kind == "proxy":
+    if group.source_kind == "historical_estimate":
         divisor = max(1, group.variable_count)
         return (
             group.compression_hours / divisor,
@@ -306,7 +361,7 @@ def display_value(group: RuntimeGroup | None, metric: str) -> str:
         group.compression_hours if metric == "compression"
         else group.inference_seconds
     )
-    suffix = "‡" if group.source_kind in {"proxy", "sibling_estimate"} else (
+    suffix = "‡" if group.source_kind in {"historical_estimate", "sibling_estimate"} else (
         "†" if group.aggregation_mode == "representative_scaled" else ""
     )
     return f"{value:.2f}{suffix}"
@@ -405,7 +460,7 @@ def aggregated_runtime_block(
         "",
         "Compression time uses the common 14.4-billion-sample budget. Inference "
         "time is checkpoint load once plus projected full-dataset reconstruction. "
-        "`†` denotes representative-target scaling; `‡` denotes a documented proxy "
+        "`†` denotes representative-target scaling; `‡` denotes a documented historical "
         "or sibling estimate. Unconfigured experiments remain `—`.",
         "",
     ]
@@ -478,8 +533,19 @@ def write_audit(
         f"- Runtime groups source: `{runtime_groups_path.as_posix()}`",
         f"- Expected Result groups: {len(expected)}",
         "- Sources: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())),
-        "- MINER uses ECNR as its proxy; Neural Experts uses MoE-INR. Proxy values "
-        "are estimates, not measurements of the missing method.",
+        "- MINER compression: for every archived target, `14.4B / sum(logical_samples) "
+        "* sum(elapsed_seconds)` is computed from all timestep manifests, then targets "
+        "are summed (Ionization: 5 x 100 records; Combustion: 12 x 2001 records).",
+        "- MINER inference: only the post-training portion of the failed RTX 4090 workers "
+        "is used. Ionization extrapolates 10/100 timesteps across 5 targets; Combustion "
+        "extrapolates 201/2001 timesteps across 12 archived targets.",
+        "- Neural Experts compression: manager pretraining (30k x 16k samples) and main "
+        "training (60k x 16k samples) are timed separately per target, summed, then "
+        "normalized from 1.44B to 14.4B samples while retaining the historical 1:2 split.",
+        "- Neural Experts inference: paired 5-step Neural Experts/MoE-INR decode records "
+        "on RTX 3070 provide robust per-dataset median ratios (Combustion 1.009754, "
+        "Ionization 0.922936, Katrina 0.924610, RedSea 0.874889), applied to each "
+        "dataset's measured RTX 4090 MoE-INR baseline.",
         "",
         *markdown_table(
             [

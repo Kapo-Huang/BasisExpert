@@ -496,6 +496,35 @@ def test_runtime_dataset_total_summary_scales_representative_time(
     assert groups["Ours"]["estimated_total_inference_seconds"] == pytest.approx(3.0)
 
 
+def test_autodl_maps_manifest_path_under_result_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    autodl_root = tmp_path / "autodl-tmp"
+    captured: dict[str, object] = {}
+    config_path = tmp_path / "training_memory.yaml"
+    config_path.write_text(
+        json.dumps({
+            "manifest_path": "Result/MANIFEST.tsv",
+            "result_root": str(tmp_path / "EvalResult"),
+            "evaluation_id": "autodl-manifest",
+            "evaluation": {"metrics": ["training_memory"]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AUTODL_DATA_ROOT", str(autodl_root))
+    monkeypatch.setattr(
+        batch_runner,
+        "_read_manifest_runs",
+        lambda path, **kwargs: captured.update(path=path, **kwargs) or [],
+    )
+
+    batch_runner.run_batch(config_path, server_env="autodl")
+
+    assert captured["path"] == autodl_root / "Result" / "MANIFEST.tsv"
+    assert captured["server_env"] == "autodl"
+
+
 def test_batch_discovery_supports_both_config_layouts(tmp_path: Path) -> None:
     nested = tmp_path / "Result" / "Nested"
     root_config = tmp_path / "Result" / "RootConfig"

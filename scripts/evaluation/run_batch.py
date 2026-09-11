@@ -1271,7 +1271,10 @@ def run_batch(
     manifest_path = (
         None
         if manifest_path_value is None
-        else _resolve_repo_path(manifest_path_value)
+        else _resolve_run_source_path(
+            manifest_path_value,
+            server_env=selected_env,
+        )
     )
     run_root = (
         None
