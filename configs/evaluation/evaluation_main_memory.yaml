@@ -1,0 +1,18 @@
+# Measure peak CPU RSS and CUDA memory for every archived Main result run.
+# Every timestep is decoded so the reported peak reflects the full reconstruction.
+run_root: Result/Main
+result_root: EvalResult
+evaluation_id: main_memory
+continue_on_error: true
+item_timeout_seconds: 86400
+
+evaluation:
+  metrics:
+    - memory
+  timesteps: uniform:5
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null

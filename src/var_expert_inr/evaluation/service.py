@@ -967,11 +967,11 @@ def evaluate_run(
     adapter = select_run_adapter(raw)
     runtime_metrics = tuple(
         metric for metric in parsed_metrics
-        if metric in {"training_time", "inference_time"}
+        if metric in {"training_time", "training_memory", "inference_time"}
     )
     ordinary_metrics = tuple(
         metric for metric in parsed_metrics
-        if metric not in {"training_time", "inference_time"}
+        if metric not in {"training_time", "training_memory", "inference_time"}
     )
     ordinary_result = None
     if ordinary_metrics or request.render:

@@ -23,10 +23,45 @@ from var_expert_inr.utils.temporal_checkpoint import TemporalCheckpointWriter
 
 
 def test_runtime_metrics_are_selectable() -> None:
-    assert parse_metric_selection("training_time,inference_time") == (
+    assert parse_metric_selection("training_time,training_memory,inference_time") == (
         "training_time",
+        "training_memory",
         "inference_time",
     )
+
+
+def test_training_memory_measures_the_bounded_training_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Path, str, str]] = []
+    monkeypatch.setattr(runtime_module, "_portable_training_payload", lambda *args, **kwargs: {})
+    monkeypatch.setattr(runtime_module, "_configure_training_probe", lambda payload, **kwargs: payload)
+    monkeypatch.setattr(
+        runtime_module,
+        "_invoke_training",
+        lambda config, adapter, device: calls.append((config, adapter, device)) or {},
+    )
+    request = EvaluationRequest(
+        run_dir=tmp_path,
+        metrics=("training_memory",),
+        training_probe_samples=123,
+        device="cpu",
+    )
+
+    result = runtime_module.benchmark_training_memory(
+        request,
+        {},
+        tmp_path / "config.yaml",
+        adapter_name="unified",
+    )
+
+    assert calls and calls[0][1:] == ("unified", "cpu")
+    assert result["measurement_scope"] == "full_training_probe"
+    assert result["probe_samples_requested"] == 123
+    assert result["adapter"] == "unified"
+    assert result["device"] == "cpu"
+    assert "cpu_rss_peak_bytes" in result
 
 
 def test_uniform_fraction_selects_ceil_ten_percent() -> None:
@@ -230,7 +265,10 @@ def test_runtime_cache_is_experiment_scoped(tmp_path: Path) -> None:
     (output_dir / "metrics.json").write_text(
         json.dumps({
             "status": "complete",
-            "performance": {"training_time": {"estimated_training_seconds": 1.0}},
+            "performance": {
+                "training_time": {"estimated_training_seconds": 1.0},
+                "training_memory": {"cpu_rss_peak_bytes": 1},
+            },
         }),
         encoding="utf-8",
     )
@@ -241,7 +279,7 @@ def test_runtime_cache_is_experiment_scoped(tmp_path: Path) -> None:
         raw={},
         target="all",
         timesteps="all",
-        requested_metrics=("training_time",),
+        requested_metrics=("training_time", "training_memory"),
         render=False,
         current_profile_fingerprint=None,
         result_root=tmp_path / "EvalResult",
@@ -351,6 +389,29 @@ def test_runtime_dataset_total_requires_configured_representative(
             run_root=run_root,
             dataset_settings={"ionization": ("GT", 5)},
         )
+
+
+def test_training_memory_aggregation_uses_representative_without_scaling(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "Result"
+    runs = [
+        run_root / "Main" / "CoordNet" / "Ionization" / target
+        for target in ("GT", "H2", "H_plus", "He", "PD")
+    ]
+    selected, metadata = batch_runner._select_runtime_dataset_total_runs(
+        runs,
+        run_root=run_root,
+        dataset_settings={"ionization": ("GT", 5)},
+        aggregation_kind="training_memory_representative",
+        representative_mode="representative",
+    )
+
+    assert selected == [run_root / "Main" / "CoordNet" / "Ionization" / "GT"]
+    group = metadata[selected[0].resolve()]
+    assert group.aggregation_kind == "training_memory_representative"
+    assert group.aggregation_mode == "representative"
+    assert group.variable_count == 5
 
 
 def test_runtime_dataset_total_summary_scales_representative_time(

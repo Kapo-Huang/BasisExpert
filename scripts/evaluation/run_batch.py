@@ -82,6 +82,7 @@ class RuntimeGroup:
     dataset_label: str
     variant: str
     group_id: str
+    aggregation_kind: str
     aggregation_mode: str
     representative_target: str
     variable_count: int
@@ -93,7 +94,7 @@ class RuntimeGroup:
             "method": self.method,
             "dataset_label": self.dataset_label,
             "variant": self.variant,
-            "runtime_aggregation": "dataset_total",
+            "runtime_aggregation": self.aggregation_kind,
             "aggregation_mode": self.aggregation_mode,
             "representative_target": self.representative_target,
             "variable_count": self.variable_count,
@@ -194,11 +195,45 @@ def _read_run_list(path: Path) -> list[Path]:
     return runs
 
 
+def _rule_values(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    values = (value,) if isinstance(value, str) else value
+    if not isinstance(values, (list, tuple, set)):
+        raise ValueError("manifest selection rule values must be strings or lists")
+    return {str(item).strip().casefold() for item in values if str(item).strip()}
+
+
+def _manifest_rule_matches(row: dict[str, str], rules: tuple[dict[str, Any], ...]) -> bool:
+    if not rules:
+        return True
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise ValueError("manifest_selection.rules entries must be mappings")
+        categories = _rule_values(rule.get("categories", rule.get("category")))
+        methods = _rule_values(rule.get("methods", rule.get("method")))
+        datasets = _rule_values(rule.get("datasets", rule.get("dataset")))
+        prefixes = _rule_values(rule.get("item_prefixes"))
+        if categories and row.get("category", "").strip().casefold() not in categories:
+            continue
+        if methods and row.get("method", "").strip().casefold() not in methods:
+            continue
+        if datasets and row.get("dataset", "").strip().casefold() not in datasets:
+            continue
+        item = row.get("item", "").strip().casefold()
+        if prefixes and not any(item.startswith(prefix) for prefix in prefixes):
+            continue
+        return True
+    return False
+
+
 def _read_manifest_runs(
     path: Path,
     *,
     datasets: tuple[str, ...] = (),
     missing_fields: tuple[str, ...] = (),
+    rules: tuple[dict[str, Any], ...] = (),
+    server_env: str = "original",
 ) -> list[Path]:
     """Select evaluable Result entries from the archive manifest."""
     with path.open("r", encoding="utf-8", newline="") as handle:
@@ -218,11 +253,16 @@ def _read_manifest_runs(
             dataset = str(row.get("dataset", "")).strip().lower()
             if selected_datasets and dataset not in selected_datasets:
                 continue
+            if not _manifest_rule_matches(row, rules):
+                continue
             if missing_fields and all(
                 str(row.get(field, "")).strip() for field in missing_fields
             ):
                 continue
-            run_dir = _resolve_repo_path(str(row.get("result_path", "")).strip())
+            run_dir = _resolve_run_source_path(
+                str(row.get("result_path", "")).strip(),
+                server_env=server_env,
+            )
             try:
                 resolve_run_config(run_dir)
             except FileNotFoundError as exc:
@@ -295,6 +335,18 @@ def _runtime_aggregation_settings(value: Any) -> dict[str, tuple[str, int]] | No
     return settings
 
 
+def _training_memory_aggregation_settings(value: Any) -> dict[str, tuple[str, int]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("training_memory_aggregation must be a mapping when provided")
+    if str(value.get("mode", "")).strip().lower() != "representative":
+        raise ValueError("training_memory_aggregation.mode must be representative")
+    normalized = dict(value)
+    normalized["mode"] = "dataset_total"
+    return _runtime_aggregation_settings(normalized)
+
+
 def _runtime_group_key(
     run_dir: Path,
     *,
@@ -331,6 +383,8 @@ def _select_runtime_dataset_total_runs(
     *,
     run_root: Path,
     dataset_settings: dict[str, tuple[str, int]],
+    aggregation_kind: str = "dataset_total",
+    representative_mode: str = "representative_scaled",
 ) -> tuple[list[Path], dict[Path, RuntimeGroup]]:
     grouped: dict[
         tuple[str, str, str, str],
@@ -375,7 +429,7 @@ def _select_runtime_dataset_total_runs(
                     f"{'/'.join(key)} must match exactly one run; available={available}"
                 )
             run_dir, _ = candidates[0]
-            aggregation_mode = "representative_scaled"
+            aggregation_mode = representative_mode
         else:
             if len(members) != 1:
                 raise ValueError(
@@ -394,6 +448,7 @@ def _select_runtime_dataset_total_runs(
             dataset_label=dataset_label,
             variant=variant,
             group_id="/".join(group_parts),
+            aggregation_kind=aggregation_kind,
             aggregation_mode=aggregation_mode,
             representative_target=representative,
             variable_count=variable_count,
@@ -590,6 +645,55 @@ def _write_runtime_summaries(output_dir: Path, records: list[dict[str, Any]]) ->
             writer.writerows(rows)
 
 
+def _write_training_memory_summary(output_dir: Path, records: list[dict[str, Any]]) -> None:
+    entries: list[dict[str, Any]] = []
+    for record in records:
+        if record.get("status") not in COMPLETED_STATUSES or not record.get("metrics_path"):
+            continue
+        try:
+            payload = json.loads(Path(record["metrics_path"]).read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue
+        memory = (payload.get("performance") or {}).get("training_memory")
+        if not isinstance(memory, dict):
+            continue
+        entries.append({
+            "category": record.get("category", ""),
+            "method": record.get("method", ""),
+            "model": record.get("model", ""),
+            "dataset": record.get("dataset_label") or record.get("dataset", ""),
+            "variant": record.get("variant", ""),
+            "group_id": record.get("group_id", ""),
+            "aggregation_kind": record.get("runtime_aggregation", ""),
+            "aggregation_mode": record.get("aggregation_mode", ""),
+            "representative_target": record.get("representative_target", ""),
+            "group_member_count": int(record.get("group_member_count") or 1),
+            "run_dir": record.get("run_dir", ""),
+            "cpu_rss_baseline_bytes": memory.get("cpu_rss_baseline_bytes"),
+            "cpu_rss_peak_bytes": memory.get("cpu_rss_peak_bytes"),
+            "cpu_rss_peak_delta_bytes": memory.get("cpu_rss_peak_delta_bytes"),
+            "cuda_peak_allocated_bytes": memory.get("cuda_peak_allocated_bytes"),
+            "cuda_peak_reserved_bytes": memory.get("cuda_peak_reserved_bytes"),
+            "device": memory.get("device"),
+            "measurement_scope": memory.get("measurement_scope"),
+            "probe_samples_requested": memory.get("probe_samples_requested"),
+        })
+    if not entries:
+        return
+    write_json(output_dir / "training_memory_summary.json", {
+        "schema_version": LAYOUT_SCHEMA_VERSION,
+        "aggregation_mode": "representative_peak_memory",
+        "grouping": ["category", "method", "dataset", "variant"],
+        "entry_count": len(entries),
+        "entries": entries,
+    })
+    fields = list(dict.fromkeys(key for row in entries for key in row))
+    with (output_dir / "training_memory_entries.tsv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(entries)
+
+
 def _write_summary(output_dir: Path, records: list[dict[str, Any]], config_path: Path) -> None:
     succeeded = sum(row["status"] == "success" for row in records)
     skipped = sum(row["status"] == "skipped" for row in records)
@@ -619,6 +723,7 @@ def _write_summary(output_dir: Path, records: list[dict[str, Any]], config_path:
         writer.writeheader()
         writer.writerows(records)
     _write_runtime_summaries(output_dir, records)
+    _write_training_memory_summary(output_dir, records)
 
 
 def _explicit_timesteps(
@@ -763,7 +868,7 @@ def _existing_evaluation_state_at(
     performance = payload.get("performance") or {}
     runtime_completed = {
         metric
-        for metric in ("training_time", "inference_time")
+        for metric in ("training_time", "training_memory", "inference_time")
         if isinstance(performance.get(metric), dict)
     }
     if (
@@ -822,7 +927,7 @@ def _existing_evaluation_state_at(
     }
     completed_metrics: set[str] = set()
     for metric in requested_metrics:
-        if metric in {"training_time", "inference_time"}:
+        if metric in {"training_time", "training_memory", "inference_time"}:
             if isinstance(performance.get(metric), dict):
                 completed_metrics.add(metric)
         elif metric in {"decode_time", "memory"}:
@@ -1210,12 +1315,21 @@ def run_batch(
     runtime_aggregation = _runtime_aggregation_settings(
         batch.get("runtime_aggregation")
     )
+    training_memory_aggregation = _training_memory_aggregation_settings(
+        batch.get("training_memory_aggregation")
+    )
     runtime_metrics = {"training_time", "inference_time"}
     if runtime_aggregation is not None and (
         not metrics or not set(metrics).issubset(runtime_metrics)
     ):
         raise ValueError(
             "runtime_aggregation requires only training_time/inference_time metrics"
+        )
+    if runtime_aggregation is not None and training_memory_aggregation is not None:
+        raise ValueError("runtime_aggregation and training_memory_aggregation cannot be combined")
+    if training_memory_aggregation is not None and set(metrics) != {"training_memory"}:
+        raise ValueError(
+            "training_memory_aggregation requires only the training_memory metric"
         )
     timesteps = str(evaluation.get("timesteps", "all"))
     render = bool(evaluation.get("render", False))
@@ -1270,10 +1384,16 @@ def run_batch(
             raise ValueError(
                 "manifest_selection.missing_fields must be a string or list"
             )
+        rules_value = selection.get("rules") or ()
+        if not isinstance(rules_value, (list, tuple)):
+            raise ValueError("manifest_selection.rules must be a list")
+        rules = tuple(rules_value)
         run_dirs = _read_manifest_runs(
             manifest_path,
             datasets=datasets,
             missing_fields=missing_fields,
+            rules=rules,
+            server_env=selected_env,
         )
         run_source = manifest_path
     elif run_root is not None:
@@ -1299,6 +1419,18 @@ def run_batch(
             run_dirs,
             run_root=run_root,
             dataset_settings=runtime_aggregation,
+        )
+    elif training_memory_aggregation is not None:
+        aggregation_root = run_root or _resolve_run_source_path(
+            "Result",
+            server_env=selected_env,
+        )
+        run_dirs, runtime_group_by_run = _select_runtime_dataset_total_runs(
+            run_dirs,
+            run_root=aggregation_root,
+            dataset_settings=training_memory_aggregation,
+            aggregation_kind="training_memory_representative",
+            representative_mode="representative",
         )
     dependency_metrics = {"pearson_error", "mi_error"}
     if metrics and set(metrics).issubset(dependency_metrics):

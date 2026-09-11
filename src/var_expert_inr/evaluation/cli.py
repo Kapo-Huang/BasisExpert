@@ -16,7 +16,7 @@ def add_run_evaluation_arguments(
     parser.add_argument(
         "--metrics",
         default=None,
-        help="Comma-separated psnr,ssim,lpips,error,pearson_error,mi_error,decode_time,training_time,inference_time,memory",
+        help="Comma-separated psnr,ssim,lpips,error,pearson_error,mi_error,decode_time,training_time,training_memory,inference_time,memory",
     )
     parser.add_argument(
         "--timesteps",

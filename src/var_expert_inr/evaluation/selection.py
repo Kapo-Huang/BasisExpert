@@ -90,6 +90,7 @@ def parse_metric_selection(value: str | Iterable[str] | None) -> tuple[str, ...]
         "mi_error",
         "decode_time",
         "training_time",
+        "training_memory",
         "inference_time",
         "memory",
     )

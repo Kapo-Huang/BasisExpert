@@ -1,0 +1,48 @@
+# Measure peak memory during the same bounded training probe used by runtime evaluation.
+# Main and RD Curve per-target methods use one canonical target; memory is never
+# multiplied by the dataset variable count.
+manifest_path: Result/MANIFEST.tsv
+result_root: EvalResult
+scratch_root:
+  original: ${REPO_ROOT}/.evaluation-scratch
+  autodl: ${AUTODL_DATA_ROOT}/EvaluationScratch
+evaluation_id: training_memory_selected_v1
+continue_on_error: true
+item_timeout_seconds: 86400
+
+manifest_selection:
+  rules:
+    - categories: [Main, RD Curve]
+      methods: [Ours, CoordNet, MoE-INR, fV-SRN, MINER, STSR-INR]
+    - categories: [Ablation]
+    - categories: [Sensitivity]
+      item_prefixes: [ExpertNum/]
+
+training_memory_aggregation:
+  mode: representative
+  datasets:
+    Ionization:
+      representative_target: GT
+      variable_count: 5
+    Combustion:
+      representative_target: Absolute_Pressure
+      variable_count: 13
+    Katrina:
+      representative_target: fort63
+      variable_count: 5
+    RedSea:
+      representative_target: SALT
+      variable_count: 4
+
+evaluation:
+  metrics:
+    - training_memory
+  timesteps: all
+  targets_by_dataset: null
+  render: false
+  incremental: true
+  source: checkpoint
+  overwrite: false
+  device: null
+  training_probe_samples: 72000000
+  training_total_samples: 14400000000

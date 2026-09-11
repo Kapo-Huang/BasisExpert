@@ -24,7 +24,7 @@ from .reporting import (
     write_metrics_csv,
 )
 from .selection import parse_timestep_selection
-from .performance import synchronize_cuda
+from .performance import DecodeMeasurement, synchronize_cuda
 
 
 RUNTIME_SCHEMA_VERSION = 1
@@ -607,6 +607,51 @@ def benchmark_training(
     return payload
 
 
+def benchmark_training_memory(
+    request,
+    raw: dict[str, Any],
+    config_path: Path,
+    *,
+    adapter_name: str,
+) -> dict[str, Any]:
+    """Measure the peak memory of the same bounded training probe as runtime."""
+    device_text = request.device or "cuda"
+    if device_text.startswith("cuda") and not torch.cuda.is_available():
+        device_text = "cpu"
+    with tempfile.TemporaryDirectory(prefix="var-expert-runtime-memory-") as temp_name:
+        scratch = Path(temp_name)
+        probe = _portable_training_payload(
+            raw,
+            config_path=config_path,
+            scratch_root=scratch / "runs",
+            device=device_text,
+        )
+        probe = _configure_training_probe(
+            probe,
+            adapter_name=adapter_name,
+            probe_samples=int(request.training_probe_samples),
+        )
+        probe_config = scratch / "config.yaml"
+        probe_config.write_text(
+            yaml.safe_dump(probe, sort_keys=False),
+            encoding="utf-8",
+        )
+        measurement = DecodeMeasurement(device=device_text)
+        with measurement:
+            with _runtime_environment():
+                _invoke_training(probe_config, adapter_name, device_text)
+
+    result = measurement.as_dict()
+    result.update({
+        "schema_version": RUNTIME_SCHEMA_VERSION,
+        "measurement_scope": "full_training_probe",
+        "probe_samples_requested": int(request.training_probe_samples),
+        "adapter": adapter_name,
+        "device": device_text,
+    })
+    return result
+
+
 def _checkpoint_load_seconds(path: Path) -> float:
     started = time.perf_counter()
     try:
@@ -702,6 +747,9 @@ def _runtime_csv_rows(performance: dict[str, Any]) -> list[dict[str, Any]]:
         })
         for item in training.get("strata") or []:
             rows.append({"row_type": "runtime_training_stratum", **item})
+    training_memory = performance.get("training_memory")
+    if isinstance(training_memory, dict):
+        rows.append({"row_type": "training_memory", **training_memory})
     inference = performance.get("inference_time")
     if isinstance(inference, dict):
         rows.append({
@@ -722,7 +770,7 @@ def _completed_runtime_metrics(payload: dict[str, Any]) -> set[str]:
     performance = payload.get("performance") or {}
     return {
         metric
-        for metric in ("training_time", "inference_time")
+        for metric in ("training_time", "training_memory", "inference_time")
         if isinstance(performance.get(metric), dict)
     }
 
@@ -768,6 +816,10 @@ def run_runtime_evaluation(
     ]
     if "training_time" in pending:
         performance["training_time"] = benchmark_training(
+            request, raw, config_path, adapter_name=adapter_name
+        )
+    if "training_memory" in pending:
+        performance["training_memory"] = benchmark_training_memory(
             request, raw, config_path, adapter_name=adapter_name
         )
     if "inference_time" in pending:
