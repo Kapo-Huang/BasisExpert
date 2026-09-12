@@ -225,7 +225,7 @@ MINER_COMBUSTION_RD_PROFILES = {
     # One 128x128 block is trained for each of the 2001 frames.  With a
     # coarse multiplier of one, these widths give approximately
     # 0.416/0.828/1.592/3.195 MiB of FP16 parameters per scalar target.
-    "Size041": {"hidden_features": 6},
+    "Size041": {"hidden_features": 6, "points_per_block_step": 2048},
     "Size082": {"hidden_features": 9},
     "Size163": {"hidden_features": 13},
     "Size326": {"hidden_features": 19},
@@ -1612,6 +1612,11 @@ def generate_miner() -> int:
                 }
             )
             payload["model"] = sized_model
+            points_per_block_step = MINER_COMBUSTION_RD_PROFILES[size].get(
+                "points_per_block_step"
+            )
+            if points_per_block_step is not None:
+                payload["training"]["points_per_block_step"] = points_per_block_step
             dump(
                 RD_CURVE_CONFIGS / "MINER" / size
                 / f"{COMBUSTION_DATASET['name']}__{target}.yaml",

@@ -64,10 +64,15 @@ def _section(raw: Mapping[str, Any], lower: str, upper: str) -> dict[str, Any]:
 
 
 def _run_config(run_dir: Path) -> Path:
-    path = run_dir / "configs" / "config.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(f"Saved run config does not exist: {path}")
-    return path
+    candidates = (
+        run_dir / "configs" / "config.yaml",
+        run_dir / "config.yaml",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    searched = ", ".join(str(path) for path in candidates)
+    raise FileNotFoundError(f"Saved run config does not exist; searched: {searched}")
 
 
 def _dataset_name(raw: Mapping[str, Any]) -> str:
@@ -129,9 +134,13 @@ def resolve_dependency_group(
 
     siblings: dict[str, Path] = {}
     for candidate in sorted(resolved.parent.iterdir()):
-        if not candidate.is_dir() or not (candidate / "configs" / "config.yaml").is_file():
+        if not candidate.is_dir():
             continue
-        candidate_raw = _mapping(candidate / "configs" / "config.yaml")
+        try:
+            candidate_config = _run_config(candidate)
+        except FileNotFoundError:
+            continue
+        candidate_raw = _mapping(candidate_config)
         if _dataset_name(candidate_raw).lower() != dataset.lower():
             continue
         candidate_target = _selected_target(candidate_raw)
@@ -164,7 +173,12 @@ def discover_dependency_groups(
     configuration: dict[str, Any],
 ) -> tuple[DependencyRunGroup, ...]:
     root = Path(run_root).expanduser().resolve()
-    candidates = sorted(path.parent.parent for path in root.rglob("configs/config.yaml"))
+    candidates = sorted(
+        {
+            path.parent.parent if path.parent.name == "configs" else path.parent
+            for path in root.rglob("config.yaml")
+        }
+    )
     groups: dict[Path, DependencyRunGroup] = {}
     failures: dict[Path, Exception] = {}
     for run_dir in candidates:

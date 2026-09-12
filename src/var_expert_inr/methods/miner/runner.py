@@ -324,6 +324,7 @@ def _train_active_model(
         torch.cuda.synchronize(device)
     started = time.perf_counter()
     batch_blocks = int(training["max_active_blocks_per_step"])
+    points_per_block_step = int(training["points_per_block_step"])
     base_lr = float(training["lr"]) / (4.0 if int(scale_index) == 0 else 1.0)
     for epoch in range(int(training["epochs_per_scale"])):
         if active.numel() == 0:
@@ -338,29 +339,46 @@ def _train_active_model(
         for group in optimizer.param_groups:
             group["lr"] = lr
         loss_sum = 0.0
+        point_count = int(coordinates.shape[0])
+        if 0 < points_per_block_step < point_count:
+            point_indices = torch.randperm(point_count, device=device)[:points_per_block_step]
+            step_coordinates = coordinates[point_indices]
+            target_indices = point_indices.cpu()
+        else:
+            step_coordinates = coordinates
+            target_indices = None
         chunk_count = 0
         for start in range(0, int(active.numel()), batch_blocks):
             selected = active[start : start + batch_blocks].to(device)
-            target_batch = targets[selected.cpu()].to(device, non_blocking=True)[..., None]
+            target_batch = targets[selected.cpu()]
+            if target_indices is not None:
+                target_batch = target_batch[:, target_indices]
+            target_batch = target_batch.to(device, non_blocking=True)[..., None]
             optimizer.zero_grad(set_to_none=True)
-            prediction = model(coordinates, selected)
+            prediction = model(step_coordinates, selected)
             loss = F.mse_loss(prediction, target_batch)
             loss.backward()
             optimizer.step()
             loss_sum += float(loss.detach())
             chunk_count += 1
-            logical_samples += int(selected.numel()) * int(coordinates.shape[0])
+            logical_samples += int(selected.numel()) * int(step_coordinates.shape[0])
             optimizer_steps += 1
         epochs_executed = epoch + 1
         current_loss = loss_sum / max(chunk_count, 1)
+        if target_indices is None:
+            metric_coordinates = coordinates.detach().cpu()
+            metric_targets = targets
+        else:
+            metric_coordinates = step_coordinates.detach().cpu()
+            metric_targets = targets[:, target_indices]
         predictions = _predict_blocks(
             model,
-            coordinates.detach().cpu(),
+            metric_coordinates,
             count=model.channels,
             batch_blocks=batch_blocks,
             device=device,
         )
-        errors = torch.mean((predictions - targets) ** 2, dim=1)
+        errors = torch.mean((predictions - metric_targets) ** 2, dim=1)
         active = torch.nonzero(
             errors > float(training["block_mse_threshold"]), as_tuple=False
         ).flatten()

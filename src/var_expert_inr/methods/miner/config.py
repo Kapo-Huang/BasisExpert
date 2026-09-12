@@ -32,6 +32,7 @@ TRAINING_KEYS = {
     "lr_decay",
     "max_active_blocks_per_step",
     "time_indices",
+    "points_per_block_step",
     "seed",
     "device",
     "log_every",
@@ -198,6 +199,7 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
         "lr_decay": 0.999,
         "max_active_blocks_per_step": 16384 if dimensions == 2 else 2048,
         "time_indices": "all",
+        "points_per_block_step": 0,
         "seed": 42,
         "device": "cuda",
         "log_every": 25,
@@ -206,7 +208,10 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
     raw_training = _mapping(cfg.get("training"), "training")
     _reject_unknown(raw_training, TRAINING_KEYS, "training")
     training = {**training_defaults, **raw_training}
-    for key in ("epochs_per_scale", "max_active_blocks_per_step", "seed", "log_every"):
+    for key in (
+        "epochs_per_scale", "max_active_blocks_per_step",
+        "points_per_block_step", "seed", "log_every",
+    ):
         training[key] = int(training[key])
     for key in (
         "lr", "beta_1", "beta_2", "block_mse_threshold",
@@ -215,6 +220,8 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
         training[key] = float(training[key])
     if training["epochs_per_scale"] < 0 or training["max_active_blocks_per_step"] <= 0:
         raise ValueError("epochs_per_scale must be non-negative and max_active_blocks_per_step positive")
+    if training["points_per_block_step"] < 0:
+        raise ValueError("points_per_block_step must be non-negative")
     if training["lr"] <= 0 or training["block_mse_threshold"] < 0:
         raise ValueError("training.lr must be positive and threshold non-negative")
     if not 0 <= training["beta_1"] < 1 or not 0 <= training["beta_2"] < 1:
